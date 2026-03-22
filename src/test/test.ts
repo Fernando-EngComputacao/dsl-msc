@@ -7,7 +7,8 @@ async function run() {
     const { shared, DSL } = createDSLServices(EmptyFileSystem);
 
     const document = shared.workspace.LangiumDocumentFactory.fromString(
-        `reserve Sala01 at "20:00"`,
+        `reserve Sala01 at "20:00"
+         reserve Sala02 at "21:00"`,
         URI.parse('file:///tmp/test.dsl')
     );
 
