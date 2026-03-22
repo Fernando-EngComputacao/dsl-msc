@@ -4,6 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "langium:generate": "langium generate",
+    "build": "npm run langium:generate",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
