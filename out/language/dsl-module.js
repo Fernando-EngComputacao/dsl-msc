@@ -1,10 +1,9 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createDSLServices = createDSLServices;
-const langium_1 = require("langium");
-const module_1 = require("../generated/module");
-function createDSLServices(context) {
-    const shared = (0, langium_1.inject)((0, langium_1.createDefaultSharedModule)(context), module_1.DSLGeneratedSharedModule);
-    const DSL = (0, langium_1.inject)((0, langium_1.createDefaultModule)({ shared }), module_1.DSLGeneratedModule);
+import { createDefaultCoreModule, createDefaultSharedCoreModule, inject, EmptyFileSystem } from 'langium';
+import { MyDslGeneratedModule, dslProjectGeneratedSharedModule } from '../generated/module.js';
+export function createDSLServices(context = EmptyFileSystem) {
+    const shared = inject(createDefaultSharedCoreModule(context), dslProjectGeneratedSharedModule);
+    const DSL = inject(createDefaultCoreModule({ shared }), MyDslGeneratedModule);
+    // ✅ Register so the service registry is never empty
+    shared.ServiceRegistry.register(DSL);
     return { shared, DSL };
 }

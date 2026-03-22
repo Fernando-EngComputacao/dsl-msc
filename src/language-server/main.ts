@@ -1,9 +1,25 @@
-import { startLanguageServer } from 'langium/lsp';
-import { NodeFileSystem } from 'langium/node';
-import { createConnection } from 'vscode-languageserver/node';
-import { createDSLServices } from '../language/dsl-module';
+import {
+    createDefaultCoreModule,
+    createDefaultSharedCoreModule,
+    inject
+} from 'langium';
 
-const connection = createConnection();
-const { shared } = createDSLServices({ connection, ...NodeFileSystem });
+import {
+    MyDslGeneratedModule,
+    dslProjectGeneratedSharedModule
+} from '../generated/module.js';
 
-startLanguageServer(shared);
+export function createDSLServices(context: any) {
+
+    const shared = inject(
+        createDefaultSharedCoreModule(context),
+        dslProjectGeneratedSharedModule
+    );
+
+    const DSL = inject(
+        createDefaultCoreModule({ shared }),
+        MyDslGeneratedModule
+    );
+
+    return { shared, DSL };
+}

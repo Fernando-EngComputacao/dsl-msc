@@ -1,24 +1,28 @@
 import {
-    createDefaultModule,
-    createDefaultSharedModule,
-    inject
+    createDefaultCoreModule,
+    createDefaultSharedCoreModule,
+    inject,
+    EmptyFileSystem
 } from 'langium';
 
 import {
-    DSLGeneratedModule,
-    DSLGeneratedSharedModule
-} from '../generated/module';
+    MyDslGeneratedModule,
+    dslProjectGeneratedSharedModule
+} from '../generated/module.js';
 
-export function createDSLServices(context: any) {
+export function createDSLServices(context = EmptyFileSystem) {
     const shared = inject(
-        createDefaultSharedModule(context),
-        DSLGeneratedSharedModule
+        createDefaultSharedCoreModule(context),
+        dslProjectGeneratedSharedModule
     );
 
     const DSL = inject(
-        createDefaultModule({ shared }),
-        DSLGeneratedModule
+        createDefaultCoreModule({ shared }),
+        MyDslGeneratedModule
     );
+
+    // ✅ Register so the service registry is never empty
+    shared.ServiceRegistry.register(DSL);
 
     return { shared, DSL };
 }

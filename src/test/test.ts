@@ -1,25 +1,30 @@
-import { createDSLServices } from '../language/dsl-module';
+import { createDSLServices } from '../language/dsl-module.js';
 import { EmptyFileSystem } from 'langium';
+import { URI } from 'vscode-uri';
+import { Model } from '../generated/ast.js';
 
 async function run() {
-    const services = createDSLServices(EmptyFileSystem);
+    const { shared, DSL } = createDSLServices(EmptyFileSystem);
 
-    const text = `reserve sala1 at "10:00"`;
-
-    const document = services.shared.workspace.LangiumDocumentFactory.fromString(
-        text,
-        services.DSL.LanguageMetaData.fileExtensions[0]
+    const document = shared.workspace.LangiumDocumentFactory.fromString(
+        `reserve Sala01 at "20:00"`,
+        URI.parse('file:///tmp/test.dsl')
     );
 
-    await services.shared.workspace.DocumentBuilder.build([document]);
+    // ✅ cast para o tipo gerado pelo langium
+    const result = document.parseResult;
+    const model = document.parseResult.value as Model;
 
-    const model = document.parseResult.value;
+    console.log('=== PARSE RESULT ===');
+    console.log(result);
+    console.log('=== MODEL ===');
+    console.log('Tipo:', model.$type);
+    console.log('Quantidade de reservas:', model.elements.length);
 
-    console.log("AST:");
-    console.dir(model, { depth: null });
-
-    for (const r of model.elements) {
-        console.log(`📅 Reserva: ${r.resource} às ${r.time}`);
+    console.log('\n=== RESERVAS ===');
+    for (const el of model.elements) {
+        console.log(`- Recurso: ${el.resource}`);
+        console.log(`  Horário: ${el.time}`);
     }
 }
 
