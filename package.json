@@ -14,6 +14,7 @@
   "type": "module",
   "dependencies": {
     "langium": "^4.2.1",
+    "neo4j-driver": "^6.0.1",
     "vscode-languageclient": "^9.0.1",
     "vscode-languageserver": "^9.0.1"
   },
