@@ -7,7 +7,7 @@ import { Model } from '../generated/ast.js';
 // ✅ Conexão com o Neo4j
 const driver = neo4j.driver(
     'bolt://localhost:7687',
-    neo4j.auth.basic('neo4j', 'sua_senha_aqui')
+    neo4j.auth.basic('neo4j', '#Infufg2025')
 );
 
 async function run() {
@@ -18,6 +18,11 @@ async function run() {
          reserve SalaB at "2026-03-22 16:00"`,
         URI.parse('file:///tmp/test.dsl')
     );
+
+    if (document.parseResult.lexerErrors.length > 0 || document.parseResult.parserErrors.length > 0) {
+        console.error('❌ Erro de sintaxe na sua DSL. Corrija o código antes de rodar.');
+        return; 
+    }
 
     const model = document.parseResult.value as Model;
 

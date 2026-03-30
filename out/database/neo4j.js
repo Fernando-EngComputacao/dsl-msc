@@ -3,11 +3,15 @@ import { createDSLServices } from '../language/dsl-module.js';
 import { EmptyFileSystem } from 'langium';
 import { URI } from 'vscode-uri';
 // ✅ Conexão com o Neo4j
-const driver = neo4j.driver('bolt://localhost:7687', neo4j.auth.basic('neo4j', 'sua_senha_aqui'));
+const driver = neo4j.driver('bolt://localhost:7687', neo4j.auth.basic('neo4j', '#Infufg2025'));
 async function run() {
     const { shared } = createDSLServices(EmptyFileSystem);
     const document = shared.workspace.LangiumDocumentFactory.fromString(`reserve SalaA at "2026-03-22 14:00"
          reserve SalaB at "2026-03-22 16:00"`, URI.parse('file:///tmp/test.dsl'));
+    if (document.parseResult.lexerErrors.length > 0 || document.parseResult.parserErrors.length > 0) {
+        console.error('❌ Erro de sintaxe na sua DSL. Corrija o código antes de rodar.');
+        return;
+    }
     const model = document.parseResult.value;
     const session = driver.session();
     try {
