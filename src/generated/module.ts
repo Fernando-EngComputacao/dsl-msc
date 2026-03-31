@@ -5,9 +5,9 @@
 
 import type { LangiumSharedCoreServices, LangiumCoreServices, LangiumGeneratedCoreServices, LangiumGeneratedSharedCoreServices, LanguageMetaData, Module } from 'langium';
 import { dslProjectAstReflection } from './ast.js';
-import { MyDslGrammar } from './grammar.js';
+import { DroneSolarInspectionGrammar } from './grammar.js';
 
-export const MyDslLanguageMetaData = {
+export const DroneSolarInspectionLanguageMetaData = {
     languageId: 'dsl',
     fileExtensions: ['.dsl'],
     caseInsensitive: false,
@@ -18,8 +18,8 @@ export const dslProjectGeneratedSharedModule: Module<LangiumSharedCoreServices, 
     AstReflection: () => new dslProjectAstReflection()
 };
 
-export const MyDslGeneratedModule: Module<LangiumCoreServices, LangiumGeneratedCoreServices> = {
-    Grammar: () => MyDslGrammar(),
-    LanguageMetaData: () => MyDslLanguageMetaData,
+export const DroneSolarInspectionGeneratedModule: Module<LangiumCoreServices, LangiumGeneratedCoreServices> = {
+    Grammar: () => DroneSolarInspectionGrammar(),
+    LanguageMetaData: () => DroneSolarInspectionLanguageMetaData,
     parser: {}
 };

@@ -10,33 +10,38 @@
     },
     {
       "name": "keyword.control.dsl",
-      "match": "\\b(at|reserve)\\b"
-    },
-    {
-      "name": "string.quoted.double.dsl",
-      "begin": "\"",
-      "end": "\"",
-      "patterns": [
-        {
-          "include": "#string-character-escape"
-        }
-      ]
-    },
-    {
-      "name": "string.quoted.single.dsl",
-      "begin": "'",
-      "end": "'",
-      "patterns": [
-        {
-          "include": "#string-character-escape"
-        }
-      ]
+      "match": "\\b(clean_panels|clouds|command|dirt_level|do|drone|energy_limit|farm|fire|fog|ignore_and_continue|on_sensor_input|return_to_base|scan|send_5G_alert|smoke_detected|storm|to_current_farm|urgency_high|using|weather|with_photo)\\b"
     }
   ],
   "repository": {
-    "string-character-escape": {
-      "name": "constant.character.escape.dsl",
-      "match": "\\\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|u\\{[0-9A-Fa-f]+\\}|[0-2][0-7]{0,2}|3[0-6][0-7]?|37[0-7]?|[4-7][0-7]?|.|$)"
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.dsl",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.dsl"
+            }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.dsl"
+            }
+          }
+        },
+        {
+          "begin": "//",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.whitespace.comment.leading.dsl"
+            }
+          },
+          "end": "(?=$)",
+          "name": "comment.line.dsl"
+        }
+      ]
     }
   }
 }

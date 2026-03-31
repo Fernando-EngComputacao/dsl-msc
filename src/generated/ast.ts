@@ -8,77 +8,388 @@ import * as langium from 'langium';
 
 export const dslProjectTerminals = {
     WS: /\s+/,
-    ID: /[a-zA-Z_][a-zA-Z0-9_]*/,
-    STRING: /"[^"]*"|'[^']*'/,
+    ID: /[_a-zA-Z][\w_]*/,
+    INT: /[0-9]+/,
+    ML_COMMENT: /\/\*[\s\S]*?\*\//,
+    SL_COMMENT: /\/\/[^\n\r]*/,
 };
 
 export type dslProjectTerminalNames = keyof typeof dslProjectTerminals;
 
 export type dslProjectKeywordNames =
-    | "at"
-    | "reserve";
+    | "%"
+    | ","
+    | "<"
+    | "<="
+    | "=="
+    | ">"
+    | ">="
+    | "clean_panels"
+    | "clouds"
+    | "command"
+    | "dirt_level"
+    | "do"
+    | "drone"
+    | "energy_limit"
+    | "farm"
+    | "fire"
+    | "fog"
+    | "ignore_and_continue"
+    | "on_sensor_input"
+    | "return_to_base"
+    | "scan"
+    | "send_5G_alert"
+    | "smoke_detected"
+    | "storm"
+    | "to_current_farm"
+    | "urgency_high"
+    | "using"
+    | "weather"
+    | "with_photo";
 
 export type dslProjectTokenNames = dslProjectTerminalNames | dslProjectKeywordNames;
 
-export interface Model extends langium.AstNode {
-    readonly $type: 'Model';
-    elements: Array<Reservation>;
-}
+export type Action = MessageAction | SimpleAction;
 
-export const Model = {
-    $type: 'Model',
-    elements: 'elements'
+export const Action = {
+    $type: 'Action'
 } as const;
 
-export function isModel(item: unknown): item is Model {
-    return reflection.isInstance(item, Model.$type);
+export function isAction(item: unknown): item is Action {
+    return reflection.isInstance(item, Action.$type);
 }
 
-export interface Reservation extends langium.AstNode {
-    readonly $container: Model;
-    readonly $type: 'Reservation';
-    resource: string;
-    time: string;
-}
+export type Definition = DroneDef | FarmDef | ScanCommand;
 
-export const Reservation = {
-    $type: 'Reservation',
-    resource: 'resource',
-    time: 'time'
+export const Definition = {
+    $type: 'Definition'
 } as const;
 
-export function isReservation(item: unknown): item is Reservation {
-    return reflection.isInstance(item, Reservation.$type);
+export function isDefinition(item: unknown): item is Definition {
+    return reflection.isInstance(item, Definition.$type);
+}
+
+export interface DirtEvent extends langium.AstNode {
+    readonly $container: Rule;
+    readonly $type: 'DirtEvent';
+    level: number;
+    operator: Operator;
+}
+
+export const DirtEvent = {
+    $type: 'DirtEvent',
+    level: 'level',
+    operator: 'operator'
+} as const;
+
+export function isDirtEvent(item: unknown): item is DirtEvent {
+    return reflection.isInstance(item, DirtEvent.$type);
+}
+
+export interface DroneDef extends langium.AstNode {
+    readonly $container: MissionControl;
+    readonly $type: 'DroneDef';
+    battery: number;
+    name: string;
+}
+
+export const DroneDef = {
+    $type: 'DroneDef',
+    battery: 'battery',
+    name: 'name'
+} as const;
+
+export function isDroneDef(item: unknown): item is DroneDef {
+    return reflection.isInstance(item, DroneDef.$type);
+}
+
+export type Event = DirtEvent | SmokeEvent | WeatherEvent;
+
+export const Event = {
+    $type: 'Event'
+} as const;
+
+export function isEvent(item: unknown): item is Event {
+    return reflection.isInstance(item, Event.$type);
+}
+
+export interface FarmDef extends langium.AstNode {
+    readonly $container: MissionControl;
+    readonly $type: 'FarmDef';
+    name: string;
+}
+
+export const FarmDef = {
+    $type: 'FarmDef',
+    name: 'name'
+} as const;
+
+export function isFarmDef(item: unknown): item is FarmDef {
+    return reflection.isInstance(item, FarmDef.$type);
+}
+
+export interface MessageAction extends langium.AstNode {
+    readonly $container: Rule;
+    readonly $type: 'MessageAction';
+    includePhoto: boolean;
+}
+
+export const MessageAction = {
+    $type: 'MessageAction',
+    includePhoto: 'includePhoto'
+} as const;
+
+export function isMessageAction(item: unknown): item is MessageAction {
+    return reflection.isInstance(item, MessageAction.$type);
+}
+
+export interface MissionControl extends langium.AstNode {
+    readonly $type: 'MissionControl';
+    definitions: Array<Definition>;
+    rules: Array<Rule>;
+}
+
+export const MissionControl = {
+    $type: 'MissionControl',
+    definitions: 'definitions',
+    rules: 'rules'
+} as const;
+
+export function isMissionControl(item: unknown): item is MissionControl {
+    return reflection.isInstance(item, MissionControl.$type);
+}
+
+export type Operator = '<' | '<=' | '==' | '>' | '>=';
+
+export function isOperator(item: unknown): item is Operator {
+    return item === '>' || item === '<' || item === '>=' || item === '<=' || item === '==';
+}
+
+export interface Rule extends langium.AstNode {
+    readonly $container: MissionControl;
+    readonly $type: 'Rule';
+    action: Action;
+    event: Event;
+}
+
+export const Rule = {
+    $type: 'Rule',
+    action: 'action',
+    event: 'event'
+} as const;
+
+export function isRule(item: unknown): item is Rule {
+    return reflection.isInstance(item, Rule.$type);
+}
+
+export interface ScanCommand extends langium.AstNode {
+    readonly $container: MissionControl;
+    readonly $type: 'ScanCommand';
+    drone: langium.Reference<DroneDef>;
+    farms: Array<langium.Reference<FarmDef>>;
+}
+
+export const ScanCommand = {
+    $type: 'ScanCommand',
+    drone: 'drone',
+    farms: 'farms'
+} as const;
+
+export function isScanCommand(item: unknown): item is ScanCommand {
+    return reflection.isInstance(item, ScanCommand.$type);
+}
+
+export interface SimpleAction extends langium.AstNode {
+    readonly $container: Rule;
+    readonly $type: 'SimpleAction';
+    command: 'clean_panels' | 'ignore_and_continue' | 'return_to_base';
+}
+
+export const SimpleAction = {
+    $type: 'SimpleAction',
+    command: 'command'
+} as const;
+
+export function isSimpleAction(item: unknown): item is SimpleAction {
+    return reflection.isInstance(item, SimpleAction.$type);
+}
+
+export interface SmokeEvent extends langium.AstNode {
+    readonly $container: Rule;
+    readonly $type: 'SmokeEvent';
+    type: 'fire' | 'fog';
+}
+
+export const SmokeEvent = {
+    $type: 'SmokeEvent',
+    type: 'type'
+} as const;
+
+export function isSmokeEvent(item: unknown): item is SmokeEvent {
+    return reflection.isInstance(item, SmokeEvent.$type);
+}
+
+export interface WeatherEvent extends langium.AstNode {
+    readonly $container: Rule;
+    readonly $type: 'WeatherEvent';
+    condition: 'clouds' | 'storm';
+}
+
+export const WeatherEvent = {
+    $type: 'WeatherEvent',
+    condition: 'condition'
+} as const;
+
+export function isWeatherEvent(item: unknown): item is WeatherEvent {
+    return reflection.isInstance(item, WeatherEvent.$type);
 }
 
 export type dslProjectAstType = {
-    Model: Model
-    Reservation: Reservation
+    Action: Action
+    Definition: Definition
+    DirtEvent: DirtEvent
+    DroneDef: DroneDef
+    Event: Event
+    FarmDef: FarmDef
+    MessageAction: MessageAction
+    MissionControl: MissionControl
+    Rule: Rule
+    ScanCommand: ScanCommand
+    SimpleAction: SimpleAction
+    SmokeEvent: SmokeEvent
+    WeatherEvent: WeatherEvent
 }
 
 export class dslProjectAstReflection extends langium.AbstractAstReflection {
     override readonly types = {
-        Model: {
-            name: Model.$type,
+        Action: {
+            name: Action.$type,
             properties: {
-                elements: {
-                    name: Model.elements,
+            },
+            superTypes: []
+        },
+        Definition: {
+            name: Definition.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        DirtEvent: {
+            name: DirtEvent.$type,
+            properties: {
+                level: {
+                    name: DirtEvent.level
+                },
+                operator: {
+                    name: DirtEvent.operator
+                }
+            },
+            superTypes: [Event.$type]
+        },
+        DroneDef: {
+            name: DroneDef.$type,
+            properties: {
+                battery: {
+                    name: DroneDef.battery
+                },
+                name: {
+                    name: DroneDef.name
+                }
+            },
+            superTypes: [Definition.$type]
+        },
+        Event: {
+            name: Event.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        FarmDef: {
+            name: FarmDef.$type,
+            properties: {
+                name: {
+                    name: FarmDef.name
+                }
+            },
+            superTypes: [Definition.$type]
+        },
+        MessageAction: {
+            name: MessageAction.$type,
+            properties: {
+                includePhoto: {
+                    name: MessageAction.includePhoto,
+                    defaultValue: false
+                }
+            },
+            superTypes: [Action.$type]
+        },
+        MissionControl: {
+            name: MissionControl.$type,
+            properties: {
+                definitions: {
+                    name: MissionControl.definitions,
+                    defaultValue: []
+                },
+                rules: {
+                    name: MissionControl.rules,
                     defaultValue: []
                 }
             },
             superTypes: []
         },
-        Reservation: {
-            name: Reservation.$type,
+        Rule: {
+            name: Rule.$type,
             properties: {
-                resource: {
-                    name: Reservation.resource
+                action: {
+                    name: Rule.action
                 },
-                time: {
-                    name: Reservation.time
+                event: {
+                    name: Rule.event
                 }
             },
             superTypes: []
+        },
+        ScanCommand: {
+            name: ScanCommand.$type,
+            properties: {
+                drone: {
+                    name: ScanCommand.drone,
+                    referenceType: DroneDef.$type
+                },
+                farms: {
+                    name: ScanCommand.farms,
+                    defaultValue: [],
+                    referenceType: FarmDef.$type
+                }
+            },
+            superTypes: [Definition.$type]
+        },
+        SimpleAction: {
+            name: SimpleAction.$type,
+            properties: {
+                command: {
+                    name: SimpleAction.command
+                }
+            },
+            superTypes: [Action.$type]
+        },
+        SmokeEvent: {
+            name: SmokeEvent.$type,
+            properties: {
+                type: {
+                    name: SmokeEvent.type
+                }
+            },
+            superTypes: [Event.$type]
+        },
+        WeatherEvent: {
+            name: WeatherEvent.$type,
+            properties: {
+                condition: {
+                    name: WeatherEvent.condition
+                }
+            },
+            superTypes: [Event.$type]
         }
     } as const satisfies langium.AstMetaData
 }

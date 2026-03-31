@@ -3,8 +3,8 @@
  * DO NOT EDIT MANUALLY!
  ******************************************************************************/
 import { dslProjectAstReflection } from './ast.js';
-import { MyDslGrammar } from './grammar.js';
-export const MyDslLanguageMetaData = {
+import { DroneSolarInspectionGrammar } from './grammar.js';
+export const DroneSolarInspectionLanguageMetaData = {
     languageId: 'dsl',
     fileExtensions: ['.dsl'],
     caseInsensitive: false,
@@ -13,8 +13,8 @@ export const MyDslLanguageMetaData = {
 export const dslProjectGeneratedSharedModule = {
     AstReflection: () => new dslProjectAstReflection()
 };
-export const MyDslGeneratedModule = {
-    Grammar: () => MyDslGrammar(),
-    LanguageMetaData: () => MyDslLanguageMetaData,
+export const DroneSolarInspectionGeneratedModule = {
+    Grammar: () => DroneSolarInspectionGrammar(),
+    LanguageMetaData: () => DroneSolarInspectionLanguageMetaData,
     parser: {}
 };

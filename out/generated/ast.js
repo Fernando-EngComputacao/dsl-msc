@@ -6,49 +6,236 @@
 import * as langium from 'langium';
 export const dslProjectTerminals = {
     WS: /\s+/,
-    ID: /[a-zA-Z_][a-zA-Z0-9_]*/,
-    STRING: /"[^"]*"|'[^']*'/,
+    ID: /[_a-zA-Z][\w_]*/,
+    INT: /[0-9]+/,
+    ML_COMMENT: /\/\*[\s\S]*?\*\//,
+    SL_COMMENT: /\/\/[^\n\r]*/,
 };
-export const Model = {
-    $type: 'Model',
-    elements: 'elements'
+export const Action = {
+    $type: 'Action'
 };
-export function isModel(item) {
-    return reflection.isInstance(item, Model.$type);
+export function isAction(item) {
+    return reflection.isInstance(item, Action.$type);
 }
-export const Reservation = {
-    $type: 'Reservation',
-    resource: 'resource',
-    time: 'time'
+export const Definition = {
+    $type: 'Definition'
 };
-export function isReservation(item) {
-    return reflection.isInstance(item, Reservation.$type);
+export function isDefinition(item) {
+    return reflection.isInstance(item, Definition.$type);
+}
+export const DirtEvent = {
+    $type: 'DirtEvent',
+    level: 'level',
+    operator: 'operator'
+};
+export function isDirtEvent(item) {
+    return reflection.isInstance(item, DirtEvent.$type);
+}
+export const DroneDef = {
+    $type: 'DroneDef',
+    battery: 'battery',
+    name: 'name'
+};
+export function isDroneDef(item) {
+    return reflection.isInstance(item, DroneDef.$type);
+}
+export const Event = {
+    $type: 'Event'
+};
+export function isEvent(item) {
+    return reflection.isInstance(item, Event.$type);
+}
+export const FarmDef = {
+    $type: 'FarmDef',
+    name: 'name'
+};
+export function isFarmDef(item) {
+    return reflection.isInstance(item, FarmDef.$type);
+}
+export const MessageAction = {
+    $type: 'MessageAction',
+    includePhoto: 'includePhoto'
+};
+export function isMessageAction(item) {
+    return reflection.isInstance(item, MessageAction.$type);
+}
+export const MissionControl = {
+    $type: 'MissionControl',
+    definitions: 'definitions',
+    rules: 'rules'
+};
+export function isMissionControl(item) {
+    return reflection.isInstance(item, MissionControl.$type);
+}
+export function isOperator(item) {
+    return item === '>' || item === '<' || item === '>=' || item === '<=' || item === '==';
+}
+export const Rule = {
+    $type: 'Rule',
+    action: 'action',
+    event: 'event'
+};
+export function isRule(item) {
+    return reflection.isInstance(item, Rule.$type);
+}
+export const ScanCommand = {
+    $type: 'ScanCommand',
+    drone: 'drone',
+    farms: 'farms'
+};
+export function isScanCommand(item) {
+    return reflection.isInstance(item, ScanCommand.$type);
+}
+export const SimpleAction = {
+    $type: 'SimpleAction',
+    command: 'command'
+};
+export function isSimpleAction(item) {
+    return reflection.isInstance(item, SimpleAction.$type);
+}
+export const SmokeEvent = {
+    $type: 'SmokeEvent',
+    type: 'type'
+};
+export function isSmokeEvent(item) {
+    return reflection.isInstance(item, SmokeEvent.$type);
+}
+export const WeatherEvent = {
+    $type: 'WeatherEvent',
+    condition: 'condition'
+};
+export function isWeatherEvent(item) {
+    return reflection.isInstance(item, WeatherEvent.$type);
 }
 export class dslProjectAstReflection extends langium.AbstractAstReflection {
     constructor() {
         super(...arguments);
         this.types = {
-            Model: {
-                name: Model.$type,
+            Action: {
+                name: Action.$type,
+                properties: {},
+                superTypes: []
+            },
+            Definition: {
+                name: Definition.$type,
+                properties: {},
+                superTypes: []
+            },
+            DirtEvent: {
+                name: DirtEvent.$type,
                 properties: {
-                    elements: {
-                        name: Model.elements,
+                    level: {
+                        name: DirtEvent.level
+                    },
+                    operator: {
+                        name: DirtEvent.operator
+                    }
+                },
+                superTypes: [Event.$type]
+            },
+            DroneDef: {
+                name: DroneDef.$type,
+                properties: {
+                    battery: {
+                        name: DroneDef.battery
+                    },
+                    name: {
+                        name: DroneDef.name
+                    }
+                },
+                superTypes: [Definition.$type]
+            },
+            Event: {
+                name: Event.$type,
+                properties: {},
+                superTypes: []
+            },
+            FarmDef: {
+                name: FarmDef.$type,
+                properties: {
+                    name: {
+                        name: FarmDef.name
+                    }
+                },
+                superTypes: [Definition.$type]
+            },
+            MessageAction: {
+                name: MessageAction.$type,
+                properties: {
+                    includePhoto: {
+                        name: MessageAction.includePhoto,
+                        defaultValue: false
+                    }
+                },
+                superTypes: [Action.$type]
+            },
+            MissionControl: {
+                name: MissionControl.$type,
+                properties: {
+                    definitions: {
+                        name: MissionControl.definitions,
+                        defaultValue: []
+                    },
+                    rules: {
+                        name: MissionControl.rules,
                         defaultValue: []
                     }
                 },
                 superTypes: []
             },
-            Reservation: {
-                name: Reservation.$type,
+            Rule: {
+                name: Rule.$type,
                 properties: {
-                    resource: {
-                        name: Reservation.resource
+                    action: {
+                        name: Rule.action
                     },
-                    time: {
-                        name: Reservation.time
+                    event: {
+                        name: Rule.event
                     }
                 },
                 superTypes: []
+            },
+            ScanCommand: {
+                name: ScanCommand.$type,
+                properties: {
+                    drone: {
+                        name: ScanCommand.drone,
+                        referenceType: DroneDef.$type
+                    },
+                    farms: {
+                        name: ScanCommand.farms,
+                        defaultValue: [],
+                        referenceType: FarmDef.$type
+                    }
+                },
+                superTypes: [Definition.$type]
+            },
+            SimpleAction: {
+                name: SimpleAction.$type,
+                properties: {
+                    command: {
+                        name: SimpleAction.command
+                    }
+                },
+                superTypes: [Action.$type]
+            },
+            SmokeEvent: {
+                name: SmokeEvent.$type,
+                properties: {
+                    type: {
+                        name: SmokeEvent.type
+                    }
+                },
+                superTypes: [Event.$type]
+            },
+            WeatherEvent: {
+                name: WeatherEvent.$type,
+                properties: {
+                    condition: {
+                        name: WeatherEvent.condition
+                    }
+                },
+                superTypes: [Event.$type]
             }
         };
     }

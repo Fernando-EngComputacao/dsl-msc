@@ -1,7 +1,7 @@
 import { createDefaultCoreModule, createDefaultSharedCoreModule, inject } from 'langium';
-import { MyDslGeneratedModule, dslProjectGeneratedSharedModule } from '../generated/module.js';
+import { DroneSolarInspectionGeneratedModule, dslProjectGeneratedSharedModule } from '../generated/module.js';
 export function createDSLServices(context) {
     const shared = inject(createDefaultSharedCoreModule(context), dslProjectGeneratedSharedModule);
-    const DSL = inject(createDefaultCoreModule({ shared }), MyDslGeneratedModule);
+    const DSL = inject(createDefaultCoreModule({ shared }), DroneSolarInspectionGeneratedModule);
     return { shared, DSL };
 }
