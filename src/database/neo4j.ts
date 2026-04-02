@@ -7,7 +7,7 @@ import { MissionControl, isDroneDef, isFarmDef, isScanCommand } from '../generat
 // ✅ Conexão com o Neo4j
 const driver = neo4j.driver(
     'bolt://localhost:7687',
-    neo4j.auth.basic('neo4j', '#Infufg2025') // Coloque sua senha correta
+    neo4j.auth.basic('neo4j', '#Infufg2025')
 );
 
 async function run() {
