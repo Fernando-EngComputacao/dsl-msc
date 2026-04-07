@@ -1,84 +1,121 @@
 import neo4j from 'neo4j-driver';
 import { pipeline } from '@xenova/transformers';
 
-// ✅ Conexão com o Neo4j
 const driver = neo4j.driver(
     'bolt://localhost:7687',
-    neo4j.auth.basic('neo4j', '#Infufg2025') // Ajuste a senha se necessário
+    neo4j.auth.basic('neo4j', '#Infufg2025')
 );
 
-async function buscarNoGrafo(inputUsuario: string) {
-    console.log(`\n🗣️ Input recebido: "${inputUsuario}"`);
-    console.log('⏳ Gerando embedding do input...');
+interface LeituraSensores {
+    cultura_identificada: string;
+    temperatura: number;
+    vento_kmh: number;
+    umidade: number;
+    observacao_texto: string;
+}
+
+async function motorDeDecisaoDrone(dados: LeituraSensores) {
+    console.log(`\n🛸 RECEBENDO INPUT DO DRONE E DO PEÃO...`);
     
-    // 1. Carrega o extrator e gera o vetor do input
+    // 1. EMBEDDING: Transforma o input em vetor
     const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-    const output = await extractor(inputUsuario, { pooling: 'mean', normalize: true });
+    const textoBusca = `${dados.observacao_texto}. Clima: T=${dados.temperatura}C, Vento=${dados.vento_kmh}km/h, Umidade=${dados.umidade}%`;
+    const output = await extractor(textoBusca, { pooling: 'mean', normalize: true });
     const vetorBusca = Array.from(output.data);
 
     const session = driver.session();
+    let regrasRecuperadas: string[] = [];
 
     try {
-        console.log('🔍 Buscando regras similares no Neo4j...\n');
-
-        // 2. Consulta Cypher (GraphRAG)
-        // Usamos o índice vetorial 'agro_rules_index' criado no passo anterior
-        // Buscamos o top 3 resultados (k = 3)
-        // O "OPTIONAL MATCH" verifica se a regra está ligada a uma Cultura específica ou se é Global
+        // 2. CONSULTA KG: Busca apenas as regras da cultura identificada
         const query = `
-            CALL db.index.vector.queryNodes('agro_rules_index', 3, $vetorBusca)
+            CALL db.index.vector.queryNodes('agro_rules_index', 5, $vetorBusca)
             YIELD node AS regra, score
             OPTIONAL MATCH (cultura:Crop)-[:HAS_RULE]->(regra)
-            RETURN 
-                coalesce(cultura.name, 'Regra Global') AS escopo,
-                regra.type AS tipo_regra,
-                regra.description AS descricao,
-                score
-            ORDER BY score DESC
+            WITH regra, score, coalesce(cultura.name, 'Regra Global') AS escopo
+            WHERE escopo = $culturaAlvo OR escopo = 'Regra Global'
+            RETURN regra.description AS descricao
         `;
 
-        const result = await session.run(query, { vetorBusca });
+        const result = await session.run(query, { vetorBusca, culturaAlvo: dados.cultura_identificada });
+        regrasRecuperadas = result.records.map(record => record.get('descricao'));
 
-        if (result.records.length === 0) {
-            console.log('⚠️ Nenhuma regra encontrada para este input.');
+        if (regrasRecuperadas.length === 0) {
+            console.log('⚠️ Nenhuma regra encontrada no Grafo para avaliar.');
             return;
         }
 
-        console.log('🎯 RESULTADOS ENCONTRADOS NO GRAFO:');
-        result.records.forEach((record, index) => {
-            const score = record.get('score').toFixed(4); // Grau de semelhança (0 a 1)
-            const escopo = record.get('escopo');          // Soja, Milho, Cana ou Global
-            const tipo = record.get('tipo_regra');        // SweepRule, BanRule, etc.
-            const descricao = record.get('descricao');
+        // 3. PROMPTING (LLM Gramatics DSL): Cruzando dados do sensor com as regras do Grafo
+        console.log('🧠 Enviando contexto para o LLM (Tomada de Decisão)...\n');
+        
+        const promptEstruturado = `
+            Você é o sistema autônomo de um Drone Agrícola.
+            Sua missão é avaliar os dados dos sensores e decidir se o drone pode executar a ordem do usuário, baseando-se EXCLUSIVAMENTE nas Regras Extraídas do Grafo de Conhecimento.
 
-            console.log(`\n[${index + 1}] Grau de Confiança: ${score}`);
-            console.log(`    🌾 Escopo: ${escopo}`);
-            console.log(`    🏷️  Tipo de Regra: ${tipo ?? 'GlobalRule'}`);
-            console.log(`    📋 Descrição: ${descricao}`);
-        });
+            [DADOS DOS SENSORES]
+            Cultura: ${dados.cultura_identificada}
+            Temperatura: ${dados.temperatura}°C
+            Vento: ${dados.vento_kmh} km/h
+            Umidade: ${dados.umidade}%
+            Pedido do operador: "${dados.observacao_texto}"
+
+            [REGRAS EXTRAÍDAS DO GRAFO PARA ESSA CULTURA]
+            ${regrasRecuperadas.map(r => `- ${r}`).join('\n')}
+
+            [FORMATO DE SAÍDA EXIGIDO - JSON]
+            Analise os dados. Retorne um JSON com:
+            "status": "PERMITIDO" ou "RECUSADO"
+            "motivo": Explicar o cruzamento lógico das regras com os sensores.
+            "acao_drone": O que o drone deve fazer agora (ex: retornar a base, aplicar produto X).
+            `;
+
+        console.log("================ PROMPT GERADO ================");
+        console.log(promptEstruturado);
+        console.log("===============================================\n");
+
+        // 4. CHAMADA AO LLM (Aqui você usaria openai.chat.completions.create, etc.)
+        const respostaLLM = await simularChamadaLLM(promptEstruturado, dados);
+        
+        console.log('✅ DECISÃO FINAL DO SISTEMA (Retorno do LLM):');
+        console.log(JSON.stringify(respostaLLM, null, 2));
 
     } catch (error) {
-        console.error('❌ Erro durante a busca no Neo4j:', error);
+        console.error('❌ Erro no motor de decisão:', error);
     } finally {
         await session.close();
     }
 }
 
-// ==========================================
-// 🧪 TESTES BASEADOS NO SEU DIAGRAMA (PDF)
-// ==========================================
-async function runTests() {
-    // Teste 1: Simulação do sensor de folha da Cana (deve retornar a regra de estresse hídrico)
-    //await buscarNoGrafo("Temperatura alta nas folhas detectada pelo sensor, marcando 41 graus.");
+// Função simulando a "inteligência" de um LLM lendo o prompt acima
+async function simularChamadaLLM(prompt: string, sensores: LeituraSensores) {
+    // A IA faria esse raciocínio matematico/lógico:
+    if (sensores.cultura_identificada === 'Cana_de_Acucar' && sensores.temperatura > 32) {
+        return {
+            status: "RECUSADO",
+            motivo: `A temperatura atual é ${sensores.temperatura}°C, o que viola a Regra Climática da Cana que exige T < 32°C. Além disso, o sensor foliar indica estresse hídrico. A aplicação nestas condições causaria fitotoxicidade grave ou perda do produto por evaporação rápida.`,
+            acao_drone: "Abortar missão. Registrar log de estresse hídrico no sistema e retornar para a base."
+        };
+    }
     
-    // Teste 2: Simulação do Agrônomo (deve retornar a proibição de misturar glifosato na soja)
-     await buscarNoGrafo("Vai chover logo, posso misturar glifosato com mancozebe?");
-    
-    // Teste 3: Simulação de regra global
-    // await buscarNoGrafo("Estou saindo do campo de soja e indo para a cana com o drone.");
+    return {
+        status: "PERMITIDO",
+        motivo: "Todos os parâmetros climáticos e as regras de restrição foram respeitados.",
+        acao_drone: "Iniciar aplicação seguindo a vazão cadastrada na DSL."
+    };
+}
 
-    // Fechar a conexão do banco ao terminar
+// 🧪 EXECUTANDO SEU TESTE
+async function run() {
+    const leituraCana: LeituraSensores = {
+        cultura_identificada: "Cana_de_Acucar",
+        temperatura: 41.5, // ⚠️ Acima do limite da regra (32C)!
+        vento_kmh: 5,
+        umidade: 40,
+        observacao_texto: "Aplique veneno na cultura"
+    };
+
+    await motorDeDecisaoDrone(leituraCana);
     await driver.close();
 }
 
-runTests();
+run();
