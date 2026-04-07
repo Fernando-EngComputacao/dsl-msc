@@ -15,7 +15,7 @@ async function run() {
     const { shared } = createDSLServices(EmptyFileSystem);
 
     // 1. Código DSL baseado nas regras do diagrama do Agrônomo
-    const dslCode = `
+     const dslCode = `
         cultura Soja {
             herbicida Glifosato - "1.5-2.0 L/ha" - "pós-emergência"
             fungicida Mancozebe - "1.5 kg/ha" - "preventivo ferrugem"
@@ -26,6 +26,18 @@ async function run() {
             regra_clima: "06h-09h ou 17h-19h (T < 30C, vento < 10 km/h)"
             regra_varredura: "Indice NDVI" < 0.4 -> "alerta pragas"
             informar: "Area afetada (ha), produto aplicado, hora, sensor NDVI"
+        }
+
+        cultura Milho {
+            herbicida Atrazina - "1.5-3.0 L/ha" - "pré e pós-emergência"
+            fungicida Trifloxistrobina - "0.4 L/ha" - "cercosporiose"
+            inseticida Clorpirifos - "0.5 L/ha" - "cigarrinha-do-milho"
+
+            regra: nao_misturar Atrazina + "Clorpirifos" ("inibição metabólica milho")
+            regra: proibido "Atrazina em área < 500m de manancial hídrico"
+            regra_clima: "somente manhã (06h-10h), umidade > 55%"
+            regra_varredura: "Sensor umidade foliar" < 60.0 -> "risco cigarrinha"
+            informar: "Talhão, estádio fenológico, nível de infestação, vento"
         }
 
         cultura Cana_de_Acucar {
@@ -43,7 +55,7 @@ async function run() {
         regra_global: "Limpar tanque do drone entre culturas diferentes"
         regra_global: "Nunca aplicar simultaneamente em talhões adjacentes com ventos > 8 km/h se culturas diferentes"
 
-        comando aplicar Soja, Cana_de_Acucar usando DroneAgricola01
+        comando aplicar Soja, Milho, Cana_de_Acucar usando DroneAgricola01
     `;
 
     const document = shared.workspace.LangiumDocumentFactory.fromString(dslCode, URI.parse('file:///tmp/agro.dsl'));
