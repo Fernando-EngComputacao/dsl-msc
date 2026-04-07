@@ -64,6 +64,16 @@ sudo neo4j status
 sudo neo4j stop
 ```
 
+## 🗄️ 5. Busca: Embedding + Neo4j
+
+Para buscar no KG (Knowledge Graph) a partir do input, utilize os comandos de serviço:
+
+```bash
+# Executa no input convertendo em vetores de índice para busco no KG
+npx tsx src/database/semantic-search.ts
+
+```
+
 **Configuração da Conexão:**
 Certifique-se de que o seu arquivo `database.ts` esteja apontando para a URI `bolt://localhost:7687`, com o usuário `neo4j` e a senha `senha_super_secreta`.
 
