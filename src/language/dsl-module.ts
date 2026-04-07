@@ -6,19 +6,19 @@ import {
 } from 'langium';
 
 import {
-    DroneSolarInspectionGeneratedModule,
+    AgroDroneGeneratedModule,
     dslProjectGeneratedSharedModule 
 } from '../generated/module.js';
 
 export function createDSLServices(context = EmptyFileSystem) {
     const shared = inject(
         createDefaultSharedCoreModule(context),
-        dslProjectGeneratedSharedModule // <-- Aqui também
+        dslProjectGeneratedSharedModule 
     );
 
     const DSL = inject(
         createDefaultCoreModule({ shared }),
-        DroneSolarInspectionGeneratedModule
+        AgroDroneGeneratedModule
     );
 
     shared.ServiceRegistry.register(DSL);

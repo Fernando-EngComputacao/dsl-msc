@@ -7,9 +7,10 @@
 import * as langium from 'langium';
 
 export const dslProjectTerminals = {
-    WS: /\s+/,
     ID: /[_a-zA-Z][\w_]*/,
-    INT: /[0-9]+/,
+    STRING: /"[^"]*"|'[^']*'/,
+    FLOAT: /[0-9]+(\.[0-9]+)?/,
+    WS: /\s+/,
     ML_COMMENT: /\/\*[\s\S]*?\*\//,
     SL_COMMENT: /\/\/[^\n\r]*/,
 };
@@ -17,146 +18,179 @@ export const dslProjectTerminals = {
 export type dslProjectTerminalNames = keyof typeof dslProjectTerminals;
 
 export type dslProjectKeywordNames =
-    | "%"
+    | "("
+    | ")"
+    | "+"
     | ","
+    | "-"
+    | "->"
     | "<"
     | "<="
     | "=="
     | ">"
     | ">="
-    | "clean_panels"
-    | "clouds"
-    | "command"
-    | "dirt_level"
-    | "do"
-    | "drone"
-    | "energy_limit"
-    | "farm"
-    | "fire"
-    | "fog"
-    | "ignore_and_continue"
-    | "on_sensor_input"
-    | "return_to_base"
-    | "scan"
-    | "send_5G_alert"
-    | "smoke_detected"
-    | "storm"
-    | "to_current_farm"
-    | "urgency_high"
-    | "using"
-    | "weather"
-    | "with_photo";
+    | "aplicar"
+    | "comando"
+    | "cultura"
+    | "fungicida"
+    | "herbicida"
+    | "informar:"
+    | "inseticida"
+    | "nao_misturar"
+    | "proibido"
+    | "regra:"
+    | "regra_clima:"
+    | "regra_global:"
+    | "regra_varredura:"
+    | "usando"
+    | "{"
+    | "}";
 
 export type dslProjectTokenNames = dslProjectTerminalNames | dslProjectKeywordNames;
 
-export type Action = MessageAction | SimpleAction;
+export interface AgroModel extends langium.AstNode {
+    readonly $type: 'AgroModel';
+    elements: Array<Element>;
+}
 
-export const Action = {
-    $type: 'Action'
+export const AgroModel = {
+    $type: 'AgroModel',
+    elements: 'elements'
 } as const;
 
-export function isAction(item: unknown): item is Action {
-    return reflection.isInstance(item, Action.$type);
+export function isAgroModel(item: unknown): item is AgroModel {
+    return reflection.isInstance(item, AgroModel.$type);
 }
 
-export type Definition = DroneDef | FarmDef | ScanCommand;
+export interface BanRule extends langium.AstNode {
+    readonly $container: CropDef;
+    readonly $type: 'BanRule';
+    condition: string;
+}
 
-export const Definition = {
-    $type: 'Definition'
+export const BanRule = {
+    $type: 'BanRule',
+    condition: 'condition'
 } as const;
 
-export function isDefinition(item: unknown): item is Definition {
-    return reflection.isInstance(item, Definition.$type);
+export function isBanRule(item: unknown): item is BanRule {
+    return reflection.isInstance(item, BanRule.$type);
 }
 
-export interface DirtEvent extends langium.AstNode {
-    readonly $container: Rule;
-    readonly $type: 'DirtEvent';
-    level: number;
-    operator: Operator;
-}
-
-export const DirtEvent = {
-    $type: 'DirtEvent',
-    level: 'level',
-    operator: 'operator'
-} as const;
-
-export function isDirtEvent(item: unknown): item is DirtEvent {
-    return reflection.isInstance(item, DirtEvent.$type);
-}
-
-export interface DroneDef extends langium.AstNode {
-    readonly $container: MissionControl;
-    readonly $type: 'DroneDef';
-    battery: number;
+export interface ChemicalDef extends langium.AstNode {
+    readonly $container: CropDef;
+    readonly $type: 'ChemicalDef';
+    dosage: string;
     name: string;
+    timing: string;
+    type: 'fungicida' | 'herbicida' | 'inseticida';
 }
 
-export const DroneDef = {
-    $type: 'DroneDef',
-    battery: 'battery',
-    name: 'name'
+export const ChemicalDef = {
+    $type: 'ChemicalDef',
+    dosage: 'dosage',
+    name: 'name',
+    timing: 'timing',
+    type: 'type'
 } as const;
 
-export function isDroneDef(item: unknown): item is DroneDef {
-    return reflection.isInstance(item, DroneDef.$type);
+export function isChemicalDef(item: unknown): item is ChemicalDef {
+    return reflection.isInstance(item, ChemicalDef.$type);
 }
 
-export type Event = DirtEvent | SmokeEvent | WeatherEvent;
-
-export const Event = {
-    $type: 'Event'
-} as const;
-
-export function isEvent(item: unknown): item is Event {
-    return reflection.isInstance(item, Event.$type);
-}
-
-export interface FarmDef extends langium.AstNode {
-    readonly $container: MissionControl;
-    readonly $type: 'FarmDef';
+export interface CropDef extends langium.AstNode {
+    readonly $container: AgroModel;
+    readonly $type: 'CropDef';
+    chemicals: Array<ChemicalDef>;
     name: string;
+    rules: Array<RuleDef>;
 }
 
-export const FarmDef = {
-    $type: 'FarmDef',
-    name: 'name'
-} as const;
-
-export function isFarmDef(item: unknown): item is FarmDef {
-    return reflection.isInstance(item, FarmDef.$type);
-}
-
-export interface MessageAction extends langium.AstNode {
-    readonly $container: Rule;
-    readonly $type: 'MessageAction';
-    includePhoto: boolean;
-}
-
-export const MessageAction = {
-    $type: 'MessageAction',
-    includePhoto: 'includePhoto'
-} as const;
-
-export function isMessageAction(item: unknown): item is MessageAction {
-    return reflection.isInstance(item, MessageAction.$type);
-}
-
-export interface MissionControl extends langium.AstNode {
-    readonly $type: 'MissionControl';
-    definitions: Array<Definition>;
-    rules: Array<Rule>;
-}
-
-export const MissionControl = {
-    $type: 'MissionControl',
-    definitions: 'definitions',
+export const CropDef = {
+    $type: 'CropDef',
+    chemicals: 'chemicals',
+    name: 'name',
     rules: 'rules'
 } as const;
 
-export function isMissionControl(item: unknown): item is MissionControl {
-    return reflection.isInstance(item, MissionControl.$type);
+export function isCropDef(item: unknown): item is CropDef {
+    return reflection.isInstance(item, CropDef.$type);
+}
+
+export type Element = CropDef | GlobalRule | MissionCommand;
+
+export const Element = {
+    $type: 'Element'
+} as const;
+
+export function isElement(item: unknown): item is Element {
+    return reflection.isInstance(item, Element.$type);
+}
+
+export interface GlobalRule extends langium.AstNode {
+    readonly $container: AgroModel;
+    readonly $type: 'GlobalRule';
+    description: string;
+}
+
+export const GlobalRule = {
+    $type: 'GlobalRule',
+    description: 'description'
+} as const;
+
+export function isGlobalRule(item: unknown): item is GlobalRule {
+    return reflection.isInstance(item, GlobalRule.$type);
+}
+
+export interface InformRule extends langium.AstNode {
+    readonly $container: CropDef;
+    readonly $type: 'InformRule';
+    items: string;
+}
+
+export const InformRule = {
+    $type: 'InformRule',
+    items: 'items'
+} as const;
+
+export function isInformRule(item: unknown): item is InformRule {
+    return reflection.isInstance(item, InformRule.$type);
+}
+
+export interface MissionCommand extends langium.AstNode {
+    readonly $container: AgroModel;
+    readonly $type: 'MissionCommand';
+    crops: Array<langium.Reference<CropDef>>;
+    drone: string;
+}
+
+export const MissionCommand = {
+    $type: 'MissionCommand',
+    crops: 'crops',
+    drone: 'drone'
+} as const;
+
+export function isMissionCommand(item: unknown): item is MissionCommand {
+    return reflection.isInstance(item, MissionCommand.$type);
+}
+
+export interface MixingRule extends langium.AstNode {
+    readonly $container: CropDef;
+    readonly $type: 'MixingRule';
+    chem1: langium.Reference<ChemicalDef>;
+    chem2: string;
+    reason: string;
+}
+
+export const MixingRule = {
+    $type: 'MixingRule',
+    chem1: 'chem1',
+    chem2: 'chem2',
+    reason: 'reason'
+} as const;
+
+export function isMixingRule(item: unknown): item is MixingRule {
+    return reflection.isInstance(item, MixingRule.$type);
 }
 
 export type Operator = '<' | '<=' | '==' | '>' | '>=';
@@ -165,231 +199,209 @@ export function isOperator(item: unknown): item is Operator {
     return item === '>' || item === '<' || item === '>=' || item === '<=' || item === '==';
 }
 
-export interface Rule extends langium.AstNode {
-    readonly $container: MissionControl;
-    readonly $type: 'Rule';
-    action: Action;
-    event: Event;
+export type RuleDef = BanRule | InformRule | MixingRule | SweepRule | WeatherRule;
+
+export const RuleDef = {
+    $type: 'RuleDef'
+} as const;
+
+export function isRuleDef(item: unknown): item is RuleDef {
+    return reflection.isInstance(item, RuleDef.$type);
 }
 
-export const Rule = {
-    $type: 'Rule',
+export interface SweepRule extends langium.AstNode {
+    readonly $container: CropDef;
+    readonly $type: 'SweepRule';
+    action: string;
+    operator: Operator;
+    sensor: string;
+    value: number;
+}
+
+export const SweepRule = {
+    $type: 'SweepRule',
     action: 'action',
-    event: 'event'
+    operator: 'operator',
+    sensor: 'sensor',
+    value: 'value'
 } as const;
 
-export function isRule(item: unknown): item is Rule {
-    return reflection.isInstance(item, Rule.$type);
+export function isSweepRule(item: unknown): item is SweepRule {
+    return reflection.isInstance(item, SweepRule.$type);
 }
 
-export interface ScanCommand extends langium.AstNode {
-    readonly $container: MissionControl;
-    readonly $type: 'ScanCommand';
-    drone: langium.Reference<DroneDef>;
-    farms: Array<langium.Reference<FarmDef>>;
+export interface WeatherRule extends langium.AstNode {
+    readonly $container: CropDef;
+    readonly $type: 'WeatherRule';
+    conditions: string;
 }
 
-export const ScanCommand = {
-    $type: 'ScanCommand',
-    drone: 'drone',
-    farms: 'farms'
+export const WeatherRule = {
+    $type: 'WeatherRule',
+    conditions: 'conditions'
 } as const;
 
-export function isScanCommand(item: unknown): item is ScanCommand {
-    return reflection.isInstance(item, ScanCommand.$type);
-}
-
-export interface SimpleAction extends langium.AstNode {
-    readonly $container: Rule;
-    readonly $type: 'SimpleAction';
-    command: 'clean_panels' | 'ignore_and_continue' | 'return_to_base';
-}
-
-export const SimpleAction = {
-    $type: 'SimpleAction',
-    command: 'command'
-} as const;
-
-export function isSimpleAction(item: unknown): item is SimpleAction {
-    return reflection.isInstance(item, SimpleAction.$type);
-}
-
-export interface SmokeEvent extends langium.AstNode {
-    readonly $container: Rule;
-    readonly $type: 'SmokeEvent';
-    type: 'fire' | 'fog';
-}
-
-export const SmokeEvent = {
-    $type: 'SmokeEvent',
-    type: 'type'
-} as const;
-
-export function isSmokeEvent(item: unknown): item is SmokeEvent {
-    return reflection.isInstance(item, SmokeEvent.$type);
-}
-
-export interface WeatherEvent extends langium.AstNode {
-    readonly $container: Rule;
-    readonly $type: 'WeatherEvent';
-    condition: 'clouds' | 'storm';
-}
-
-export const WeatherEvent = {
-    $type: 'WeatherEvent',
-    condition: 'condition'
-} as const;
-
-export function isWeatherEvent(item: unknown): item is WeatherEvent {
-    return reflection.isInstance(item, WeatherEvent.$type);
+export function isWeatherRule(item: unknown): item is WeatherRule {
+    return reflection.isInstance(item, WeatherRule.$type);
 }
 
 export type dslProjectAstType = {
-    Action: Action
-    Definition: Definition
-    DirtEvent: DirtEvent
-    DroneDef: DroneDef
-    Event: Event
-    FarmDef: FarmDef
-    MessageAction: MessageAction
-    MissionControl: MissionControl
-    Rule: Rule
-    ScanCommand: ScanCommand
-    SimpleAction: SimpleAction
-    SmokeEvent: SmokeEvent
-    WeatherEvent: WeatherEvent
+    AgroModel: AgroModel
+    BanRule: BanRule
+    ChemicalDef: ChemicalDef
+    CropDef: CropDef
+    Element: Element
+    GlobalRule: GlobalRule
+    InformRule: InformRule
+    MissionCommand: MissionCommand
+    MixingRule: MixingRule
+    RuleDef: RuleDef
+    SweepRule: SweepRule
+    WeatherRule: WeatherRule
 }
 
 export class dslProjectAstReflection extends langium.AbstractAstReflection {
     override readonly types = {
-        Action: {
-            name: Action.$type,
+        AgroModel: {
+            name: AgroModel.$type,
             properties: {
-            },
-            superTypes: []
-        },
-        Definition: {
-            name: Definition.$type,
-            properties: {
-            },
-            superTypes: []
-        },
-        DirtEvent: {
-            name: DirtEvent.$type,
-            properties: {
-                level: {
-                    name: DirtEvent.level
-                },
-                operator: {
-                    name: DirtEvent.operator
-                }
-            },
-            superTypes: [Event.$type]
-        },
-        DroneDef: {
-            name: DroneDef.$type,
-            properties: {
-                battery: {
-                    name: DroneDef.battery
-                },
-                name: {
-                    name: DroneDef.name
-                }
-            },
-            superTypes: [Definition.$type]
-        },
-        Event: {
-            name: Event.$type,
-            properties: {
-            },
-            superTypes: []
-        },
-        FarmDef: {
-            name: FarmDef.$type,
-            properties: {
-                name: {
-                    name: FarmDef.name
-                }
-            },
-            superTypes: [Definition.$type]
-        },
-        MessageAction: {
-            name: MessageAction.$type,
-            properties: {
-                includePhoto: {
-                    name: MessageAction.includePhoto,
-                    defaultValue: false
-                }
-            },
-            superTypes: [Action.$type]
-        },
-        MissionControl: {
-            name: MissionControl.$type,
-            properties: {
-                definitions: {
-                    name: MissionControl.definitions,
-                    defaultValue: []
-                },
-                rules: {
-                    name: MissionControl.rules,
+                elements: {
+                    name: AgroModel.elements,
                     defaultValue: []
                 }
             },
             superTypes: []
         },
-        Rule: {
-            name: Rule.$type,
-            properties: {
-                action: {
-                    name: Rule.action
-                },
-                event: {
-                    name: Rule.event
-                }
-            },
-            superTypes: []
-        },
-        ScanCommand: {
-            name: ScanCommand.$type,
-            properties: {
-                drone: {
-                    name: ScanCommand.drone,
-                    referenceType: DroneDef.$type
-                },
-                farms: {
-                    name: ScanCommand.farms,
-                    defaultValue: [],
-                    referenceType: FarmDef.$type
-                }
-            },
-            superTypes: [Definition.$type]
-        },
-        SimpleAction: {
-            name: SimpleAction.$type,
-            properties: {
-                command: {
-                    name: SimpleAction.command
-                }
-            },
-            superTypes: [Action.$type]
-        },
-        SmokeEvent: {
-            name: SmokeEvent.$type,
-            properties: {
-                type: {
-                    name: SmokeEvent.type
-                }
-            },
-            superTypes: [Event.$type]
-        },
-        WeatherEvent: {
-            name: WeatherEvent.$type,
+        BanRule: {
+            name: BanRule.$type,
             properties: {
                 condition: {
-                    name: WeatherEvent.condition
+                    name: BanRule.condition
                 }
             },
-            superTypes: [Event.$type]
+            superTypes: [RuleDef.$type]
+        },
+        ChemicalDef: {
+            name: ChemicalDef.$type,
+            properties: {
+                dosage: {
+                    name: ChemicalDef.dosage
+                },
+                name: {
+                    name: ChemicalDef.name
+                },
+                timing: {
+                    name: ChemicalDef.timing
+                },
+                type: {
+                    name: ChemicalDef.type
+                }
+            },
+            superTypes: []
+        },
+        CropDef: {
+            name: CropDef.$type,
+            properties: {
+                chemicals: {
+                    name: CropDef.chemicals,
+                    defaultValue: []
+                },
+                name: {
+                    name: CropDef.name
+                },
+                rules: {
+                    name: CropDef.rules,
+                    defaultValue: []
+                }
+            },
+            superTypes: [Element.$type]
+        },
+        Element: {
+            name: Element.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        GlobalRule: {
+            name: GlobalRule.$type,
+            properties: {
+                description: {
+                    name: GlobalRule.description
+                }
+            },
+            superTypes: [Element.$type]
+        },
+        InformRule: {
+            name: InformRule.$type,
+            properties: {
+                items: {
+                    name: InformRule.items
+                }
+            },
+            superTypes: [RuleDef.$type]
+        },
+        MissionCommand: {
+            name: MissionCommand.$type,
+            properties: {
+                crops: {
+                    name: MissionCommand.crops,
+                    defaultValue: [],
+                    referenceType: CropDef.$type
+                },
+                drone: {
+                    name: MissionCommand.drone
+                }
+            },
+            superTypes: [Element.$type]
+        },
+        MixingRule: {
+            name: MixingRule.$type,
+            properties: {
+                chem1: {
+                    name: MixingRule.chem1,
+                    referenceType: ChemicalDef.$type
+                },
+                chem2: {
+                    name: MixingRule.chem2
+                },
+                reason: {
+                    name: MixingRule.reason
+                }
+            },
+            superTypes: [RuleDef.$type]
+        },
+        RuleDef: {
+            name: RuleDef.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        SweepRule: {
+            name: SweepRule.$type,
+            properties: {
+                action: {
+                    name: SweepRule.action
+                },
+                operator: {
+                    name: SweepRule.operator
+                },
+                sensor: {
+                    name: SweepRule.sensor
+                },
+                value: {
+                    name: SweepRule.value
+                }
+            },
+            superTypes: [RuleDef.$type]
+        },
+        WeatherRule: {
+            name: WeatherRule.$type,
+            properties: {
+                conditions: {
+                    name: WeatherRule.conditions
+                }
+            },
+            superTypes: [RuleDef.$type]
         }
     } as const satisfies langium.AstMetaData
 }

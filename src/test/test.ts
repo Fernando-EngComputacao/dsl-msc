@@ -1,78 +1,91 @@
-import { createDSLServices } from '../language/dsl-module.js'; // Mantenha o nome do seu módulo
+import { createDSLServices } from '../language/dsl-module.js';
 import { EmptyFileSystem } from 'langium';
 import { URI } from 'vscode-uri';
-// ✅ Importamos o novo nó raiz e os Type Guards (verificadores de tipo) que o Langium gerou
-import { MissionControl, isDroneDef, isFarmDef, isScanCommand } from '../generated/ast.js';
+// ✅ Importamos o novo nó raiz e os Type Guards da nova gramática agrícola
+import { AgroModel, isCropDef, isGlobalRule, isMissionCommand } from '../generated/ast.js';
 
 async function run() {
-    const { shared, DSL } = createDSLServices(EmptyFileSystem);
+    const { shared } = createDSLServices(EmptyFileSystem);
 
-    // 1. O código na nova linguagem do Drone
+    // 1. O código na nova linguagem do Drone Agrícola (baseado no PDF)
     const dslCode = `
-        drone Alpha01 energy_limit 80%
-        farm Fazenda_Vale_Verde
-        farm Fazenda_Sol_Nascente
+        cultura Soja {
+            herbicida Glifosato - "1.5-2.0 L/ha" - "pós-emergência"
+            fungicida Mancozebe - "1.5 kg/ha" - "preventivo ferrugem"
+            inseticida Acefato - "0.6 kg/ha" - "lagartas"
 
-        command scan Fazenda_Vale_Verde, Fazenda_Sol_Nascente using Alpha01
+            regra: nao_misturar Glifosato + "Mancozebe" ("precipitação")
+            regra_clima: "06h-09h ou 17h-19h (T < 30C, vento < 10 km/h)"
+        }
 
-        on_sensor_input dirt_level > 35 % do clean_panels
-        on_sensor_input weather storm do return_to_base
-        on_sensor_input smoke_detected fire do send_5G_alert to_current_farm urgency_high with_photo
+        cultura Cana_de_Acucar {
+            herbicida Dois_Quatro_D - "1.0-2.0 L/ha" - "pós-emergência"
+            fungicida Azoxistrobina - "0.2 L/ha" - "ferrugem laranja"
+            
+            regra: proibido "perto de culturas sensíveis (uva, maçã, oliveira)"
+            regra_varredura: "Sensor temperatura foliar" > 38.0 -> "estresse hídrico"
+        }
+
+        regra_global: "Limpar tanque do drone entre culturas diferentes"
+
+        comando aplicar Soja, Cana_de_Acucar usando DroneAgricola01
     `;
 
     const document = shared.workspace.LangiumDocumentFactory.fromString(
         dslCode,
-        URI.parse('file:///tmp/missao.dsl')
+        URI.parse('file:///tmp/agro_test.dsl')
     );
 
-    // 2. ⚠️ IMPORTANTE: Precisamos "construir" o documento para o Langium ligar as referências cruzadas
+    // 2. Constrói o documento para o Langium ligar as referências cruzadas
     await shared.workspace.DocumentBuilder.build([document], { validation: true });
 
     // 3. Verificação de erros na DSL
     const errors = (document.diagnostics ?? []).filter(e => e.severity === 1);
     if (errors.length > 0) {
-        console.error('❌ Erros encontrados no código do drone:');
+        console.error('❌ Erros encontrados no código da DSL Agrícola:');
         for (const err of errors) {
             console.error(`   - Linha ${err.range.start.line + 1}: ${err.message}`);
         }
         process.exit(1);
     }
 
-    // 4. Cast para o novo nó raiz: MissionControl
-    const model = document.parseResult.value as MissionControl;
+    // 4. Cast para o novo nó raiz: AgroModel
+    const model = document.parseResult.value as AgroModel;
 
-    console.log('=== MODELO AST (DRONE) ===');
+    console.log('=== MODELO AST (AGRO DRONE) ===');
     console.log('Tipo Raiz:', model.$type);
-    console.log(`Quantidade de Definições: ${model.definitions?.length ?? 0}`);
-    console.log(`Quantidade de Regras: ${model.rules?.length ?? 0}`);
+    console.log(`Quantidade Total de Elementos: ${model.elements?.length ?? 0}`);
 
-    console.log('\n=== ENTIDADES E COMANDOS CADASTRADOS ===');
-    // Iteramos sobre a lista de definições (Drones, Fazendas e Comandos)
-    for (const def of model.definitions || []) {
-        if (isDroneDef(def)) {
-            console.log(`🚁 Drone Registrado: ${def.name} | Bateria mínima: ${def.battery}%`);
+    console.log('\n=== CULTURAS E REGRAS GLOBAIS CADASTRADAS ===');
+    
+    // Iteramos sobre todos os elementos da raiz (Culturas, Regras Globais, Comandos)
+    for (const el of model.elements || []) {
+        
+        if (isCropDef(el)) {
+            console.log(`\n🌱 CULTURA REGISTRADA: ${el.name}`);
+            
+            console.log('   🧪 Produtos Químicos:');
+            for (const chem of el.chemicals || []) {
+                console.log(`      - [${chem.type.toUpperCase()}] ${chem.name}: Dose ${chem.dosage} (${chem.timing})`);
+            }
+
+            console.log('   ⚠️ Regras da Cultura:');
+            for (const rule of el.rules || []) {
+                console.log(`      - Regra do tipo [${rule.$type}] identificada.`);
+            }
         } 
-        else if (isFarmDef(def)) {
-            console.log(`🌾 Fazenda Registrada: ${def.name}`);
+        
+        else if (isGlobalRule(el)) {
+            console.log(`\n🌍 REGRA GLOBAL: "${el.description}"`);
         } 
-        else if (isScanCommand(def)) {
-            // Como as fazendas e drones são referências ([FarmDef:ID]), acessamos o objeto real usando '.ref'
-            const nomesFazendas = def.farms.map(f => f.ref?.name).join(', ');
-            const nomeDrone = def.drone.ref?.name;
-            console.log(`📡 COMANDO DE MISSÃO: Drone [${nomeDrone}] fará varredura em: [${nomesFazendas}]`);
+        
+        else if (isMissionCommand(el)) {
+            // Como as culturas são referências cruzadas ([CropDef:ID]), acessamos o nome real usando '.ref?.name'
+            const nomesCulturas = el.crops.map(c => c.ref?.name).join(', ');
+            console.log(`\n🚁 COMANDO DE MISSÃO:`);
+            console.log(`   - Drone designado: ${el.drone}`);
+            console.log(`   - Aplicar nas culturas: [${nomesCulturas}]`);
         }
-    }
-
-    console.log('\n=== REGRAS DE VOO AUTÔNOMO ===');
-    // Iteramos sobre as regras de sensores
-    for (const rule of model.rules || []) {
-        const evento = rule.event;
-        const acao = rule.action;
-
-        // O Langium salva o tipo exato do nó no atributo $type
-        console.log(`⚠️  Regra configurada:`);
-        console.log(`   - SE identificar: [${evento.$type}]`);
-        console.log(`   - ENTÃO executar: [${acao.$type}]`);
     }
 }
 

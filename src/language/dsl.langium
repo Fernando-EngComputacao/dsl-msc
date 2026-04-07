@@ -1,61 +1,63 @@
-grammar DroneSolarInspection
+grammar AgroDrone
 
-// Ponto de entrada da nossa linguagem
-entry MissionControl:
-    (definitions+=Definition | rules+=Rule)*;
+// Ponto de entrada da nossa linguagem agrícola
+entry AgroModel:
+    (elements+=Element)*;
 
-// --- 1. DEFINIÇÕES GERAIS ---
-Definition:
-    DroneDef | FarmDef | ScanCommand;
+Element:
+    CropDef | GlobalRule | MissionCommand;
 
-// Define um drone e seu limite de energia
-DroneDef:
-    'drone' name=ID 'energy_limit' battery=INT '%';
+// Definição do subgrafo de uma cultura (ex: Soja, Milho)
+CropDef:
+    'cultura' name=ID '{'
+        (chemicals+=ChemicalDef)*
+        (rules+=RuleDef)*
+    '}';
 
-// Cadastra as fazendas
-FarmDef:
-    'farm' name=ID;
+// Definição de produtos (Herbicida, Fungicida, Inseticida)
+ChemicalDef:
+    type=('herbicida' | 'fungicida' | 'inseticida') name=ID '-' dosage=STRING '-' timing=STRING;
 
-// O Input do usuário para iniciar a varredura
-ScanCommand:
-    'command' 'scan' farms+=[FarmDef:ID] (',' farms+=[FarmDef:ID])* 'using' drone=[DroneDef:ID];
+// Agrupamento de regras
+RuleDef:
+    MixingRule | BanRule | WeatherRule | SweepRule | InformRule;
 
-// --- 2. REGRAS DE SENSORES E DECISÕES ---
-Rule:
-    'on_sensor_input' event=Event 'do' action=Action;
+// Regras de restrição de mistura (ex: Não misturar Glifosato + Mancozebe)
+MixingRule:
+    'regra:' 'nao_misturar' chem1=[ChemicalDef:ID] '+' chem2=STRING '(' reason=STRING ')';
 
-// Tipos de eventos que o sensor ótico pode captar
-Event:
-    DirtEvent | WeatherEvent | SmokeEvent;
+// Regras de proibição (ex: Proibido perto de manancial)
+BanRule:
+    'regra:' 'proibido' condition=STRING;
 
-DirtEvent:
-    'dirt_level' operator=Operator level=INT '%';
+// Restrições de Clima e Horário
+WeatherRule:
+    'regra_clima:' conditions=STRING;
 
-WeatherEvent:
-    'weather' condition=('storm' | 'clouds');
+// Regras baseadas em sensores de varredura (NDVI, Temperatura Foliar)
+SweepRule:
+    'regra_varredura:' sensor=STRING operator=Operator value=FLOAT '->' action=STRING;
 
-SmokeEvent:
-    'smoke_detected' type=('fire' | 'fog');
+// O que o drone deve informar ao log/agrônomo
+InformRule:
+    'informar:' items=STRING;
 
-// Operadores matemáticos para as regras
+// Regras Globais do sistema (ex: Limpar tanque)
+GlobalRule:
+    'regra_global:' description=STRING;
+
+// Comando de execução para o drone
+MissionCommand:
+    'comando' 'aplicar' crops+=[CropDef:ID] (',' crops+=[CropDef:ID])* 'usando' drone=ID;
+
+// Operadores matemáticos
 Operator returns string:
     '>' | '<' | '>=' | '<=' | '==';
 
-// Ações que o drone pode tomar
-Action:
-    SimpleAction | MessageAction;
-
-SimpleAction:
-    command=('clean_panels' | 'return_to_base' | 'ignore_and_continue');
-
-// Ação complexa para envio de mensagem 5G
-MessageAction:
-    'send_5G_alert' 'to_current_farm' 'urgency_high' (includePhoto?='with_photo')?;
-
-
-// --- 3. REGRAS DE TERMINAIS (Lexer) ---
-hidden terminal WS: /\s+/;
+// Terminais e Regex
 terminal ID: /[_a-zA-Z][\w_]*/;
-terminal INT returns number: /[0-9]+/;
+terminal STRING: /"[^"]*"|'[^']*'/;
+terminal FLOAT returns number: /[0-9]+(\.[0-9]+)?/;
+hidden terminal WS: /\s+/;
 hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
 hidden terminal SL_COMMENT: /\/\/[^\n\r]*/;

@@ -6,44 +6,27 @@
 import type { Grammar } from 'langium';
 import { loadGrammarFromJson } from 'langium';
 
-let loadedDroneSolarInspectionGrammar: Grammar | undefined;
-export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspectionGrammar ?? (loadedDroneSolarInspectionGrammar = loadGrammarFromJson(`{
+let loadedAgroDroneGrammar: Grammar | undefined;
+export const AgroDroneGrammar = (): Grammar => loadedAgroDroneGrammar ?? (loadedAgroDroneGrammar = loadGrammarFromJson(`{
   "$type": "Grammar",
   "isDeclared": true,
-  "name": "DroneSolarInspection",
+  "name": "AgroDrone",
   "rules": [
     {
       "$type": "ParserRule",
       "entry": true,
-      "name": "MissionControl",
+      "name": "AgroModel",
       "definition": {
-        "$type": "Alternatives",
-        "elements": [
-          {
-            "$type": "Assignment",
-            "feature": "definitions",
-            "operator": "+=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@1"
-              },
-              "arguments": []
-            }
+        "$type": "Assignment",
+        "feature": "elements",
+        "operator": "+=",
+        "terminal": {
+          "$type": "RuleCall",
+          "rule": {
+            "$ref": "#/rules@1"
           },
-          {
-            "$type": "Assignment",
-            "feature": "rules",
-            "operator": "+=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@5"
-              },
-              "arguments": []
-            }
-          }
-        ],
+          "arguments": []
+        },
         "cardinality": "*"
       },
       "fragment": false,
@@ -51,7 +34,7 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
     },
     {
       "$type": "ParserRule",
-      "name": "Definition",
+      "name": "Element",
       "definition": {
         "$type": "Alternatives",
         "elements": [
@@ -65,14 +48,14 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
           {
             "$type": "RuleCall",
             "rule": {
-              "$ref": "#/rules@3"
+              "$ref": "#/rules@10"
             },
             "arguments": []
           },
           {
             "$type": "RuleCall",
             "rule": {
-              "$ref": "#/rules@4"
+              "$ref": "#/rules@11"
             },
             "arguments": []
           }
@@ -84,13 +67,13 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
     },
     {
       "$type": "ParserRule",
-      "name": "DroneDef",
+      "name": "CropDef",
       "definition": {
         "$type": "Group",
         "elements": [
           {
             "$type": "Keyword",
-            "value": "drone"
+            "value": "cultura"
           },
           {
             "$type": "Assignment",
@@ -99,152 +82,44 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@15"
+                "$ref": "#/rules@13"
               },
               "arguments": []
             }
           },
           {
             "$type": "Keyword",
-            "value": "energy_limit"
+            "value": "{"
           },
           {
             "$type": "Assignment",
-            "feature": "battery",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@16"
-              },
-              "arguments": []
-            }
-          },
-          {
-            "$type": "Keyword",
-            "value": "%"
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "FarmDef",
-      "definition": {
-        "$type": "Group",
-        "elements": [
-          {
-            "$type": "Keyword",
-            "value": "farm"
-          },
-          {
-            "$type": "Assignment",
-            "feature": "name",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@15"
-              },
-              "arguments": []
-            }
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "ScanCommand",
-      "definition": {
-        "$type": "Group",
-        "elements": [
-          {
-            "$type": "Keyword",
-            "value": "command"
-          },
-          {
-            "$type": "Keyword",
-            "value": "scan"
-          },
-          {
-            "$type": "Assignment",
-            "feature": "farms",
+            "feature": "chemicals",
             "operator": "+=",
             "terminal": {
-              "$type": "CrossReference",
-              "type": {
+              "$type": "RuleCall",
+              "rule": {
                 "$ref": "#/rules@3"
               },
-              "terminal": {
-                "$type": "RuleCall",
-                "rule": {
-                  "$ref": "#/rules@15"
-                },
-                "arguments": []
-              },
-              "deprecatedSyntax": false,
-              "isMulti": false
-            }
+              "arguments": []
+            },
+            "cardinality": "*"
           },
           {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": ","
+            "$type": "Assignment",
+            "feature": "rules",
+            "operator": "+=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@4"
               },
-              {
-                "$type": "Assignment",
-                "feature": "farms",
-                "operator": "+=",
-                "terminal": {
-                  "$type": "CrossReference",
-                  "type": {
-                    "$ref": "#/rules@3"
-                  },
-                  "terminal": {
-                    "$type": "RuleCall",
-                    "rule": {
-                      "$ref": "#/rules@15"
-                    },
-                    "arguments": []
-                  },
-                  "deprecatedSyntax": false,
-                  "isMulti": false
-                }
-              }
-            ],
+              "arguments": []
+            },
             "cardinality": "*"
           },
           {
             "$type": "Keyword",
-            "value": "using"
-          },
-          {
-            "$type": "Assignment",
-            "feature": "drone",
-            "operator": "=",
-            "terminal": {
-              "$type": "CrossReference",
-              "type": {
-                "$ref": "#/rules@2"
-              },
-              "terminal": {
-                "$type": "RuleCall",
-                "rule": {
-                  "$ref": "#/rules@15"
-                },
-                "arguments": []
-              },
-              "deprecatedSyntax": false,
-              "isMulti": false
-            }
+            "value": "}"
           }
         ]
       },
@@ -254,38 +129,72 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
     },
     {
       "$type": "ParserRule",
-      "name": "Rule",
+      "name": "ChemicalDef",
       "definition": {
         "$type": "Group",
         "elements": [
           {
-            "$type": "Keyword",
-            "value": "on_sensor_input"
+            "$type": "Assignment",
+            "feature": "type",
+            "operator": "=",
+            "terminal": {
+              "$type": "Alternatives",
+              "elements": [
+                {
+                  "$type": "Keyword",
+                  "value": "herbicida"
+                },
+                {
+                  "$type": "Keyword",
+                  "value": "fungicida"
+                },
+                {
+                  "$type": "Keyword",
+                  "value": "inseticida"
+                }
+              ]
+            }
           },
           {
             "$type": "Assignment",
-            "feature": "event",
+            "feature": "name",
             "operator": "=",
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@6"
+                "$ref": "#/rules@13"
               },
               "arguments": []
             }
           },
           {
             "$type": "Keyword",
-            "value": "do"
+            "value": "-"
           },
           {
             "$type": "Assignment",
-            "feature": "action",
+            "feature": "dosage",
             "operator": "=",
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@11"
+                "$ref": "#/rules@14"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": "-"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "timing",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@14"
               },
               "arguments": []
             }
@@ -298,10 +207,24 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
     },
     {
       "$type": "ParserRule",
-      "name": "Event",
+      "name": "RuleDef",
       "definition": {
         "$type": "Alternatives",
         "elements": [
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@5"
+            },
+            "arguments": []
+          },
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@6"
+            },
+            "arguments": []
+          },
           {
             "$type": "RuleCall",
             "rule": {
@@ -331,13 +254,161 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
     },
     {
       "$type": "ParserRule",
-      "name": "DirtEvent",
+      "name": "MixingRule",
       "definition": {
         "$type": "Group",
         "elements": [
           {
             "$type": "Keyword",
-            "value": "dirt_level"
+            "value": "regra:"
+          },
+          {
+            "$type": "Keyword",
+            "value": "nao_misturar"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "chem1",
+            "operator": "=",
+            "terminal": {
+              "$type": "CrossReference",
+              "type": {
+                "$ref": "#/rules@3"
+              },
+              "terminal": {
+                "$type": "RuleCall",
+                "rule": {
+                  "$ref": "#/rules@13"
+                },
+                "arguments": []
+              },
+              "deprecatedSyntax": false,
+              "isMulti": false
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": "+"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "chem2",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@14"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": "("
+          },
+          {
+            "$type": "Assignment",
+            "feature": "reason",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@14"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": ")"
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "BanRule",
+      "definition": {
+        "$type": "Group",
+        "elements": [
+          {
+            "$type": "Keyword",
+            "value": "regra:"
+          },
+          {
+            "$type": "Keyword",
+            "value": "proibido"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "condition",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@14"
+              },
+              "arguments": []
+            }
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "WeatherRule",
+      "definition": {
+        "$type": "Group",
+        "elements": [
+          {
+            "$type": "Keyword",
+            "value": "regra_clima:"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "conditions",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@14"
+              },
+              "arguments": []
+            }
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "SweepRule",
+      "definition": {
+        "$type": "Group",
+        "elements": [
+          {
+            "$type": "Keyword",
+            "value": "regra_varredura:"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "sensor",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@14"
+              },
+              "arguments": []
+            }
           },
           {
             "$type": "Assignment",
@@ -346,59 +417,37 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@10"
+                "$ref": "#/rules@12"
               },
               "arguments": []
             }
           },
           {
             "$type": "Assignment",
-            "feature": "level",
+            "feature": "value",
             "operator": "=",
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@16"
+                "$ref": "#/rules@15"
               },
               "arguments": []
             }
           },
           {
             "$type": "Keyword",
-            "value": "%"
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "WeatherEvent",
-      "definition": {
-        "$type": "Group",
-        "elements": [
-          {
-            "$type": "Keyword",
-            "value": "weather"
+            "value": "->"
           },
           {
             "$type": "Assignment",
-            "feature": "condition",
+            "feature": "action",
             "operator": "=",
             "terminal": {
-              "$type": "Alternatives",
-              "elements": [
-                {
-                  "$type": "Keyword",
-                  "value": "storm"
-                },
-                {
-                  "$type": "Keyword",
-                  "value": "clouds"
-                }
-              ]
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@14"
+              },
+              "arguments": []
             }
           }
         ]
@@ -409,30 +458,138 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
     },
     {
       "$type": "ParserRule",
-      "name": "SmokeEvent",
+      "name": "InformRule",
       "definition": {
         "$type": "Group",
         "elements": [
           {
             "$type": "Keyword",
-            "value": "smoke_detected"
+            "value": "informar:"
           },
           {
             "$type": "Assignment",
-            "feature": "type",
+            "feature": "items",
             "operator": "=",
             "terminal": {
-              "$type": "Alternatives",
-              "elements": [
-                {
-                  "$type": "Keyword",
-                  "value": "fire"
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@14"
+              },
+              "arguments": []
+            }
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "GlobalRule",
+      "definition": {
+        "$type": "Group",
+        "elements": [
+          {
+            "$type": "Keyword",
+            "value": "regra_global:"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "description",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@14"
+              },
+              "arguments": []
+            }
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "MissionCommand",
+      "definition": {
+        "$type": "Group",
+        "elements": [
+          {
+            "$type": "Keyword",
+            "value": "comando"
+          },
+          {
+            "$type": "Keyword",
+            "value": "aplicar"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "crops",
+            "operator": "+=",
+            "terminal": {
+              "$type": "CrossReference",
+              "type": {
+                "$ref": "#/rules@2"
+              },
+              "terminal": {
+                "$type": "RuleCall",
+                "rule": {
+                  "$ref": "#/rules@13"
                 },
-                {
-                  "$type": "Keyword",
-                  "value": "fog"
+                "arguments": []
+              },
+              "deprecatedSyntax": false,
+              "isMulti": false
+            }
+          },
+          {
+            "$type": "Group",
+            "elements": [
+              {
+                "$type": "Keyword",
+                "value": ","
+              },
+              {
+                "$type": "Assignment",
+                "feature": "crops",
+                "operator": "+=",
+                "terminal": {
+                  "$type": "CrossReference",
+                  "type": {
+                    "$ref": "#/rules@2"
+                  },
+                  "terminal": {
+                    "$type": "RuleCall",
+                    "rule": {
+                      "$ref": "#/rules@13"
+                    },
+                    "arguments": []
+                  },
+                  "deprecatedSyntax": false,
+                  "isMulti": false
                 }
-              ]
+              }
+            ],
+            "cardinality": "*"
+          },
+          {
+            "$type": "Keyword",
+            "value": "usando"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "drone",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@13"
+              },
+              "arguments": []
             }
           }
         ]
@@ -475,106 +632,6 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
       "parameters": []
     },
     {
-      "$type": "ParserRule",
-      "name": "Action",
-      "definition": {
-        "$type": "Alternatives",
-        "elements": [
-          {
-            "$type": "RuleCall",
-            "rule": {
-              "$ref": "#/rules@12"
-            },
-            "arguments": []
-          },
-          {
-            "$type": "RuleCall",
-            "rule": {
-              "$ref": "#/rules@13"
-            },
-            "arguments": []
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "SimpleAction",
-      "definition": {
-        "$type": "Assignment",
-        "feature": "command",
-        "operator": "=",
-        "terminal": {
-          "$type": "Alternatives",
-          "elements": [
-            {
-              "$type": "Keyword",
-              "value": "clean_panels"
-            },
-            {
-              "$type": "Keyword",
-              "value": "return_to_base"
-            },
-            {
-              "$type": "Keyword",
-              "value": "ignore_and_continue"
-            }
-          ]
-        }
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "MessageAction",
-      "definition": {
-        "$type": "Group",
-        "elements": [
-          {
-            "$type": "Keyword",
-            "value": "send_5G_alert"
-          },
-          {
-            "$type": "Keyword",
-            "value": "to_current_farm"
-          },
-          {
-            "$type": "Keyword",
-            "value": "urgency_high"
-          },
-          {
-            "$type": "Assignment",
-            "feature": "includePhoto",
-            "operator": "?=",
-            "terminal": {
-              "$type": "Keyword",
-              "value": "with_photo"
-            },
-            "cardinality": "?"
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "TerminalRule",
-      "hidden": true,
-      "name": "WS",
-      "definition": {
-        "$type": "RegexToken",
-        "regex": "/\\\\s+/",
-        "parenthesized": false
-      },
-      "fragment": false
-    },
-    {
       "$type": "TerminalRule",
       "name": "ID",
       "definition": {
@@ -587,18 +644,40 @@ export const DroneSolarInspectionGrammar = (): Grammar => loadedDroneSolarInspec
     },
     {
       "$type": "TerminalRule",
-      "name": "INT",
+      "name": "STRING",
+      "definition": {
+        "$type": "RegexToken",
+        "regex": "/\\"[^\\"]*\\"|'[^']*'/",
+        "parenthesized": false
+      },
+      "fragment": false,
+      "hidden": false
+    },
+    {
+      "$type": "TerminalRule",
+      "name": "FLOAT",
       "type": {
         "$type": "ReturnType",
         "name": "number"
       },
       "definition": {
         "$type": "RegexToken",
-        "regex": "/[0-9]+/",
+        "regex": "/[0-9]+(\\\\.[0-9]+)?/",
         "parenthesized": false
       },
       "fragment": false,
       "hidden": false
+    },
+    {
+      "$type": "TerminalRule",
+      "hidden": true,
+      "name": "WS",
+      "definition": {
+        "$type": "RegexToken",
+        "regex": "/\\\\s+/",
+        "parenthesized": false
+      },
+      "fragment": false
     },
     {
       "$type": "TerminalRule",

@@ -5,7 +5,7 @@ import {
 } from 'langium';
 
 import {
-    DroneSolarInspectionGeneratedModule,
+    AgroDroneGeneratedModule,
     dslProjectGeneratedSharedModule
 } from '../generated/module.js';
 
@@ -18,7 +18,7 @@ export function createDSLServices(context: any) {
 
     const DSL = inject(
         createDefaultCoreModule({ shared }),
-        DroneSolarInspectionGeneratedModule
+        AgroDroneGeneratedModule
     );
 
     return { shared, DSL };
