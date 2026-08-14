@@ -1,7 +1,8 @@
 fastapi
 uvicorn
-outlines
+outlines==0.0.46
 transformers
 torch
 pydantic
 lark
+pyairports

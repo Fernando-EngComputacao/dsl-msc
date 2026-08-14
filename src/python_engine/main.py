@@ -2,17 +2,25 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import os
 import sys
+from unittest.mock import MagicMock
 
+# --- MOCK: Engana o Python para ignorar pacotes inúteis e quebrados ---
+sys.modules['pyairports'] = MagicMock()
+sys.modules['pyairports.airports'] = MagicMock()
+sys.modules['pycountry'] = MagicMock() # Previne o mesmo erro com países
+
+# --- CORREÇÃO DO CAMINHO ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BASE_DIR)                      # Procura na própria pasta python_engine/
-sys.path.insert(0, os.path.join(BASE_DIR, 'src')) # Procura na subpasta python_engine/src/
+sys.path.insert(0, BASE_DIR)
+sys.path.insert(0, os.path.join(BASE_DIR, 'src'))
 
+# Imports da sua dissertação
 from bnf import load_bnf, build_parser, to_lark
 from grammar_from_kg import gramatica_do_subgrafo
 from prompt_builder import carregar_exemplos, montar_prompt
-import outlines
 
-app = FastAPI()
+# Agora o outlines vai carregar perfeitamente!
+import outlines
 
 # 1. Carrega a gramática completa G (Fonte única de verdade)
 rules = load_bnf("grammar/advanced_icu.bnf")

@@ -17,7 +17,7 @@ npx tsc
 
 # 3. Aciona o mapeamento do modelo para o Neo4j
 echo "[3/4] 🕸️  Ancorando modelo no Neo4j..."
-npx tsx src/database/neo4j.ts src/examples/uti.dsl
+npx --yes tsx src/database/neo4j.ts src/examples/uti.dsl
 
 # 4. Executa a inferência em lote gerenciando o motor Python
 echo "[4/4] 🧠 Inspecionando prompts do usuário com Grammar Prompting..."
@@ -42,7 +42,7 @@ else
 fi
 
 # Dispara o cliente de lote
-npx tsx src/inference/batch-client.ts src/examples/prompt.txt
+npx --yes tsx src/inference/batch-client.ts src/examples/prompt.txt
 
 echo "===================================================="
 echo "✅ Deploy e Inferência Restrita Finalizados!"
