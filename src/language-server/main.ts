@@ -4,10 +4,7 @@ import {
     inject
 } from 'langium';
 
-import {
-    MyDslGeneratedModule,
-    dslProjectGeneratedSharedModule
-} from '../generated/module.js';
+import { DslGeneratedModule, dslProjectGeneratedSharedModule } from '../generated/module.js';
 
 export function createDSLServices(context: any) {
 
@@ -18,7 +15,7 @@ export function createDSLServices(context: any) {
 
     const DSL = inject(
         createDefaultCoreModule({ shared }),
-        MyDslGeneratedModule
+        DslGeneratedModule
     );
 
     return { shared, DSL };

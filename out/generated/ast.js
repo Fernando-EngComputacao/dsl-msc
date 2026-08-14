@@ -5,50 +5,103 @@
 /* eslint-disable */
 import * as langium from 'langium';
 export const dslProjectTerminals = {
-    WS: /\s+/,
-    ID: /[a-zA-Z_][a-zA-Z0-9_]*/,
+    ID: /[_a-zA-Z][\w_]*/,
     STRING: /"[^"]*"|'[^']*'/,
+    FLOAT: /[0-9]+(\.[0-9]+)?/,
+    WS: /\s+/,
 };
-export const Model = {
-    $type: 'Model',
+export const DrugDef = {
+    $type: 'DrugDef',
+    maxDose: 'maxDose',
+    maxDoseUnit: 'maxDoseUnit',
+    name: 'name',
+    safeStep: 'safeStep',
+    safeStepUnit: 'safeStepUnit',
+    type: 'type'
+};
+export function isDrugDef(item) {
+    return reflection.isInstance(item, DrugDef.$type);
+}
+export const Element = {
+    $type: 'Element'
+};
+export function isElement(item) {
+    return reflection.isInstance(item, Element.$type);
+}
+export const MedicalModel = {
+    $type: 'MedicalModel',
     elements: 'elements'
 };
-export function isModel(item) {
-    return reflection.isInstance(item, Model.$type);
+export function isMedicalModel(item) {
+    return reflection.isInstance(item, MedicalModel.$type);
 }
-export const Reservation = {
-    $type: 'Reservation',
-    resource: 'resource',
-    time: 'time'
+export const SafetyRule = {
+    $type: 'SafetyRule',
+    condition: 'condition',
+    drug: 'drug',
+    reason: 'reason'
 };
-export function isReservation(item) {
-    return reflection.isInstance(item, Reservation.$type);
+export function isSafetyRule(item) {
+    return reflection.isInstance(item, SafetyRule.$type);
 }
 export class dslProjectAstReflection extends langium.AbstractAstReflection {
     constructor() {
         super(...arguments);
         this.types = {
-            Model: {
-                name: Model.$type,
+            DrugDef: {
+                name: DrugDef.$type,
+                properties: {
+                    maxDose: {
+                        name: DrugDef.maxDose
+                    },
+                    maxDoseUnit: {
+                        name: DrugDef.maxDoseUnit
+                    },
+                    name: {
+                        name: DrugDef.name
+                    },
+                    safeStep: {
+                        name: DrugDef.safeStep
+                    },
+                    safeStepUnit: {
+                        name: DrugDef.safeStepUnit
+                    },
+                    type: {
+                        name: DrugDef.type
+                    }
+                },
+                superTypes: [Element.$type]
+            },
+            Element: {
+                name: Element.$type,
+                properties: {},
+                superTypes: []
+            },
+            MedicalModel: {
+                name: MedicalModel.$type,
                 properties: {
                     elements: {
-                        name: Model.elements,
+                        name: MedicalModel.elements,
                         defaultValue: []
                     }
                 },
                 superTypes: []
             },
-            Reservation: {
-                name: Reservation.$type,
+            SafetyRule: {
+                name: SafetyRule.$type,
                 properties: {
-                    resource: {
-                        name: Reservation.resource
+                    condition: {
+                        name: SafetyRule.condition
                     },
-                    time: {
-                        name: Reservation.time
+                    drug: {
+                        name: SafetyRule.drug,
+                        referenceType: DrugDef.$type
+                    },
+                    reason: {
+                        name: SafetyRule.reason
                     }
                 },
-                superTypes: []
+                superTypes: [Element.$type]
             }
         };
     }

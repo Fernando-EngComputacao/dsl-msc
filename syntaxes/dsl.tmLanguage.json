@@ -10,7 +10,7 @@
     },
     {
       "name": "keyword.control.dsl",
-      "match": "\\b(at|reserve)\\b"
+      "match": "\\b(bloquear_incremento|dose_maxima|farmaco|incremento_seguro|se|tipo)\\b|\\b(regra_seguranca:)\\B"
     },
     {
       "name": "string.quoted.double.dsl",

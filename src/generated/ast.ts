@@ -7,78 +7,161 @@
 import * as langium from 'langium';
 
 export const dslProjectTerminals = {
-    WS: /\s+/,
-    ID: /[a-zA-Z_][a-zA-Z0-9_]*/,
+    ID: /[_a-zA-Z][\w_]*/,
     STRING: /"[^"]*"|'[^']*'/,
+    FLOAT: /[0-9]+(\.[0-9]+)?/,
+    WS: /\s+/,
 };
 
 export type dslProjectTerminalNames = keyof typeof dslProjectTerminals;
 
 export type dslProjectKeywordNames =
-    | "at"
-    | "reserve";
+    | "("
+    | ")"
+    | "bloquear_incremento"
+    | "dose_maxima"
+    | "farmaco"
+    | "incremento_seguro"
+    | "regra_seguranca:"
+    | "se"
+    | "tipo"
+    | "{"
+    | "}";
 
 export type dslProjectTokenNames = dslProjectTerminalNames | dslProjectKeywordNames;
 
-export interface Model extends langium.AstNode {
-    readonly $type: 'Model';
-    elements: Array<Reservation>;
+export interface DrugDef extends langium.AstNode {
+    readonly $container: MedicalModel;
+    readonly $type: 'DrugDef';
+    maxDose: number;
+    maxDoseUnit: string;
+    name: string;
+    safeStep: number;
+    safeStepUnit: string;
+    type: string;
 }
 
-export const Model = {
-    $type: 'Model',
+export const DrugDef = {
+    $type: 'DrugDef',
+    maxDose: 'maxDose',
+    maxDoseUnit: 'maxDoseUnit',
+    name: 'name',
+    safeStep: 'safeStep',
+    safeStepUnit: 'safeStepUnit',
+    type: 'type'
+} as const;
+
+export function isDrugDef(item: unknown): item is DrugDef {
+    return reflection.isInstance(item, DrugDef.$type);
+}
+
+export type Element = DrugDef | SafetyRule;
+
+export const Element = {
+    $type: 'Element'
+} as const;
+
+export function isElement(item: unknown): item is Element {
+    return reflection.isInstance(item, Element.$type);
+}
+
+export interface MedicalModel extends langium.AstNode {
+    readonly $type: 'MedicalModel';
+    elements: Array<Element>;
+}
+
+export const MedicalModel = {
+    $type: 'MedicalModel',
     elements: 'elements'
 } as const;
 
-export function isModel(item: unknown): item is Model {
-    return reflection.isInstance(item, Model.$type);
+export function isMedicalModel(item: unknown): item is MedicalModel {
+    return reflection.isInstance(item, MedicalModel.$type);
 }
 
-export interface Reservation extends langium.AstNode {
-    readonly $container: Model;
-    readonly $type: 'Reservation';
-    resource: string;
-    time: string;
+export interface SafetyRule extends langium.AstNode {
+    readonly $container: MedicalModel;
+    readonly $type: 'SafetyRule';
+    condition: string;
+    drug: langium.Reference<DrugDef>;
+    reason: string;
 }
 
-export const Reservation = {
-    $type: 'Reservation',
-    resource: 'resource',
-    time: 'time'
+export const SafetyRule = {
+    $type: 'SafetyRule',
+    condition: 'condition',
+    drug: 'drug',
+    reason: 'reason'
 } as const;
 
-export function isReservation(item: unknown): item is Reservation {
-    return reflection.isInstance(item, Reservation.$type);
+export function isSafetyRule(item: unknown): item is SafetyRule {
+    return reflection.isInstance(item, SafetyRule.$type);
 }
 
 export type dslProjectAstType = {
-    Model: Model
-    Reservation: Reservation
+    DrugDef: DrugDef
+    Element: Element
+    MedicalModel: MedicalModel
+    SafetyRule: SafetyRule
 }
 
 export class dslProjectAstReflection extends langium.AbstractAstReflection {
     override readonly types = {
-        Model: {
-            name: Model.$type,
+        DrugDef: {
+            name: DrugDef.$type,
+            properties: {
+                maxDose: {
+                    name: DrugDef.maxDose
+                },
+                maxDoseUnit: {
+                    name: DrugDef.maxDoseUnit
+                },
+                name: {
+                    name: DrugDef.name
+                },
+                safeStep: {
+                    name: DrugDef.safeStep
+                },
+                safeStepUnit: {
+                    name: DrugDef.safeStepUnit
+                },
+                type: {
+                    name: DrugDef.type
+                }
+            },
+            superTypes: [Element.$type]
+        },
+        Element: {
+            name: Element.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        MedicalModel: {
+            name: MedicalModel.$type,
             properties: {
                 elements: {
-                    name: Model.elements,
+                    name: MedicalModel.elements,
                     defaultValue: []
                 }
             },
             superTypes: []
         },
-        Reservation: {
-            name: Reservation.$type,
+        SafetyRule: {
+            name: SafetyRule.$type,
             properties: {
-                resource: {
-                    name: Reservation.resource
+                condition: {
+                    name: SafetyRule.condition
                 },
-                time: {
-                    name: Reservation.time
+                drug: {
+                    name: SafetyRule.drug,
+                    referenceType: DrugDef.$type
+                },
+                reason: {
+                    name: SafetyRule.reason
                 }
             },
-            superTypes: []
+            superTypes: [Element.$type]
         }
     } as const satisfies langium.AstMetaData
 }

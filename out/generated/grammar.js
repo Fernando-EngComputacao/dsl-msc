@@ -3,27 +3,16 @@
  * DO NOT EDIT MANUALLY!
  ******************************************************************************/
 import { loadGrammarFromJson } from 'langium';
-let loadedMyDslGrammar;
-export const MyDslGrammar = () => loadedMyDslGrammar ?? (loadedMyDslGrammar = loadGrammarFromJson(`{
+let loadedDslGrammar;
+export const DslGrammar = () => loadedDslGrammar ?? (loadedDslGrammar = loadGrammarFromJson(`{
   "$type": "Grammar",
   "isDeclared": true,
-  "name": "MyDsl",
+  "name": "Dsl",
   "rules": [
-    {
-      "$type": "TerminalRule",
-      "hidden": true,
-      "name": "WS",
-      "definition": {
-        "$type": "RegexToken",
-        "regex": "/\\\\s+/",
-        "parenthesized": false
-      },
-      "fragment": false
-    },
     {
       "$type": "ParserRule",
       "entry": true,
-      "name": "Model",
+      "name": "MedicalModel",
       "definition": {
         "$type": "Assignment",
         "feature": "elements",
@@ -31,7 +20,7 @@ export const MyDslGrammar = () => loadedMyDslGrammar ?? (loadedMyDslGrammar = lo
         "terminal": {
           "$type": "RuleCall",
           "rule": {
-            "$ref": "#/rules@2"
+            "$ref": "#/rules@1"
           },
           "arguments": []
         },
@@ -42,33 +31,43 @@ export const MyDslGrammar = () => loadedMyDslGrammar ?? (loadedMyDslGrammar = lo
     },
     {
       "$type": "ParserRule",
-      "name": "Reservation",
+      "name": "Element",
+      "definition": {
+        "$type": "Alternatives",
+        "elements": [
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@2"
+            },
+            "arguments": []
+          },
+          {
+            "$type": "RuleCall",
+            "rule": {
+              "$ref": "#/rules@3"
+            },
+            "arguments": []
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "DrugDef",
       "definition": {
         "$type": "Group",
         "elements": [
           {
             "$type": "Keyword",
-            "value": "reserve"
+            "value": "farmaco"
           },
           {
             "$type": "Assignment",
-            "feature": "resource",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@3"
-              },
-              "arguments": []
-            }
-          },
-          {
-            "$type": "Keyword",
-            "value": "at"
-          },
-          {
-            "$type": "Assignment",
-            "feature": "time",
+            "feature": "name",
             "operator": "=",
             "terminal": {
               "$type": "RuleCall",
@@ -77,6 +76,162 @@ export const MyDslGrammar = () => loadedMyDslGrammar ?? (loadedMyDslGrammar = lo
               },
               "arguments": []
             }
+          },
+          {
+            "$type": "Keyword",
+            "value": "{"
+          },
+          {
+            "$type": "Keyword",
+            "value": "tipo"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "type",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@5"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": "dose_maxima"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "maxDose",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@6"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Assignment",
+            "feature": "maxDoseUnit",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@5"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": "incremento_seguro"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "safeStep",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@6"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Assignment",
+            "feature": "safeStepUnit",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@5"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": "}"
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "SafetyRule",
+      "definition": {
+        "$type": "Group",
+        "elements": [
+          {
+            "$type": "Keyword",
+            "value": "regra_seguranca:"
+          },
+          {
+            "$type": "Keyword",
+            "value": "bloquear_incremento"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "drug",
+            "operator": "=",
+            "terminal": {
+              "$type": "CrossReference",
+              "type": {
+                "$ref": "#/rules@2"
+              },
+              "terminal": {
+                "$type": "RuleCall",
+                "rule": {
+                  "$ref": "#/rules@4"
+                },
+                "arguments": []
+              },
+              "deprecatedSyntax": false,
+              "isMulti": false
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": "se"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "condition",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@5"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": "("
+          },
+          {
+            "$type": "Assignment",
+            "feature": "reason",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@5"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Keyword",
+            "value": ")"
           }
         ]
       },
@@ -89,7 +244,7 @@ export const MyDslGrammar = () => loadedMyDslGrammar ?? (loadedMyDslGrammar = lo
       "name": "ID",
       "definition": {
         "$type": "RegexToken",
-        "regex": "/[a-zA-Z_][a-zA-Z0-9_]*/",
+        "regex": "/[_a-zA-Z][\\\\w_]*/",
         "parenthesized": false
       },
       "fragment": false,
@@ -105,6 +260,32 @@ export const MyDslGrammar = () => loadedMyDslGrammar ?? (loadedMyDslGrammar = lo
       },
       "fragment": false,
       "hidden": false
+    },
+    {
+      "$type": "TerminalRule",
+      "name": "FLOAT",
+      "type": {
+        "$type": "ReturnType",
+        "name": "number"
+      },
+      "definition": {
+        "$type": "RegexToken",
+        "regex": "/[0-9]+(\\\\.[0-9]+)?/",
+        "parenthesized": false
+      },
+      "fragment": false,
+      "hidden": false
+    },
+    {
+      "$type": "TerminalRule",
+      "hidden": true,
+      "name": "WS",
+      "definition": {
+        "$type": "RegexToken",
+        "regex": "/\\\\s+/",
+        "parenthesized": false
+      },
+      "fragment": false
     }
   ],
   "imports": [],
