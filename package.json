@@ -13,8 +13,10 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
     "langium": "^4.2.1",
     "neo4j-driver": "^6.0.1",
+    "tsx": "^4.23.12",
     "vscode-languageclient": "^9.0.1",
     "vscode-languageserver": "^9.0.1"
   },

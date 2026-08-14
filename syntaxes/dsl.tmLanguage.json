@@ -1,19 +1,20 @@
 {
-  "name": "dsl",
-  "scopeName": "source.dsl",
+  "name": "agrodrone",
+  "scopeName": "source.agrodrone",
   "fileTypes": [
-    ".dsl"
+    ".dsl",
+    ".agro"
   ],
   "patterns": [
     {
       "include": "#comments"
     },
     {
-      "name": "keyword.control.dsl",
-      "match": "\\b(at|reserve)\\b"
+      "name": "keyword.control.agrodrone",
+      "match": "\\b(AJUSTAR_VAZAO|AVANCAR|BATER_VENENO|BOMBA_DESLIGAR|BOMBA_LIGAR|MUDAR_SENTIDO|MUDAR_TALHAO|PARAR|RETORNAR_BASE|acao|acoes_atuador|atuador|comando|cultura|defensivo|esquema_dados|esquema_referencia|estados_permitidos|executar|fungicida|herbicida|inseticida|movimento|nao_misturar|para|parametro|proibido|sequencia_atuacao)\\b|\\b(informar:|regra:|regra_clima:|regra_global:|regra_varredura:)\\B"
     },
     {
-      "name": "string.quoted.double.dsl",
+      "name": "string.quoted.double.agrodrone",
       "begin": "\"",
       "end": "\"",
       "patterns": [
@@ -23,7 +24,7 @@
       ]
     },
     {
-      "name": "string.quoted.single.dsl",
+      "name": "string.quoted.single.agrodrone",
       "begin": "'",
       "end": "'",
       "patterns": [
@@ -34,8 +35,37 @@
     }
   ],
   "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.agrodrone",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.agrodrone"
+            }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.agrodrone"
+            }
+          }
+        },
+        {
+          "begin": "//",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.whitespace.comment.leading.agrodrone"
+            }
+          },
+          "end": "(?=$)",
+          "name": "comment.line.agrodrone"
+        }
+      ]
+    },
     "string-character-escape": {
-      "name": "constant.character.escape.dsl",
+      "name": "constant.character.escape.agrodrone",
       "match": "\\\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|u\\{[0-9A-Fa-f]+\\}|[0-2][0-7]{0,2}|3[0-6][0-7]?|37[0-7]?|[4-7][0-7]?|.|$)"
     }
   }

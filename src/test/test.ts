@@ -12,7 +12,6 @@ async function run() {
         URI.parse('file:///tmp/test.dsl')
     );
 
-    // ✅ cast para o tipo gerado pelo langium
     const result = document.parseResult;
     const model = document.parseResult.value as Model;
 

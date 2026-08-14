@@ -2,9 +2,9 @@
   "projectName": "dslProject",
   "languages": [
     {
-      "id": "dsl",
-      "grammar": "src/language/dsl.langium",
-      "fileExtensions": [".dsl"],
+      "id": "agrodrone",
+      "grammar": "src/language/agrodrone.langium",
+      "fileExtensions": [".dsl", ".agro"],
       "textMate": {
         "out": "syntaxes/dsl.tmLanguage.json"
       }
