@@ -1,17 +1,38 @@
 {
   "name": "dsl-project",
-  "version": "1.0.0",
-  "description": "",
+  "version": "2.0.0",
+  "description": "SPC-CML — Compilador Semantico de Prompts: DSL clinica, Grafo de Conhecimento e decodificacao restrita por gramatica",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "langium:generate": "langium generate",
-    "build": "npm run langium:generate",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "npm run langium:generate && tsc",
+    "typecheck": "tsc --noEmit",
+
+    "validate": "tsx src/cli/validate.ts",
+    "bnf:export": "tsx src/cli/export-bnf.ts",
+    "graph:sync": "tsx src/database/neo4j.ts",
+    "pipeline": "tsx src/cli/pipeline.ts",
+
+    "infer": "tsx src/inference/llm-client.ts",
+    "batch": "tsx src/inference/batch-client.ts",
+
+    "test:model": "tsx src/test/test.ts",
+    "test:earley": "tsx src/test/earley.test.ts",
+    "test:grammar": "cd src/python_engine && python test_grammar.py",
+    "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:grammar"
   },
-  "keywords": [],
+  "keywords": [
+    "dsl",
+    "langium",
+    "grammar-prompting",
+    "constrained-decoding",
+    "knowledge-graph",
+    "neo4j",
+    "clinical-decision-support"
+  ],
   "author": "",
   "license": "ISC",
-  "type": "module",
   "dependencies": {
     "langium": "^4.2.1",
     "neo4j-driver": "^6.0.1",
@@ -23,6 +44,7 @@
     "@types/vscode": "^1.110.0",
     "langium-cli": "^4.2.0",
     "ts-node": "^10.9.2",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.3"
   }
 }
