@@ -23,12 +23,22 @@ class Rule:
     regex: str | None = None                             # terminal-padrao (folha)
 
 
-SYMBOL_RE = re.compile(r'"[^"]*"|/(?:[^/\\]|\\.)*/|[A-Za-z_][A-Za-z_0-9]*\+?')
+# Um simbolo e um literal ("plano"), um regex (/[0-9]+/) ou um nao-terminal,
+# este ultimo podendo carregar cardinalidade `*`, `+` ou `?`. A cardinalidade e
+# necessaria porque a BNF passou a ser gerada a partir da DSL Langium
+# (src/cli/export-bnf.ts), onde listas de ordens e alertas sao repeticoes.
+SYMBOL_RE = re.compile(r'"[^"]*"|/(?:[^/\\]|\\.)*/|[A-Za-z_][A-Za-z_0-9]*[*+?]?')
 
 
 def load_bnf(path: str) -> dict[str, Rule]:
+    with open(path, encoding="utf-8") as fh:
+        return parse_bnf(fh.read())
+
+
+def parse_bnf(texto: str) -> dict[str, Rule]:
+    """Mesma leitura, a partir de texto — usada com a G_hat gerada em memoria."""
     rules: dict[str, Rule] = {}
-    for line in open(path, encoding="utf-8"):
+    for line in texto.splitlines():
         line = line.split("#")[0].strip()
         if not line or "::=" not in line:
             continue
@@ -127,9 +137,11 @@ def to_gbnf(rules: dict[str, Rule], start: str = "plano") -> str:
         for alt in r.alts:
             syms = []
             for s in alt:
-                syms.append(s if s.startswith('"') else s.rstrip("+"))
-                if s.endswith("+") and not s.startswith('"'):
-                    syms[-1] = f"({syms[-1]} ws)+"
+                if s.startswith('"') or s.startswith("/"):
+                    syms.append(s)
+                    continue
+                base, card = (s[:-1], s[-1]) if s[-1] in "*+?" else (s, "")
+                syms.append(f"({base} ws){card}" if card else base)
             alts.append(" ws ".join(syms))
         out.append(f"{name} ::= " + " | ".join(alts))
     out.append('ws ::= " "*')

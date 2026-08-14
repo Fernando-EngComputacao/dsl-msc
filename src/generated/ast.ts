@@ -9,53 +9,446 @@ import * as langium from 'langium';
 export const dslProjectTerminals = {
     ID: /[_a-zA-Z][\w_]*/,
     STRING: /"[^"]*"|'[^']*'/,
-    FLOAT: /[0-9]+(\.[0-9]+)?/,
+    NUMBER: /-?[0-9]+(\.[0-9]+)?/,
     WS: /\s+/,
+    ML_COMMENT: /\/\*[\s\S]*?\*\//,
+    SL_COMMENT: /\/\/[^\n\r]*/,
 };
 
 export type dslProjectTerminalNames = keyof typeof dslProjectTerminals;
 
 export type dslProjectKeywordNames =
+    | "!="
+    | "%"
     | "("
     | ")"
+    | ","
+    | "->"
+    | "10^3/uL"
+    | "<"
+    | "<="
+    | "=="
+    | ">"
+    | ">="
+    | "ACESSO_CENTRAL"
+    | "ACESSO_PERIFERICO"
+    | "AJUSTAR_DOSE"
+    | "ATENCAO"
+    | "AUMENTAR_VAZAO"
+    | "BLOQUEANTE"
+    | "BLOQUEAR_ORDEM"
+    | "C"
+    | "COMISSAO_INFECCAO"
+    | "CRITICO"
+    | "EPIDURAL"
+    | "ESCALAR_EQUIPE"
+    | "FARMACIA_CLINICA"
+    | "FC"
+    | "FR"
+    | "Glasgow"
+    | "IM"
+    | "INALATORIA"
+    | "INFORMATIVO"
+    | "INICIAR_INFUSAO"
+    | "INR"
+    | "INTENSIVISTA"
+    | "INTRAOSSEO"
+    | "IV"
+    | "L"
+    | "MANTER_BLOQUEADO"
+    | "MANTER_VAZAO"
+    | "MEDICO_PLANTONISTA"
+    | "PAD"
+    | "PAM"
+    | "PAS"
+    | "PaO2_FiO2"
+    | "QTc"
+    | "RASS"
+    | "REDUZIR_VAZAO"
+    | "SC"
+    | "SNE"
+    | "SOFA"
+    | "SOLICITAR_EXAME"
+    | "SUBSTITUIR"
+    | "SUSPENDER"
+    | "SpO2"
+    | "TFG"
+    | "TIME_RESPOSTA_RAPIDA"
+    | "U/min"
+    | "UI"
+    | "UI/h"
+    | "UI/kg"
+    | "VO"
+    | "["
+    | "]"
+    | "a_cada"
+    | "ajusta"
+    | "ajuste_hepatico:"
+    | "ajuste_renal:"
+    | "alerta"
+    | "alertas"
+    | "alta"
+    | "alto_risco"
+    | "alvo"
+    | "analgesico_opioide"
+    | "antiarritmico"
+    | "anticoagulante"
+    | "anticonvulsivante"
+    | "antidoto"
+    | "antimicrobiano"
+    | "ataque"
+    | "atc"
+    | "auditoria"
+    | "aumentar_intervalo"
+    | "bilirrubina"
+    | "bloqueador_neuromuscular"
+    | "bloquear"
     | "bloquear_incremento"
-    | "dose_maxima"
+    | "bomba"
+    | "bpm"
+    | "broncodilatador"
+    | "cid"
+    | "classe"
+    | "concentracao"
+    | "conduta"
+    | "contraindicada"
+    | "contraindicado:"
+    | "corticoide"
+    | "creatinina"
+    | "criterio"
+    | "debito_urinario"
+    | "decisao"
+    | "decisoes"
+    | "desfecho:"
+    | "desmame:"
+    | "dias"
+    | "diluicao"
+    | "diuretico"
+    | "dose"
+    | "eletrolito"
+    | "escalonar:"
+    | "esquema_dados"
+    | "esquema_referencia"
+    | "etapa"
+    | "excecao"
+    | "exige"
     | "farmaco"
-    | "incremento_seguro"
+    | "fator"
+    | "g"
+    | "g/dL"
+    | "gatilho:"
+    | "glicemia"
+    | "gravidade"
+    | "h"
+    | "hemoglobina"
+    | "idade"
+    | "indicacao"
+    | "inicial"
+    | "inotropico"
+    | "insulina"
+    | "interacao:"
+    | "irpm"
+    | "justificativa"
+    | "justificativa_obrigatoria"
+    | "lactato"
+    | "lasa:"
+    | "leve"
+    | "limite_leve"
+    | "limite_rigido"
+    | "mEq"
+    | "mEq/L"
+    | "mL"
+    | "mL/h"
+    | "mL/min"
+    | "manter"
+    | "manutencao"
+    | "maxima"
+    | "mcg"
+    | "mcg/kg"
+    | "mcg/kg/h"
+    | "mcg/kg/min"
+    | "mg"
+    | "mg/L"
+    | "mg/dL"
+    | "mg/h"
+    | "mg/kg"
+    | "mg/kg/h"
+    | "min"
+    | "minima"
+    | "mitigacao"
+    | "mmHg"
+    | "mmol"
+    | "mmol/L"
+    | "moderada"
+    | "monitorar:"
+    | "motivo"
+    | "ms"
+    | "nao"
+    | "ng/mL"
+    | "ordem"
+    | "paciente"
+    | "para"
+    | "peso"
+    | "plano"
+    | "plaquetas"
+    | "pontos"
+    | "populacao"
+    | "potassio"
+    | "prazo"
+    | "proibe"
+    | "protocolo"
+    | "qSOFA"
+    | "reavaliar_em"
+    | "recomenda"
+    | "recurso_fhir"
+    | "reduzir"
+    | "reduzir_dose"
+    | "referencia"
+    | "regra"
+    | "regra_global:"
     | "regra_seguranca:"
+    | "requer_dupla_checagem"
+    | "reservatorio"
+    | "rxnorm"
     | "se"
-    | "tipo"
+    | "sedativo"
+    | "sequencia"
+    | "severidade"
+    | "sim"
+    | "snomed"
+    | "sodio"
+    | "substituir"
+    | "suspender"
+    | "temperatura"
+    | "titulacao"
+    | "vasopressor"
+    | "veta"
+    | "via"
+    | "vias"
     | "{"
     | "}";
 
 export type dslProjectTokenNames = dslProjectTerminalNames | dslProjectKeywordNames;
 
+export type AdjustAction = 'aumentar_intervalo' | 'bloquear' | 'manter' | 'reduzir_dose' | 'substituir' | 'suspender';
+
+export function isAdjustAction(item: unknown): item is AdjustAction {
+    return item === 'reduzir_dose' || item === 'aumentar_intervalo' || item === 'suspender' || item === 'substituir' || item === 'manter' || item === 'bloquear';
+}
+
+export type AlertLevel = 'ATENCAO' | 'BLOQUEANTE' | 'CRITICO' | 'INFORMATIVO';
+
+export function isAlertLevel(item: unknown): item is AlertLevel {
+    return item === 'INFORMATIVO' || item === 'ATENCAO' || item === 'CRITICO' || item === 'BLOQUEANTE';
+}
+
+export interface AlertStmt extends langium.AstNode {
+    readonly $container: PlanCommand;
+    readonly $type: 'AlertStmt';
+    level: AlertLevel;
+    message: string;
+    rule?: string;
+}
+
+export const AlertStmt = {
+    $type: 'AlertStmt',
+    level: 'level',
+    message: 'message',
+    rule: 'rule'
+} as const;
+
+export function isAlertStmt(item: unknown): item is AlertStmt {
+    return reflection.isInstance(item, AlertStmt.$type);
+}
+
+export interface BlockRule extends langium.AstNode {
+    readonly $container: MedicalModel;
+    readonly $type: 'BlockRule';
+    drug: langium.Reference<DrugDef>;
+    operator: Operator;
+    parameter: ClinicalParameter;
+    reason: string;
+    threshold: Quantity;
+}
+
+export const BlockRule = {
+    $type: 'BlockRule',
+    drug: 'drug',
+    operator: 'operator',
+    parameter: 'parameter',
+    reason: 'reason',
+    threshold: 'threshold'
+} as const;
+
+export function isBlockRule(item: unknown): item is BlockRule {
+    return reflection.isInstance(item, BlockRule.$type);
+}
+
+export type Bool = 'nao' | 'sim';
+
+export function isBool(item: unknown): item is Bool {
+    return item === 'sim' || item === 'nao';
+}
+
+export type ClinicalParameter = 'FC' | 'FR' | 'Glasgow' | 'INR' | 'PAD' | 'PAM' | 'PAS' | 'PaO2_FiO2' | 'QTc' | 'RASS' | 'SOFA' | 'SpO2' | 'TFG' | 'bilirrubina' | 'creatinina' | 'debito_urinario' | 'glicemia' | 'hemoglobina' | 'idade' | 'lactato' | 'peso' | 'plaquetas' | 'potassio' | 'qSOFA' | 'sodio' | 'temperatura';
+
+export function isClinicalParameter(item: unknown): item is ClinicalParameter {
+    return item === 'PAM' || item === 'PAS' || item === 'PAD' || item === 'FC' || item === 'FR' || item === 'SpO2' || item === 'temperatura' || item === 'lactato' || item === 'TFG' || item === 'creatinina' || item === 'potassio' || item === 'sodio' || item === 'INR' || item === 'plaquetas' || item === 'hemoglobina' || item === 'QTc' || item === 'glicemia' || item === 'bilirrubina' || item === 'PaO2_FiO2' || item === 'RASS' || item === 'qSOFA' || item === 'SOFA' || item === 'Glasgow' || item === 'debito_urinario' || item === 'peso' || item === 'idade';
+}
+
+export interface ConductDef extends langium.AstNode {
+    readonly $container: DataSchemaDef;
+    readonly $type: 'ConductDef';
+    decision: Decision;
+    doubleCheck?: Bool;
+    fhir?: string;
+    name: string;
+    requiresJustification?: Bool;
+    route?: Route;
+}
+
+export const ConductDef = {
+    $type: 'ConductDef',
+    decision: 'decision',
+    doubleCheck: 'doubleCheck',
+    fhir: 'fhir',
+    name: 'name',
+    requiresJustification: 'requiresJustification',
+    route: 'route'
+} as const;
+
+export function isConductDef(item: unknown): item is ConductDef {
+    return reflection.isInstance(item, ConductDef.$type);
+}
+
+export interface ContraindicationAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'ContraindicationAttr';
+    condition: string;
+    exception?: string;
+}
+
+export const ContraindicationAttr = {
+    $type: 'ContraindicationAttr',
+    condition: 'condition',
+    exception: 'exception'
+} as const;
+
+export function isContraindicationAttr(item: unknown): item is ContraindicationAttr {
+    return reflection.isInstance(item, ContraindicationAttr.$type);
+}
+
+export interface DataSchemaDef extends langium.AstNode {
+    readonly $container: MedicalModel;
+    readonly $type: 'DataSchemaDef';
+    alerts: Array<AlertLevel>;
+    conducts: Array<ConductDef>;
+    decisions: Array<Decision>;
+    name: string;
+    routes: Array<Route>;
+}
+
+export const DataSchemaDef = {
+    $type: 'DataSchemaDef',
+    alerts: 'alerts',
+    conducts: 'conducts',
+    decisions: 'decisions',
+    name: 'name',
+    routes: 'routes'
+} as const;
+
+export function isDataSchemaDef(item: unknown): item is DataSchemaDef {
+    return reflection.isInstance(item, DataSchemaDef.$type);
+}
+
+export type Decision = 'AJUSTAR_DOSE' | 'AUMENTAR_VAZAO' | 'BLOQUEAR_ORDEM' | 'ESCALAR_EQUIPE' | 'INICIAR_INFUSAO' | 'MANTER_BLOQUEADO' | 'MANTER_VAZAO' | 'REDUZIR_VAZAO' | 'SOLICITAR_EXAME' | 'SUBSTITUIR' | 'SUSPENDER';
+
+export function isDecision(item: unknown): item is Decision {
+    return item === 'INICIAR_INFUSAO' || item === 'AUMENTAR_VAZAO' || item === 'REDUZIR_VAZAO' || item === 'MANTER_VAZAO' || item === 'MANTER_BLOQUEADO' || item === 'SUSPENDER' || item === 'SUBSTITUIR' || item === 'AJUSTAR_DOSE' || item === 'SOLICITAR_EXAME' || item === 'ESCALAR_EQUIPE' || item === 'BLOQUEAR_ORDEM';
+}
+
+export interface DilutionAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'DilutionAttr';
+    concentration?: Quantity;
+    standard: string;
+}
+
+export const DilutionAttr = {
+    $type: 'DilutionAttr',
+    concentration: 'concentration',
+    standard: 'standard'
+} as const;
+
+export function isDilutionAttr(item: unknown): item is DilutionAttr {
+    return reflection.isInstance(item, DilutionAttr.$type);
+}
+
+export type DoseKind = 'ataque' | 'inicial' | 'manutencao' | 'maxima' | 'minima';
+
+export function isDoseKind(item: unknown): item is DoseKind {
+    return item === 'inicial' || item === 'maxima' || item === 'minima' || item === 'ataque' || item === 'manutencao';
+}
+
+export interface DoseLimitAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'DoseLimitAttr';
+    kind: DoseKind;
+    value: Quantity;
+}
+
+export const DoseLimitAttr = {
+    $type: 'DoseLimitAttr',
+    kind: 'kind',
+    value: 'value'
+} as const;
+
+export function isDoseLimitAttr(item: unknown): item is DoseLimitAttr {
+    return reflection.isInstance(item, DoseLimitAttr.$type);
+}
+
+export type DrugAttribute = ContraindicationAttr | DilutionAttr | DoseLimitAttr | HepaticAdjustAttr | InteractionAttr | LasaAttr | MonitorAttr | PumpLimitAttr | RenalAdjustAttr | RouteAttr | TitrationAttr;
+
+export const DrugAttribute = {
+    $type: 'DrugAttribute'
+} as const;
+
+export function isDrugAttribute(item: unknown): item is DrugAttribute {
+    return reflection.isInstance(item, DrugAttribute.$type);
+}
+
+export type DrugClass = 'analgesico_opioide' | 'antiarritmico' | 'anticoagulante' | 'anticonvulsivante' | 'antidoto' | 'antimicrobiano' | 'bloqueador_neuromuscular' | 'broncodilatador' | 'corticoide' | 'diuretico' | 'eletrolito' | 'inotropico' | 'insulina' | 'sedativo' | 'vasopressor';
+
+export function isDrugClass(item: unknown): item is DrugClass {
+    return item === 'vasopressor' || item === 'inotropico' || item === 'sedativo' || item === 'analgesico_opioide' || item === 'bloqueador_neuromuscular' || item === 'antimicrobiano' || item === 'anticoagulante' || item === 'antiarritmico' || item === 'insulina' || item === 'eletrolito' || item === 'diuretico' || item === 'corticoide' || item === 'anticonvulsivante' || item === 'broncodilatador' || item === 'antidoto';
+}
+
 export interface DrugDef extends langium.AstNode {
     readonly $container: MedicalModel;
     readonly $type: 'DrugDef';
-    maxDose: number;
-    maxDoseUnit: string;
+    atc: string;
+    attributes: Array<DrugAttribute>;
+    drugClass: DrugClass;
+    highAlert: Bool;
     name: string;
-    safeStep: number;
-    safeStepUnit: string;
-    type: string;
+    rxnorm: string;
 }
 
 export const DrugDef = {
     $type: 'DrugDef',
-    maxDose: 'maxDose',
-    maxDoseUnit: 'maxDoseUnit',
+    atc: 'atc',
+    attributes: 'attributes',
+    drugClass: 'drugClass',
+    highAlert: 'highAlert',
     name: 'name',
-    safeStep: 'safeStep',
-    safeStepUnit: 'safeStepUnit',
-    type: 'type'
+    rxnorm: 'rxnorm'
 } as const;
 
 export function isDrugDef(item: unknown): item is DrugDef {
     return reflection.isInstance(item, DrugDef.$type);
 }
 
-export type Element = DrugDef | SafetyRule;
+export type Element = DataSchemaDef | DrugDef | PlanCommand | PopulationDef | ProtocolDef | SafetyRule;
 
 export const Element = {
     $type: 'Element'
@@ -63,6 +456,128 @@ export const Element = {
 
 export function isElement(item: unknown): item is Element {
     return reflection.isInstance(item, Element.$type);
+}
+
+export interface EscalationAttr extends langium.AstNode {
+    readonly $container: ProtocolDef;
+    readonly $type: 'EscalationAttr';
+    detail: string;
+    operator: Operator;
+    parameter: ClinicalParameter;
+    target: EscalationTarget;
+    value: Quantity;
+}
+
+export const EscalationAttr = {
+    $type: 'EscalationAttr',
+    detail: 'detail',
+    operator: 'operator',
+    parameter: 'parameter',
+    target: 'target',
+    value: 'value'
+} as const;
+
+export function isEscalationAttr(item: unknown): item is EscalationAttr {
+    return reflection.isInstance(item, EscalationAttr.$type);
+}
+
+export type EscalationTarget = 'COMISSAO_INFECCAO' | 'FARMACIA_CLINICA' | 'INTENSIVISTA' | 'MEDICO_PLANTONISTA' | 'TIME_RESPOSTA_RAPIDA';
+
+export function isEscalationTarget(item: unknown): item is EscalationTarget {
+    return item === 'TIME_RESPOSTA_RAPIDA' || item === 'MEDICO_PLANTONISTA' || item === 'INTENSIVISTA' || item === 'FARMACIA_CLINICA' || item === 'COMISSAO_INFECCAO';
+}
+
+export interface ForbidAttr extends langium.AstNode {
+    readonly $container: ProtocolDef;
+    readonly $type: 'ForbidAttr';
+    drug: langium.Reference<DrugDef>;
+    reason: string;
+}
+
+export const ForbidAttr = {
+    $type: 'ForbidAttr',
+    drug: 'drug',
+    reason: 'reason'
+} as const;
+
+export function isForbidAttr(item: unknown): item is ForbidAttr {
+    return reflection.isInstance(item, ForbidAttr.$type);
+}
+
+export interface GlobalRule extends langium.AstNode {
+    readonly $container: MedicalModel;
+    readonly $type: 'GlobalRule';
+    description: string;
+    reference?: string;
+    severity?: Severity;
+}
+
+export const GlobalRule = {
+    $type: 'GlobalRule',
+    description: 'description',
+    reference: 'reference',
+    severity: 'severity'
+} as const;
+
+export function isGlobalRule(item: unknown): item is GlobalRule {
+    return reflection.isInstance(item, GlobalRule.$type);
+}
+
+export interface HepaticAdjustAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'HepaticAdjustAttr';
+    action: AdjustAction;
+    criterion: string;
+    detail: string;
+}
+
+export const HepaticAdjustAttr = {
+    $type: 'HepaticAdjustAttr',
+    action: 'action',
+    criterion: 'criterion',
+    detail: 'detail'
+} as const;
+
+export function isHepaticAdjustAttr(item: unknown): item is HepaticAdjustAttr {
+    return reflection.isInstance(item, HepaticAdjustAttr.$type);
+}
+
+export interface InteractionAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'InteractionAttr';
+    conduct?: string;
+    mechanism: string;
+    other: langium.Reference<DrugDef>;
+    severity: Severity;
+}
+
+export const InteractionAttr = {
+    $type: 'InteractionAttr',
+    conduct: 'conduct',
+    mechanism: 'mechanism',
+    other: 'other',
+    severity: 'severity'
+} as const;
+
+export function isInteractionAttr(item: unknown): item is InteractionAttr {
+    return reflection.isInstance(item, InteractionAttr.$type);
+}
+
+export interface LasaAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'LasaAttr';
+    confusable: string;
+    mitigation?: string;
+}
+
+export const LasaAttr = {
+    $type: 'LasaAttr',
+    confusable: 'confusable',
+    mitigation: 'mitigation'
+} as const;
+
+export function isLasaAttr(item: unknown): item is LasaAttr {
+    return reflection.isInstance(item, LasaAttr.$type);
 }
 
 export interface MedicalModel extends langium.AstNode {
@@ -79,54 +594,614 @@ export function isMedicalModel(item: unknown): item is MedicalModel {
     return reflection.isInstance(item, MedicalModel.$type);
 }
 
-export interface SafetyRule extends langium.AstNode {
+export interface MonitorAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'MonitorAttr';
+    goal?: string;
+    interval: Quantity;
+    target: string;
+}
+
+export const MonitorAttr = {
+    $type: 'MonitorAttr',
+    goal: 'goal',
+    interval: 'interval',
+    target: 'target'
+} as const;
+
+export function isMonitorAttr(item: unknown): item is MonitorAttr {
+    return reflection.isInstance(item, MonitorAttr.$type);
+}
+
+export type Operator = '!=' | '<' | '<=' | '==' | '>' | '>=';
+
+export function isOperator(item: unknown): item is Operator {
+    return item === '>=' || item === '<=' || item === '==' || item === '!=' || item === '>' || item === '<';
+}
+
+export interface OrderStmt extends langium.AstNode {
+    readonly $container: PlanCommand;
+    readonly $type: 'OrderStmt';
+    decision: Decision;
+    dose: Quantity;
+    drug: langium.Reference<DrugDef>;
+    justification?: string;
+    route: Route;
+}
+
+export const OrderStmt = {
+    $type: 'OrderStmt',
+    decision: 'decision',
+    dose: 'dose',
+    drug: 'drug',
+    justification: 'justification',
+    route: 'route'
+} as const;
+
+export function isOrderStmt(item: unknown): item is OrderStmt {
+    return reflection.isInstance(item, OrderStmt.$type);
+}
+
+export interface OutcomeAttr extends langium.AstNode {
+    readonly $container: ProtocolDef;
+    readonly $type: 'OutcomeAttr';
+    description: string;
+    reassess?: Quantity;
+}
+
+export const OutcomeAttr = {
+    $type: 'OutcomeAttr',
+    description: 'description',
+    reassess: 'reassess'
+} as const;
+
+export function isOutcomeAttr(item: unknown): item is OutcomeAttr {
+    return reflection.isInstance(item, OutcomeAttr.$type);
+}
+
+export interface PlanCommand extends langium.AstNode {
     readonly $container: MedicalModel;
-    readonly $type: 'SafetyRule';
-    condition: string;
+    readonly $type: 'PlanCommand';
+    alerts: Array<AlertStmt>;
+    audit: string;
+    name: string;
+    orders: Array<OrderStmt>;
+    patient: string;
+    protocol: langium.Reference<ProtocolDef>;
+    schema: langium.Reference<DataSchemaDef>;
+    sequence: Array<langium.Reference<ConductDef>>;
+}
+
+export const PlanCommand = {
+    $type: 'PlanCommand',
+    alerts: 'alerts',
+    audit: 'audit',
+    name: 'name',
+    orders: 'orders',
+    patient: 'patient',
+    protocol: 'protocol',
+    schema: 'schema',
+    sequence: 'sequence'
+} as const;
+
+export function isPlanCommand(item: unknown): item is PlanCommand {
+    return reflection.isInstance(item, PlanCommand.$type);
+}
+
+export interface PopAdjust extends langium.AstNode {
+    readonly $container: PopulationDef;
+    readonly $type: 'PopAdjust';
+    drug: langium.Reference<DrugDef>;
+    factor: number;
+    reason?: string;
+}
+
+export const PopAdjust = {
+    $type: 'PopAdjust',
+    drug: 'drug',
+    factor: 'factor',
+    reason: 'reason'
+} as const;
+
+export function isPopAdjust(item: unknown): item is PopAdjust {
+    return reflection.isInstance(item, PopAdjust.$type);
+}
+
+export interface PopForbid extends langium.AstNode {
+    readonly $container: PopulationDef;
+    readonly $type: 'PopForbid';
     drug: langium.Reference<DrugDef>;
     reason: string;
 }
 
-export const SafetyRule = {
-    $type: 'SafetyRule',
-    condition: 'condition',
+export const PopForbid = {
+    $type: 'PopForbid',
     drug: 'drug',
     reason: 'reason'
+} as const;
+
+export function isPopForbid(item: unknown): item is PopForbid {
+    return reflection.isInstance(item, PopForbid.$type);
+}
+
+export interface PopRequire extends langium.AstNode {
+    readonly $container: PopulationDef;
+    readonly $type: 'PopRequire';
+    requirement: string;
+}
+
+export const PopRequire = {
+    $type: 'PopRequire',
+    requirement: 'requirement'
+} as const;
+
+export function isPopRequire(item: unknown): item is PopRequire {
+    return reflection.isInstance(item, PopRequire.$type);
+}
+
+export interface PopulationDef extends langium.AstNode {
+    readonly $container: MedicalModel;
+    readonly $type: 'PopulationDef';
+    criterion: string;
+    name: string;
+    restrictions: Array<PopulationRestriction>;
+}
+
+export const PopulationDef = {
+    $type: 'PopulationDef',
+    criterion: 'criterion',
+    name: 'name',
+    restrictions: 'restrictions'
+} as const;
+
+export function isPopulationDef(item: unknown): item is PopulationDef {
+    return reflection.isInstance(item, PopulationDef.$type);
+}
+
+export type PopulationRestriction = PopAdjust | PopForbid | PopRequire;
+
+export const PopulationRestriction = {
+    $type: 'PopulationRestriction'
+} as const;
+
+export function isPopulationRestriction(item: unknown): item is PopulationRestriction {
+    return reflection.isInstance(item, PopulationRestriction.$type);
+}
+
+export type ProtocolAttribute = EscalationAttr | ForbidAttr | OutcomeAttr | RecommendAttr | SnomedAttr | StepAttr | TriggerAttr | WeaningAttr;
+
+export const ProtocolAttribute = {
+    $type: 'ProtocolAttribute'
+} as const;
+
+export function isProtocolAttribute(item: unknown): item is ProtocolAttribute {
+    return reflection.isInstance(item, ProtocolAttribute.$type);
+}
+
+export interface ProtocolDef extends langium.AstNode {
+    readonly $container: MedicalModel;
+    readonly $type: 'ProtocolDef';
+    attributes: Array<ProtocolAttribute>;
+    icd: string;
+    name: string;
+}
+
+export const ProtocolDef = {
+    $type: 'ProtocolDef',
+    attributes: 'attributes',
+    icd: 'icd',
+    name: 'name'
+} as const;
+
+export function isProtocolDef(item: unknown): item is ProtocolDef {
+    return reflection.isInstance(item, ProtocolDef.$type);
+}
+
+export interface PumpLimitAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'PumpLimitAttr';
+    hard: Quantity;
+    reservoir?: string;
+    soft: Quantity;
+}
+
+export const PumpLimitAttr = {
+    $type: 'PumpLimitAttr',
+    hard: 'hard',
+    reservoir: 'reservoir',
+    soft: 'soft'
+} as const;
+
+export function isPumpLimitAttr(item: unknown): item is PumpLimitAttr {
+    return reflection.isInstance(item, PumpLimitAttr.$type);
+}
+
+export interface Quantity extends langium.AstNode {
+    readonly $container: BlockRule | DilutionAttr | DoseLimitAttr | EscalationAttr | MonitorAttr | OrderStmt | OutcomeAttr | PumpLimitAttr | RenalAdjustAttr | StepAttr | TitrationAttr | TriggerAttr | WeaningAttr;
+    readonly $type: 'Quantity';
+    unit: Unit;
+    value: number;
+}
+
+export const Quantity = {
+    $type: 'Quantity',
+    unit: 'unit',
+    value: 'value'
+} as const;
+
+export function isQuantity(item: unknown): item is Quantity {
+    return reflection.isInstance(item, Quantity.$type);
+}
+
+export interface RecommendAttr extends langium.AstNode {
+    readonly $container: ProtocolDef;
+    readonly $type: 'RecommendAttr';
+    drug: langium.Reference<DrugDef>;
+    indication?: string;
+}
+
+export const RecommendAttr = {
+    $type: 'RecommendAttr',
+    drug: 'drug',
+    indication: 'indication'
+} as const;
+
+export function isRecommendAttr(item: unknown): item is RecommendAttr {
+    return reflection.isInstance(item, RecommendAttr.$type);
+}
+
+export interface RenalAdjustAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'RenalAdjustAttr';
+    action: AdjustAction;
+    detail: string;
+    operator: Operator;
+    parameter: ClinicalParameter;
+    threshold: Quantity;
+}
+
+export const RenalAdjustAttr = {
+    $type: 'RenalAdjustAttr',
+    action: 'action',
+    detail: 'detail',
+    operator: 'operator',
+    parameter: 'parameter',
+    threshold: 'threshold'
+} as const;
+
+export function isRenalAdjustAttr(item: unknown): item is RenalAdjustAttr {
+    return reflection.isInstance(item, RenalAdjustAttr.$type);
+}
+
+export type Route = 'ACESSO_CENTRAL' | 'ACESSO_PERIFERICO' | 'EPIDURAL' | 'IM' | 'INALATORIA' | 'INTRAOSSEO' | 'IV' | 'SC' | 'SNE' | 'VO';
+
+export function isRoute(item: unknown): item is Route {
+    return item === 'ACESSO_CENTRAL' || item === 'ACESSO_PERIFERICO' || item === 'INTRAOSSEO' || item === 'IV' || item === 'IM' || item === 'VO' || item === 'SNE' || item === 'SC' || item === 'INALATORIA' || item === 'EPIDURAL';
+}
+
+export interface RouteAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'RouteAttr';
+    routes: Array<Route>;
+}
+
+export const RouteAttr = {
+    $type: 'RouteAttr',
+    routes: 'routes'
+} as const;
+
+export function isRouteAttr(item: unknown): item is RouteAttr {
+    return reflection.isInstance(item, RouteAttr.$type);
+}
+
+export type SafetyRule = BlockRule | GlobalRule;
+
+export const SafetyRule = {
+    $type: 'SafetyRule'
 } as const;
 
 export function isSafetyRule(item: unknown): item is SafetyRule {
     return reflection.isInstance(item, SafetyRule.$type);
 }
 
+export type Severity = 'alta' | 'contraindicada' | 'leve' | 'moderada';
+
+export function isSeverity(item: unknown): item is Severity {
+    return item === 'leve' || item === 'moderada' || item === 'alta' || item === 'contraindicada';
+}
+
+export interface SnomedAttr extends langium.AstNode {
+    readonly $container: ProtocolDef;
+    readonly $type: 'SnomedAttr';
+    code: string;
+}
+
+export const SnomedAttr = {
+    $type: 'SnomedAttr',
+    code: 'code'
+} as const;
+
+export function isSnomedAttr(item: unknown): item is SnomedAttr {
+    return reflection.isInstance(item, SnomedAttr.$type);
+}
+
+export interface StepAttr extends langium.AstNode {
+    readonly $container: ProtocolDef;
+    readonly $type: 'StepAttr';
+    deadline?: Quantity;
+    description: string;
+    order: number;
+}
+
+export const StepAttr = {
+    $type: 'StepAttr',
+    deadline: 'deadline',
+    description: 'description',
+    order: 'order'
+} as const;
+
+export function isStepAttr(item: unknown): item is StepAttr {
+    return reflection.isInstance(item, StepAttr.$type);
+}
+
+export interface TitrationAttr extends langium.AstNode {
+    readonly $container: DrugDef;
+    readonly $type: 'TitrationAttr';
+    interval: Quantity;
+    step: Quantity;
+    target?: string;
+}
+
+export const TitrationAttr = {
+    $type: 'TitrationAttr',
+    interval: 'interval',
+    step: 'step',
+    target: 'target'
+} as const;
+
+export function isTitrationAttr(item: unknown): item is TitrationAttr {
+    return reflection.isInstance(item, TitrationAttr.$type);
+}
+
+export interface TriggerAttr extends langium.AstNode {
+    readonly $container: ProtocolDef;
+    readonly $type: 'TriggerAttr';
+    action: string;
+    operator: Operator;
+    parameter: ClinicalParameter;
+    value: Quantity;
+}
+
+export const TriggerAttr = {
+    $type: 'TriggerAttr',
+    action: 'action',
+    operator: 'operator',
+    parameter: 'parameter',
+    value: 'value'
+} as const;
+
+export function isTriggerAttr(item: unknown): item is TriggerAttr {
+    return reflection.isInstance(item, TriggerAttr.$type);
+}
+
+export type Unit = '%' | '10^3/uL' | 'C' | 'L' | 'U/min' | 'UI' | 'UI/h' | 'UI/kg' | 'bpm' | 'dias' | 'g' | 'g/dL' | 'h' | 'irpm' | 'mEq' | 'mEq/L' | 'mL' | 'mL/h' | 'mL/min' | 'mcg' | 'mcg/kg' | 'mcg/kg/h' | 'mcg/kg/min' | 'mg' | 'mg/L' | 'mg/dL' | 'mg/h' | 'mg/kg' | 'mg/kg/h' | 'min' | 'mmHg' | 'mmol' | 'mmol/L' | 'ms' | 'ng/mL' | 'pontos';
+
+export function isUnit(item: unknown): item is Unit {
+    return item === 'mcg/kg/min' || item === 'mg/kg/h' || item === 'mcg/kg/h' || item === 'mg/kg' || item === 'mcg/kg' || item === 'UI/kg' || item === 'UI/h' || item === 'mL/h' || item === 'mg/h' || item === 'U/min' || item === 'mg/dL' || item === 'g/dL' || item === 'mmol/L' || item === 'mEq/L' || item === 'mg/L' || item === 'ng/mL' || item === 'mL/min' || item === '10^3/uL' || item === 'mcg' || item === 'mg' || item === 'g' || item === 'UI' || item === 'mEq' || item === 'mmol' || item === 'mL' || item === 'L' || item === 'mmHg' || item === 'bpm' || item === 'irpm' || item === 'ms' || item === 'C' || item === 'h' || item === 'min' || item === 'dias' || item === 'pontos' || item === '%';
+}
+
+export interface WeaningAttr extends langium.AstNode {
+    readonly $container: ProtocolDef;
+    readonly $type: 'WeaningAttr';
+    criterion: string;
+    interval: Quantity;
+    step: Quantity;
+}
+
+export const WeaningAttr = {
+    $type: 'WeaningAttr',
+    criterion: 'criterion',
+    interval: 'interval',
+    step: 'step'
+} as const;
+
+export function isWeaningAttr(item: unknown): item is WeaningAttr {
+    return reflection.isInstance(item, WeaningAttr.$type);
+}
+
 export type dslProjectAstType = {
+    AlertStmt: AlertStmt
+    BlockRule: BlockRule
+    ConductDef: ConductDef
+    ContraindicationAttr: ContraindicationAttr
+    DataSchemaDef: DataSchemaDef
+    DilutionAttr: DilutionAttr
+    DoseLimitAttr: DoseLimitAttr
+    DrugAttribute: DrugAttribute
     DrugDef: DrugDef
     Element: Element
+    EscalationAttr: EscalationAttr
+    ForbidAttr: ForbidAttr
+    GlobalRule: GlobalRule
+    HepaticAdjustAttr: HepaticAdjustAttr
+    InteractionAttr: InteractionAttr
+    LasaAttr: LasaAttr
     MedicalModel: MedicalModel
+    MonitorAttr: MonitorAttr
+    OrderStmt: OrderStmt
+    OutcomeAttr: OutcomeAttr
+    PlanCommand: PlanCommand
+    PopAdjust: PopAdjust
+    PopForbid: PopForbid
+    PopRequire: PopRequire
+    PopulationDef: PopulationDef
+    PopulationRestriction: PopulationRestriction
+    ProtocolAttribute: ProtocolAttribute
+    ProtocolDef: ProtocolDef
+    PumpLimitAttr: PumpLimitAttr
+    Quantity: Quantity
+    RecommendAttr: RecommendAttr
+    RenalAdjustAttr: RenalAdjustAttr
+    RouteAttr: RouteAttr
     SafetyRule: SafetyRule
+    SnomedAttr: SnomedAttr
+    StepAttr: StepAttr
+    TitrationAttr: TitrationAttr
+    TriggerAttr: TriggerAttr
+    WeaningAttr: WeaningAttr
 }
 
 export class dslProjectAstReflection extends langium.AbstractAstReflection {
     override readonly types = {
+        AlertStmt: {
+            name: AlertStmt.$type,
+            properties: {
+                level: {
+                    name: AlertStmt.level
+                },
+                message: {
+                    name: AlertStmt.message
+                },
+                rule: {
+                    name: AlertStmt.rule
+                }
+            },
+            superTypes: []
+        },
+        BlockRule: {
+            name: BlockRule.$type,
+            properties: {
+                drug: {
+                    name: BlockRule.drug,
+                    referenceType: DrugDef.$type
+                },
+                operator: {
+                    name: BlockRule.operator
+                },
+                parameter: {
+                    name: BlockRule.parameter
+                },
+                reason: {
+                    name: BlockRule.reason
+                },
+                threshold: {
+                    name: BlockRule.threshold
+                }
+            },
+            superTypes: [SafetyRule.$type]
+        },
+        ConductDef: {
+            name: ConductDef.$type,
+            properties: {
+                decision: {
+                    name: ConductDef.decision
+                },
+                doubleCheck: {
+                    name: ConductDef.doubleCheck
+                },
+                fhir: {
+                    name: ConductDef.fhir
+                },
+                name: {
+                    name: ConductDef.name
+                },
+                requiresJustification: {
+                    name: ConductDef.requiresJustification
+                },
+                route: {
+                    name: ConductDef.route
+                }
+            },
+            superTypes: []
+        },
+        ContraindicationAttr: {
+            name: ContraindicationAttr.$type,
+            properties: {
+                condition: {
+                    name: ContraindicationAttr.condition
+                },
+                exception: {
+                    name: ContraindicationAttr.exception
+                }
+            },
+            superTypes: [DrugAttribute.$type]
+        },
+        DataSchemaDef: {
+            name: DataSchemaDef.$type,
+            properties: {
+                alerts: {
+                    name: DataSchemaDef.alerts,
+                    defaultValue: []
+                },
+                conducts: {
+                    name: DataSchemaDef.conducts,
+                    defaultValue: []
+                },
+                decisions: {
+                    name: DataSchemaDef.decisions,
+                    defaultValue: []
+                },
+                name: {
+                    name: DataSchemaDef.name
+                },
+                routes: {
+                    name: DataSchemaDef.routes,
+                    defaultValue: []
+                }
+            },
+            superTypes: [Element.$type]
+        },
+        DilutionAttr: {
+            name: DilutionAttr.$type,
+            properties: {
+                concentration: {
+                    name: DilutionAttr.concentration
+                },
+                standard: {
+                    name: DilutionAttr.standard
+                }
+            },
+            superTypes: [DrugAttribute.$type]
+        },
+        DoseLimitAttr: {
+            name: DoseLimitAttr.$type,
+            properties: {
+                kind: {
+                    name: DoseLimitAttr.kind
+                },
+                value: {
+                    name: DoseLimitAttr.value
+                }
+            },
+            superTypes: [DrugAttribute.$type]
+        },
+        DrugAttribute: {
+            name: DrugAttribute.$type,
+            properties: {
+            },
+            superTypes: []
+        },
         DrugDef: {
             name: DrugDef.$type,
             properties: {
-                maxDose: {
-                    name: DrugDef.maxDose
+                atc: {
+                    name: DrugDef.atc
                 },
-                maxDoseUnit: {
-                    name: DrugDef.maxDoseUnit
+                attributes: {
+                    name: DrugDef.attributes,
+                    defaultValue: []
+                },
+                drugClass: {
+                    name: DrugDef.drugClass
+                },
+                highAlert: {
+                    name: DrugDef.highAlert
                 },
                 name: {
                     name: DrugDef.name
                 },
-                safeStep: {
-                    name: DrugDef.safeStep
-                },
-                safeStepUnit: {
-                    name: DrugDef.safeStepUnit
-                },
-                type: {
-                    name: DrugDef.type
+                rxnorm: {
+                    name: DrugDef.rxnorm
                 }
             },
             superTypes: [Element.$type]
@@ -136,6 +1211,101 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
             properties: {
             },
             superTypes: []
+        },
+        EscalationAttr: {
+            name: EscalationAttr.$type,
+            properties: {
+                detail: {
+                    name: EscalationAttr.detail
+                },
+                operator: {
+                    name: EscalationAttr.operator
+                },
+                parameter: {
+                    name: EscalationAttr.parameter
+                },
+                target: {
+                    name: EscalationAttr.target
+                },
+                value: {
+                    name: EscalationAttr.value
+                }
+            },
+            superTypes: [ProtocolAttribute.$type]
+        },
+        ForbidAttr: {
+            name: ForbidAttr.$type,
+            properties: {
+                drug: {
+                    name: ForbidAttr.drug,
+                    referenceType: DrugDef.$type
+                },
+                reason: {
+                    name: ForbidAttr.reason
+                }
+            },
+            superTypes: [ProtocolAttribute.$type]
+        },
+        GlobalRule: {
+            name: GlobalRule.$type,
+            properties: {
+                description: {
+                    name: GlobalRule.description
+                },
+                reference: {
+                    name: GlobalRule.reference
+                },
+                severity: {
+                    name: GlobalRule.severity
+                }
+            },
+            superTypes: [SafetyRule.$type]
+        },
+        HepaticAdjustAttr: {
+            name: HepaticAdjustAttr.$type,
+            properties: {
+                action: {
+                    name: HepaticAdjustAttr.action
+                },
+                criterion: {
+                    name: HepaticAdjustAttr.criterion
+                },
+                detail: {
+                    name: HepaticAdjustAttr.detail
+                }
+            },
+            superTypes: [DrugAttribute.$type]
+        },
+        InteractionAttr: {
+            name: InteractionAttr.$type,
+            properties: {
+                conduct: {
+                    name: InteractionAttr.conduct
+                },
+                mechanism: {
+                    name: InteractionAttr.mechanism
+                },
+                other: {
+                    name: InteractionAttr.other,
+                    referenceType: DrugDef.$type
+                },
+                severity: {
+                    name: InteractionAttr.severity
+                }
+            },
+            superTypes: [DrugAttribute.$type]
+        },
+        LasaAttr: {
+            name: LasaAttr.$type,
+            properties: {
+                confusable: {
+                    name: LasaAttr.confusable
+                },
+                mitigation: {
+                    name: LasaAttr.mitigation
+                }
+            },
+            superTypes: [DrugAttribute.$type]
         },
         MedicalModel: {
             name: MedicalModel.$type,
@@ -147,21 +1317,321 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
             },
             superTypes: []
         },
-        SafetyRule: {
-            name: SafetyRule.$type,
+        MonitorAttr: {
+            name: MonitorAttr.$type,
             properties: {
-                condition: {
-                    name: SafetyRule.condition
+                goal: {
+                    name: MonitorAttr.goal
+                },
+                interval: {
+                    name: MonitorAttr.interval
+                },
+                target: {
+                    name: MonitorAttr.target
+                }
+            },
+            superTypes: [DrugAttribute.$type]
+        },
+        OrderStmt: {
+            name: OrderStmt.$type,
+            properties: {
+                decision: {
+                    name: OrderStmt.decision
+                },
+                dose: {
+                    name: OrderStmt.dose
                 },
                 drug: {
-                    name: SafetyRule.drug,
+                    name: OrderStmt.drug,
                     referenceType: DrugDef.$type
                 },
-                reason: {
-                    name: SafetyRule.reason
+                justification: {
+                    name: OrderStmt.justification
+                },
+                route: {
+                    name: OrderStmt.route
+                }
+            },
+            superTypes: []
+        },
+        OutcomeAttr: {
+            name: OutcomeAttr.$type,
+            properties: {
+                description: {
+                    name: OutcomeAttr.description
+                },
+                reassess: {
+                    name: OutcomeAttr.reassess
+                }
+            },
+            superTypes: [ProtocolAttribute.$type]
+        },
+        PlanCommand: {
+            name: PlanCommand.$type,
+            properties: {
+                alerts: {
+                    name: PlanCommand.alerts,
+                    defaultValue: []
+                },
+                audit: {
+                    name: PlanCommand.audit
+                },
+                name: {
+                    name: PlanCommand.name
+                },
+                orders: {
+                    name: PlanCommand.orders,
+                    defaultValue: []
+                },
+                patient: {
+                    name: PlanCommand.patient
+                },
+                protocol: {
+                    name: PlanCommand.protocol,
+                    referenceType: ProtocolDef.$type
+                },
+                schema: {
+                    name: PlanCommand.schema,
+                    referenceType: DataSchemaDef.$type
+                },
+                sequence: {
+                    name: PlanCommand.sequence,
+                    defaultValue: [],
+                    referenceType: ConductDef.$type
                 }
             },
             superTypes: [Element.$type]
+        },
+        PopAdjust: {
+            name: PopAdjust.$type,
+            properties: {
+                drug: {
+                    name: PopAdjust.drug,
+                    referenceType: DrugDef.$type
+                },
+                factor: {
+                    name: PopAdjust.factor
+                },
+                reason: {
+                    name: PopAdjust.reason
+                }
+            },
+            superTypes: [PopulationRestriction.$type]
+        },
+        PopForbid: {
+            name: PopForbid.$type,
+            properties: {
+                drug: {
+                    name: PopForbid.drug,
+                    referenceType: DrugDef.$type
+                },
+                reason: {
+                    name: PopForbid.reason
+                }
+            },
+            superTypes: [PopulationRestriction.$type]
+        },
+        PopRequire: {
+            name: PopRequire.$type,
+            properties: {
+                requirement: {
+                    name: PopRequire.requirement
+                }
+            },
+            superTypes: [PopulationRestriction.$type]
+        },
+        PopulationDef: {
+            name: PopulationDef.$type,
+            properties: {
+                criterion: {
+                    name: PopulationDef.criterion
+                },
+                name: {
+                    name: PopulationDef.name
+                },
+                restrictions: {
+                    name: PopulationDef.restrictions,
+                    defaultValue: []
+                }
+            },
+            superTypes: [Element.$type]
+        },
+        PopulationRestriction: {
+            name: PopulationRestriction.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        ProtocolAttribute: {
+            name: ProtocolAttribute.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        ProtocolDef: {
+            name: ProtocolDef.$type,
+            properties: {
+                attributes: {
+                    name: ProtocolDef.attributes,
+                    defaultValue: []
+                },
+                icd: {
+                    name: ProtocolDef.icd
+                },
+                name: {
+                    name: ProtocolDef.name
+                }
+            },
+            superTypes: [Element.$type]
+        },
+        PumpLimitAttr: {
+            name: PumpLimitAttr.$type,
+            properties: {
+                hard: {
+                    name: PumpLimitAttr.hard
+                },
+                reservoir: {
+                    name: PumpLimitAttr.reservoir
+                },
+                soft: {
+                    name: PumpLimitAttr.soft
+                }
+            },
+            superTypes: [DrugAttribute.$type]
+        },
+        Quantity: {
+            name: Quantity.$type,
+            properties: {
+                unit: {
+                    name: Quantity.unit
+                },
+                value: {
+                    name: Quantity.value
+                }
+            },
+            superTypes: []
+        },
+        RecommendAttr: {
+            name: RecommendAttr.$type,
+            properties: {
+                drug: {
+                    name: RecommendAttr.drug,
+                    referenceType: DrugDef.$type
+                },
+                indication: {
+                    name: RecommendAttr.indication
+                }
+            },
+            superTypes: [ProtocolAttribute.$type]
+        },
+        RenalAdjustAttr: {
+            name: RenalAdjustAttr.$type,
+            properties: {
+                action: {
+                    name: RenalAdjustAttr.action
+                },
+                detail: {
+                    name: RenalAdjustAttr.detail
+                },
+                operator: {
+                    name: RenalAdjustAttr.operator
+                },
+                parameter: {
+                    name: RenalAdjustAttr.parameter
+                },
+                threshold: {
+                    name: RenalAdjustAttr.threshold
+                }
+            },
+            superTypes: [DrugAttribute.$type]
+        },
+        RouteAttr: {
+            name: RouteAttr.$type,
+            properties: {
+                routes: {
+                    name: RouteAttr.routes,
+                    defaultValue: []
+                }
+            },
+            superTypes: [DrugAttribute.$type]
+        },
+        SafetyRule: {
+            name: SafetyRule.$type,
+            properties: {
+            },
+            superTypes: [Element.$type]
+        },
+        SnomedAttr: {
+            name: SnomedAttr.$type,
+            properties: {
+                code: {
+                    name: SnomedAttr.code
+                }
+            },
+            superTypes: [ProtocolAttribute.$type]
+        },
+        StepAttr: {
+            name: StepAttr.$type,
+            properties: {
+                deadline: {
+                    name: StepAttr.deadline
+                },
+                description: {
+                    name: StepAttr.description
+                },
+                order: {
+                    name: StepAttr.order
+                }
+            },
+            superTypes: [ProtocolAttribute.$type]
+        },
+        TitrationAttr: {
+            name: TitrationAttr.$type,
+            properties: {
+                interval: {
+                    name: TitrationAttr.interval
+                },
+                step: {
+                    name: TitrationAttr.step
+                },
+                target: {
+                    name: TitrationAttr.target
+                }
+            },
+            superTypes: [DrugAttribute.$type]
+        },
+        TriggerAttr: {
+            name: TriggerAttr.$type,
+            properties: {
+                action: {
+                    name: TriggerAttr.action
+                },
+                operator: {
+                    name: TriggerAttr.operator
+                },
+                parameter: {
+                    name: TriggerAttr.parameter
+                },
+                value: {
+                    name: TriggerAttr.value
+                }
+            },
+            superTypes: [ProtocolAttribute.$type]
+        },
+        WeaningAttr: {
+            name: WeaningAttr.$type,
+            properties: {
+                criterion: {
+                    name: WeaningAttr.criterion
+                },
+                interval: {
+                    name: WeaningAttr.interval
+                },
+                step: {
+                    name: WeaningAttr.step
+                }
+            },
+            superTypes: [ProtocolAttribute.$type]
         }
     } as const satisfies langium.AstMetaData
 }

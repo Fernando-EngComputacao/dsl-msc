@@ -1,78 +1,148 @@
 """
-Motor de Recuperação Determinística (SPC-CML)
-Recorta a gramática completa G com base nas restrições fornecidas pelo Neo4j (GraphRAG),
-gerando a gramática especializada G_hat (Ĝ).
+Motor de recuperacao deterministica (SPC-CML): G -> G_hat.
+
+Recorta a gramatica completa G com base no subgrafo de restricoes devolvido pelo
+Neo4j (GraphRAG). O que o grafo veta nao vira instrucao no prompt: some da
+gramatica. Uma violacao clinica deixa de ser uma saida improvavel e passa a ser
+uma cadeia que o decodificador nao consegue emitir.
 """
+from __future__ import annotations
+
+import re
+
 from bnf import Rule
 
-def gramatica_do_subgrafo(subgrafo: dict, rules: dict[str, Rule]) -> str:
-    """
-    subgrafo: dicionário com as permissões filtradas pelo Neo4j. Exemplo de entrada:
-      {
-         "acoes_permitidas": ["MANTER_BLOQUEADO", "INICIAR_INFUSAO"],
-         "farmacos_liberados": ["Vasopressina", "Propofol", "Noradrenalina"],
-         "vias_disponiveis": ["ACESSO_CENTRAL"]
-      }
+# Nome da regra na BNF -> chave correspondente no subgrafo recuperado.
+# As tres primeiras sao as da gramatica gerada a partir da DSL Langium; as demais
+# preservam compatibilidade com a BNF manual anterior.
+MAPA_PODA = {
+    "decisao": "acoes_permitidas",
+    "farmaco": "farmacos_liberados",
+    "via": "vias_disponiveis",
+    "tipo_acao": "acoes_permitidas",
+    "tipo_farmaco": "farmacos_liberados",
+    "tipo_via": "vias_disponiveis",
+}
 
-    Retorna G_hat em BNF: subconjunto da gramática G podado pelas restrições do domínio.
-    Violações médicas tornam-se sintaticamente inexprimíveis para o LLM.
+SIMBOLO_RE = re.compile(r'"[^"]*"|/(?:[^/\\]|\\.)*/|[A-Za-z_][A-Za-z_0-9]*[*+?]?')
+
+
+def _base(simbolo: str) -> str:
+    """Nome do simbolo sem a cardinalidade."""
+    return simbolo[:-1] if simbolo and simbolo[-1] in "*+?" else simbolo
+
+
+def _e_terminal(simbolo: str) -> bool:
+    return simbolo.startswith('"') or simbolo.startswith("/")
+
+
+def _opcional(simbolo: str) -> bool:
+    """`x*` e `x?` derivam a cadeia vazia; `x+` nao."""
+    return simbolo.endswith("*") or simbolo.endswith("?")
+
+
+def gramatica_do_subgrafo(subgrafo: dict, rules: dict[str, Rule], inicio: str = "plano") -> str:
     """
-    
-    # 1. Mapeamento do vocabulário da UTI (Esquema de Dados)
-    poda = {
-        "tipo_acao": subgrafo.get("acoes_permitidas"),
-        "tipo_farmaco": subgrafo.get("farmacos_liberados"),
-        "tipo_via": subgrafo.get("vias_disponiveis"),
-    }
-    
-    podadas: dict[str, list[str]] = {}
-    
-    # 2. Filtragem das alternativas de cada regra
+    Devolve G_hat em BNF: subconjunto de G podado pelas restricoes do dominio.
+
+    O algoritmo tem tres fases, na ordem em que precisam acontecer:
+      1. poda dos vocabularios fechados pelas listas do subgrafo;
+      2. remocao de simbolos que deixaram de gerar qualquer cadeia (uma regra cujo
+         vocabulario ficou vazio contamina quem a referencia);
+      3. varredura de alcance a partir do simbolo inicial.
+
+    Sem a fase 2 a gramatica resultante referencia regras inexistentes e nem chega
+    a compilar no parser.
+    """
+    # ------------------------------------------------------------- 1. poda
+    podadas: dict[str, list[list[str]]] = {}
+    regex: dict[str, str] = {}
+
     for nome, r in rules.items():
-        # Se for uma regra RegEx ou terminal simples, mantém intacta
         if r.regex is not None:
-            podadas[nome] = [f"/{r.regex}/"]
+            regex[nome] = r.regex
+            podadas[nome] = []          # folha lexica: sempre geradora
             continue
-        
-        alts = [" ".join(a) for a in r.alts]
-        permitidos = poda.get(nome)
-        
-        # Se a regra atual estiver na nossa lista de poda (ações, fármacos, vias)
+
+        alts = [list(a) for a in r.alts]
+        chave = MAPA_PODA.get(nome)
+        permitidos = subgrafo.get(chave) if chave else None
+
         if permitidos:
-            # Mantém apenas as alternativas que contêm algum dos termos permitidos
-            alts = [a for a in alts if any(p in a for p in permitidos)]
-            
-        # Adiciona a regra podada se ainda sobrar alguma alternativa válida
-        if alts:
-            podadas[nome] = alts
+            permitidos = set(permitidos)
+            # Vocabulario fechado: cada alternativa e um unico literal. A
+            # comparacao e exata — `in` sobre a string casaria prefixos.
+            alts = [
+                a
+                for a in alts
+                if not (len(a) == 1 and _e_terminal(a[0]))
+                or a[0].strip('"') in permitidos
+            ]
 
-    # 3. Varredura: remove produções que se tornaram inalcançáveis a partir da raiz ('plano')
-    alcancaveis = set()
-    fila = ["plano"]  # Nó raiz definido no seu arquivo advanced_icu.bnf
-    
-    while fila:
-        n = fila.pop()
-        
-        # Ignora se já foi visitado ou se foi podado inteiramente
-        if n in alcancaveis or n not in podadas:
+        podadas[nome] = alts
+
+    # -------------------------------------------- 2. simbolos nao geradores
+    geradores = set(regex)
+    mudou = True
+    while mudou:
+        mudou = False
+        for nome, alts in podadas.items():
+            if nome in geradores:
+                continue
+            for alt in alts:
+                if all(
+                    _e_terminal(s) or _opcional(s) or _base(s) in geradores for s in alt
+                ):
+                    geradores.add(nome)
+                    mudou = True
+                    break
+
+    limpas: dict[str, list[list[str]]] = {}
+    for nome, alts in podadas.items():
+        if nome not in geradores:
             continue
-            
-        alcancaveis.add(n)
-        
-        # Pega as alternativas válidas desta regra
-        for alt in podadas[n]:
-            # Quebra a alternativa em símbolos individuais
-            for sim in alt.replace("+", " ").split():
-                # Se não for uma string literal (ex: "AUMENTAR") nem regex (ex: /[0-9]/), é um não-terminal
-                if not sim.startswith('"') and not sim.startswith("/"):
-                    fila.append(sim)
+        novas = []
+        for alt in alts:
+            reduzida = []
+            viavel = True
+            for s in alt:
+                if _e_terminal(s) or _base(s) in geradores:
+                    reduzida.append(s)
+                elif _opcional(s):
+                    continue  # so poderia derivar vazio: some da alternativa
+                else:
+                    viavel = False
+                    break
+            if viavel:
+                novas.append(reduzida)
+        if novas or nome in regex:
+            limpas[nome] = novas
 
-    # 4. Monta a string final da gramática especializada Ĝ (G_hat)
-    linhas_g_hat = []
-    
-    # Itera sobre a gramática original para manter a ordem estrutural correta
-    for n in rules:
-        if n in alcancaveis:
-            linhas_g_hat.append(f"{n} ::= " + " | ".join(podadas[n]))
-            
-    return "\n".join(linhas_g_hat)
+    if inicio not in limpas:
+        return ""
+
+    # ------------------------------------------------- 3. varredura de alcance
+    alcancaveis: set[str] = set()
+    fila = [inicio]
+    while fila:
+        nome = fila.pop()
+        if nome in alcancaveis or nome not in limpas:
+            continue
+        alcancaveis.add(nome)
+        for alt in limpas[nome]:
+            for s in alt:
+                if not _e_terminal(s):
+                    fila.append(_base(s))
+
+    # ------------------------------------------------------- 4. serializacao
+    linhas = []
+    for nome in rules:                       # preserva a ordem da gramatica original
+        if nome not in alcancaveis:
+            continue
+        if nome in regex:
+            linhas.append(f"{nome} ::= /{regex[nome]}/")
+        else:
+            linhas.append(
+                f"{nome} ::= " + " | ".join(" ".join(a) for a in limpas[nome])
+            )
+    return "\n".join(linhas)

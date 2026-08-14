@@ -10,7 +10,7 @@
     },
     {
       "name": "keyword.control.dsl",
-      "match": "\\b(bloquear_incremento|dose_maxima|farmaco|incremento_seguro|se|tipo)\\b|\\b(regra_seguranca:)\\B"
+      "match": "\\b(10\\^3/uL|ACESSO_CENTRAL|ACESSO_PERIFERICO|AJUSTAR_DOSE|ATENCAO|AUMENTAR_VAZAO|BLOQUEANTE|BLOQUEAR_ORDEM|C|COMISSAO_INFECCAO|CRITICO|EPIDURAL|ESCALAR_EQUIPE|FARMACIA_CLINICA|FC|FR|Glasgow|IM|INALATORIA|INFORMATIVO|INICIAR_INFUSAO|INR|INTENSIVISTA|INTRAOSSEO|IV|L|MANTER_BLOQUEADO|MANTER_VAZAO|MEDICO_PLANTONISTA|PAD|PAM|PAS|PaO2_FiO2|QTc|RASS|REDUZIR_VAZAO|SC|SNE|SOFA|SOLICITAR_EXAME|SUBSTITUIR|SUSPENDER|SpO2|TFG|TIME_RESPOSTA_RAPIDA|U/min|UI|UI/h|UI/kg|VO|a_cada|ajusta|alerta|alertas|alta|alto_risco|alvo|analgesico_opioide|antiarritmico|anticoagulante|anticonvulsivante|antidoto|antimicrobiano|ataque|atc|auditoria|aumentar_intervalo|bilirrubina|bloqueador_neuromuscular|bloquear|bloquear_incremento|bomba|bpm|broncodilatador|cid|classe|concentracao|conduta|contraindicada|corticoide|creatinina|criterio|debito_urinario|decisao|decisoes|dias|diluicao|diuretico|dose|eletrolito|esquema_dados|esquema_referencia|etapa|excecao|exige|farmaco|fator|g|g/dL|glicemia|gravidade|h|hemoglobina|idade|indicacao|inicial|inotropico|insulina|irpm|justificativa|justificativa_obrigatoria|lactato|leve|limite_leve|limite_rigido|mEq|mEq/L|mL|mL/h|mL/min|manter|manutencao|maxima|mcg|mcg/kg|mcg/kg/h|mcg/kg/min|mg|mg/L|mg/dL|mg/h|mg/kg|mg/kg/h|min|minima|mitigacao|mmHg|mmol|mmol/L|moderada|motivo|ms|nao|ng/mL|ordem|paciente|para|peso|plano|plaquetas|pontos|populacao|potassio|prazo|proibe|protocolo|qSOFA|reavaliar_em|recomenda|recurso_fhir|reduzir|reduzir_dose|referencia|regra|requer_dupla_checagem|reservatorio|rxnorm|se|sedativo|sequencia|severidade|sim|snomed|sodio|substituir|suspender|temperatura|titulacao|vasopressor|veta|via|vias)\\b|\\b(ajuste_hepatico:|ajuste_renal:|contraindicado:|desfecho:|desmame:|escalonar:|gatilho:|interacao:|lasa:|monitorar:|regra_global:|regra_seguranca:)\\B"
     },
     {
       "name": "string.quoted.double.dsl",
@@ -34,6 +34,35 @@
     }
   ],
   "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.dsl",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.dsl"
+            }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.dsl"
+            }
+          }
+        },
+        {
+          "begin": "//",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.whitespace.comment.leading.dsl"
+            }
+          },
+          "end": "(?=$)",
+          "name": "comment.line.dsl"
+        }
+      ]
+    },
     "string-character-escape": {
       "name": "constant.character.escape.dsl",
       "match": "\\\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|u\\{[0-9A-Fa-f]+\\}|[0-2][0-7]{0,2}|3[0-6][0-7]?|37[0-7]?|[4-7][0-7]?|.|$)"

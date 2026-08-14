@@ -1,17 +1,30 @@
-# Gramatica completa G da UTI (Esquema de Dados)
-plano ::= atuacao
+# GRAMATICA G — Esquema de Dados da DSL clinica (SPC-CML).
+# 
+# ARQUIVO GERADO AUTOMATICAMENTE — NAO EDITAR A MAO.
+# Gerado por: src/cli/export-bnf.ts
+# Gramatica:  src/language/dsl.langium (regra PlanCommand)
+# Modelo:     uti.dsl (esquema_dados AssistenteUTI_v2)
+# 
+# Farmacos citaveis: 12 | Condutas: 8 | Decisoes: 11 | Vias: 4
+# 
+# Toda alternativa desta gramatica corresponde a uma entidade declarada no
+# modelo do especialista. O que nao esta aqui e inexprimivel pelo LLM.
 
-atuacao ::= "atuacao_bomba {" acao farmaco ajuste via logar "}"
-
-acao ::= "acao" tipo_acao
-farmaco ::= "farmaco" tipo_farmaco
-ajuste ::= "ajuste_mcg_kg_min" numero
-via ::= "via" tipo_via
-logar ::= "log_auditoria" string
-
-tipo_acao ::= "AUMENTAR_VAZAO" | "REDUZIR_VAZAO" | "MANTER_BLOQUEADO" | "INICIAR_INFUSAO"
-tipo_farmaco ::= "Noradrenalina" | "Vasopressina" | "Propofol" | "Fentanil"
-tipo_via ::= "ACESSO_CENTRAL" | "ACESSO_PERIFERICO"
-
-numero ::= /[0-9]+(\.[0-9]{1,2})?/
-string ::= /'[^']*'/
+plano_g1 ::= "," conduta
+plano_g2 ::= ordem
+plano_g3 ::= alerta
+plano ::= "plano" identificador "para" protocolo "{" "esquema_referencia" esquema "paciente" texto "sequencia" "[" conduta plano_g1* "]" plano_g2* plano_g3* "auditoria" texto "}"
+ordem ::= "ordem" farmaco "decisao" decisao "dose" quantidade "via" via "justificativa" texto
+alerta ::= "alerta" nivel_alerta texto "regra" texto
+quantidade ::= numero unidade
+conduta ::= "Iniciar_Vasopressor" | "Titular_Vasopressor" | "Reduzir_Infusao" | "Manter_Bloqueio" | "Suspender_Farmaco" | "Solicitar_Exame_Controle" | "Acionar_Equipe" | "Bloquear_Ordem_Insegura"
+protocolo ::= "Choque_Septico" | "Sedacao_Analgesia_VM" | "Controle_Glicemico_UTI"
+esquema ::= "AssistenteUTI_v2"
+farmaco ::= "Noradrenalina" | "Adrenalina" | "Vasopressina" | "Dobutamina" | "Propofol" | "Midazolam" | "Fentanil" | "Cisatracurio" | "Vancomicina" | "Piperacilina_Tazobactam" | "Heparina" | "Insulina_Regular"
+decisao ::= "INICIAR_INFUSAO" | "AUMENTAR_VAZAO" | "REDUZIR_VAZAO" | "MANTER_VAZAO" | "MANTER_BLOQUEADO" | "SUSPENDER" | "SUBSTITUIR" | "AJUSTAR_DOSE" | "SOLICITAR_EXAME" | "ESCALAR_EQUIPE" | "BLOQUEAR_ORDEM"
+via ::= "ACESSO_CENTRAL" | "ACESSO_PERIFERICO" | "INTRAOSSEO" | "SC"
+nivel_alerta ::= "INFORMATIVO" | "ATENCAO" | "CRITICO" | "BLOQUEANTE"
+unidade ::= "mcg/kg/min" | "U/min" | "mg/kg/h" | "mcg/kg/h" | "mg/kg" | "mg" | "UI/kg" | "UI/h"
+identificador ::= /[A-Za-z_][A-Za-z_0-9]*/
+texto ::= /'[^']*'/
+numero ::= /[0-9]+(\.[0-9]+)?/
