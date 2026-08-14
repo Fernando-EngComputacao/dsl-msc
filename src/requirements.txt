@@ -4,3 +4,4 @@ outlines
 transformers
 torch
 pydantic
+lark

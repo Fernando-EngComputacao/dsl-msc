@@ -1,0 +1,17 @@
+# Gramatica completa G da UTI (Esquema de Dados)
+plano ::= atuacao
+
+atuacao ::= "atuacao_bomba {" acao farmaco ajuste via logar "}"
+
+acao ::= "acao" tipo_acao
+farmaco ::= "farmaco" tipo_farmaco
+ajuste ::= "ajuste_mcg_kg_min" numero
+via ::= "via" tipo_via
+logar ::= "log_auditoria" string
+
+tipo_acao ::= "AUMENTAR_VAZAO" | "REDUZIR_VAZAO" | "MANTER_BLOQUEADO" | "INICIAR_INFUSAO"
+tipo_farmaco ::= "Noradrenalina" | "Vasopressina" | "Propofol" | "Fentanil"
+tipo_via ::= "ACESSO_CENTRAL" | "ACESSO_PERIFERICO"
+
+numero ::= /[0-9]+(\.[0-9]{1,2})?/
+string ::= /'[^']*'/

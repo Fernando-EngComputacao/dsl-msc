@@ -1,23 +1,55 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+import os
+import sys
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BASE_DIR)                      # Procura na própria pasta python_engine/
+sys.path.insert(0, os.path.join(BASE_DIR, 'src')) # Procura na subpasta python_engine/src/
+
+from bnf import load_bnf, build_parser, to_lark
+from grammar_from_kg import gramatica_do_subgrafo
+from prompt_builder import carregar_exemplos, montar_prompt
 import outlines
 
 app = FastAPI()
 
-# Carregue o modelo local desejado
-model = outlines.models.transformers("meta-llama/Meta-Llama-3-8B-Instruct")
+# 1. Carrega a gramática completa G (Fonte única de verdade)
+rules = load_bnf("grammar/advanced_icu.bnf")
+parser = build_parser(rules, start="plano")
 
-class InferenceRequest(BaseModel):
-    prompt: str
-    ebnf_grammar: str  # A gramática recebida dinamicamente do Node.js
+# 2. Carrega os exemplos few-shot, gerando G[y] automaticamente
+exemplos = carregar_exemplos("data/exemplos_icu.jsonl", rules, parser)
+
+# 3. Carrega o LLM local para a Decodificação Restrita
+# Carrega um LLM leve, aberto e focado em instruções/estruturas
+model = outlines.models.transformers("Qwen/Qwen2.5-0.5B-Instruct")
+
+class ICURequest(BaseModel):
+    comando_humano: str
+    contexto_neo4j: str
+    subgrafo_regras: dict  # Ex: {"acoes_permitidas": ["MANTER_BLOQUEADO"], "farmacos_liberados": ["Propofol"]}
 
 @app.post("/generate-constrained")
-async def generate_constrained(req: InferenceRequest):
-    # O Outlines compila o EBNF sob demanda
-    generator = outlines.generate.cfg(model, req.ebnf_grammar)
+async def generate_constrained(req: ICURequest):
+    # A MÁGICA DA SUA TESE: 
+    # Em vez do LLM prever a gramática (com chance de erro), recuperamos Ĝ do subgrafo!
+    g_hat = gramatica_do_subgrafo(req.subgrafo_regras, rules)
     
-    # A inferência acontece mascarando os logits inválidos
-    resultado_validado = generator(req.prompt)
-    return {"resultado": resultado_validado}
-
-# Execute com: uvicorn main:app --port 8000
+    # Converte G_hat ancorada em fatos para formato Lark (usado pelo Outlines)
+    from lark import Lark
+    lark_grammar = to_lark(load_bnf("grammar/advanced_icu.bnf")) # ou g_hat se o outlines suportar dynamic
+    
+    # Monta o prompt com instruções, exemplos e o contexto do paciente
+    prompt = montar_prompt(
+        exemplos=exemplos,
+        x_teste=req.comando_humano,
+        contexto_teste=req.contexto_neo4j,
+        gramatica_completa=g_hat # Passa G_hat para guiar o raciocinio do LLM
+    )
+    
+    # Executa a decodificação restrita (mascaramento de logits)
+    generator = outlines.generate.cfg(model, lark_grammar)
+    resultado = generator(prompt)
+    
+    return {"resultado": resultado, "g_hat_utilizada": g_hat}

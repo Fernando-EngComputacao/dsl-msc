@@ -6,10 +6,14 @@ import { MedicalModel, isDrugDef, isSafetyRule } from '../generated/ast.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// ⚠️ Lembre de verificar se esta é a senha correta do seu ambiente local
+//  Lembre de verificar se esta é a senha correta do seu ambiente local
+const uri = process.env.NEO4J_URI || 'bolt://localhost:7687';
+const user = process.env.NEO4J_USER || 'neo4j';
+const password = process.env.NEO4J_PASSWORD || '#UFG2026';
+
 const driver = neo4j.driver(
-    'bolt://localhost:7687',
-    neo4j.auth.basic('neo4j', '#UFG2026')
+    uri,
+    neo4j.auth.basic(user, password)
 );
 
 async function run() {
@@ -27,7 +31,7 @@ async function run() {
 
     const document = shared.workspace.LangiumDocumentFactory.fromString(
         fileContent,
-        URI.parse(`file:///${filePath.replace(/\\/g, '/')}`)
+        URI.file(filePath) 
     );
 
     // Proteção essencial: Evita popular o banco de dados se a DSL estiver mal escrita

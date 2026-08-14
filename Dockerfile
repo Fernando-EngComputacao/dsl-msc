@@ -10,21 +10,24 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# 1. Copia e instala dependências do Node primeiro
+# 1. Instala dependências do Node
 COPY package.json package-lock.json ./
+# Força a instalação limpa dos pacotes no ambiente Linux
 RUN npm install
 
-# 2. Copia APENAS o requirements.txt e instala as dependências Python
-# Isso garante que o pip install só rode de novo se o requirements.txt mudar
+# 2. PRÉ-INSTALAÇÃO DAS BIBLIOTECAS PESADAS (Torch e Transformers)
+RUN pip install --no-cache-dir torch transformers outlines fastapi uvicorn pydantic
+
+# 3. Copia o restante do requirements.txt
 COPY src/requirements.txt ./src/
 RUN pip install --no-cache-dir -r src/requirements.txt
 
-# 3. Copia o restante do código do projeto por último
+# 4. Copia o código do projeto (o .dockerignore vai barrar o node_modules local aqui)
 COPY . .
 
-# Garante permissão de execução para o script
-RUN chmod +x scripts/deploy.sh
+RUN chmod +x src/scripts/deploy.sh
 
 EXPOSE 8000
 
-CMD ["./scripts/deploy.sh"]
+# Mantém o container rodando "vazio" em segundo plano para uso manual
+CMD ["tail", "-f", "/dev/null"]
