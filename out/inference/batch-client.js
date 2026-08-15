@@ -1,66 +1,98 @@
-import * as fs from 'fs';
-import * as path from 'path';
-async function processBatch() {
-    // 1. Gramática EBNF (Esquema de Dados que será enviado para o Outlines no Python)
-    const icuEbnfGrammar = `
-        ?start: atuacao
-        atuacao: "atuacao_bomba { acao " acao " farmaco " farmaco " ajuste_mcg_kg_min " float " via " via " log '" string "' }"
-        
-        acao: "AUMENTAR_VAZAO" | "REDUZIR_VAZAO" | "MANTER_BLOQUEADO" | "INICIAR_INFUSAO"
-        farmaco: "Noradrenalina" | "Vasopressina" | "Propofol"
-        via: "ACESSO_CENTRAL" | "ACESSO_PERIFERICO"
-        
-        float: /[0-9]+\\.[0-9]{1,2}/
-        string: /[a-zA-Z0-9_ \\.\\-]+/
-    `;
-    // 2. Simulando o Ground Truth do Neo4j (Pode ser substituído pela chamada real ao banco)
-    const neo4jGroundTruth = `
-        1. PAM < 60: Aumento de Propofol PROIBIDO (Hipotensao Severa). Ação: MANTER_BLOQUEADO.
-        2. FC > 130 e Nora >= 0.5: Aumento de Noradrenalina PROIBIDO (Fibrilacao). Ação: MANTER_BLOQUEADO.
-        3. Ação de resgate sugerida pelo grafo para PAM baixa sem Nora: INICIAR_INFUSAO de Vasopressina a 0.01 no ACESSO_CENTRAL.
-        4. Se PAM normal (> 65): Aumento de Propofol PERMITIDO.
-    `;
-    // 3. Captura o arquivo txt da linha de comando ou do caminho padrão
-    const filePath = process.argv[2] || path.join(process.cwd(), 'src', 'examples', 'prompts.txt');
-    if (!fs.existsSync(filePath)) {
-        console.error(`❌ Arquivo de testes não encontrado em: ${filePath}`);
-        return;
+/**
+ * Inferencia em lote sobre uma bateria de cenarios de leito.
+ *
+ * Para cada cenario o cliente refaz o ciclo completo da Figura 5.1:
+ *   telemetria -> busca no grafo -> Prompt Semantico + poda -> geracao restrita.
+ *
+ * Uso:
+ *   npx tsx src/inference/batch-client.ts [cenarios.jsonl|prompts.txt] [modelo.dsl]
+ *
+ * Aceita dois formatos de entrada:
+ *   .jsonl  um cenario por linha, com telemetria propria (formato preferido);
+ *   .txt    uma fala por linha, avaliada sobre uma telemetria de referencia.
+ *
+ * O contraste entre cenarios e o ponto: a mesma frase ("aumenta a sedacao")
+ * produz gramaticas diferentes conforme a PAM do paciente. O sistema nao bloqueia
+ * por precaucao — ele bloqueia quando a invariante incide.
+ */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { loadModel } from '../database/neo4j.js';
+import { retrieveConstraints, pruningPayload } from '../knowledge/graphrag.js';
+import { montarPromptSemantico, gerarPlanoRestrito } from './llm-client.js';
+/** Telemetria usada quando a entrada e um .txt sem dados de monitor. */
+const TELEMETRIA_PADRAO = {
+    paciente: 'PT-REFERENCIA',
+    telemetria: { PAM: 52, FC: 145, lactato: 4.8, RASS: 2, TFG: 28, plaquetas: 45, glicemia: 210 },
+    populacoes: ['Renal_Cronico'],
+    farmacosEmUso: ['Noradrenalina', 'Propofol', 'Vancomicina']
+};
+function carregarCenarios(filePath) {
+    const conteudo = fs.readFileSync(filePath, 'utf-8');
+    const linhas = conteudo.split('\n').filter(l => l.trim().length > 0);
+    if (filePath.endsWith('.jsonl')) {
+        return linhas.map(l => JSON.parse(l));
     }
-    // 4. Lê o arquivo, quebra pelas linhas e ignora linhas vazias
-    const fileContent = fs.readFileSync(filePath, 'utf-8');
-    const lines = fileContent.split('\n').filter(line => line.trim().length > 0);
-    console.log(`📋 Encontrados ${lines.length} prompts para análise em lote.\n`);
-    // 5. Laço de repetição para inferência em cada prompt
-    for (let i = 0; i < lines.length; i++) {
-        const userIntent = lines[i].trim();
-        console.log(`====================================================`);
-        console.log(`🔍 [CENÁRIO ${i + 1}]: "${userIntent}"`);
-        const prompt = `You are an autonomous critical care AI. Evaluate telemetry and Ground Truth rules, then output the strict command.
-        
-        [COMANDO HUMANO]: "${userIntent}"
-        
-        [NEO4J GROUND TRUTH]:
-        ${neo4jGroundTruth}
-        
-        Generate the strict infusion plan:
-        `;
+    // .txt: apenas falas; a telemetria vem do cenario de referencia.
+    return linhas.map(l => ({ ...TELEMETRIA_PADRAO, intencao: l.trim() }));
+}
+async function main() {
+    const entrada = process.argv[2] ?? path.join('src', 'examples', 'cenarios.jsonl');
+    const modelPath = process.argv[3] ?? path.join('src', 'examples', 'uti.dsl');
+    if (!fs.existsSync(entrada)) {
+        console.error(`Arquivo de cenarios nao encontrado: ${entrada}`);
+        process.exit(1);
+    }
+    const model = await loadModel(modelPath);
+    const cenarios = carregarCenarios(entrada);
+    console.log(`${cenarios.length} cenarios carregados de ${path.basename(entrada)}\n`);
+    let motorIndisponivel = false;
+    for (const [i, contexto] of cenarios.entries()) {
+        console.log('='.repeat(78));
+        console.log(`[CENARIO ${i + 1}] ${contexto.paciente ?? 's/ id'}`);
+        console.log(`Fala: "${contexto.intencao}"`);
+        console.log('Telemetria: ' +
+            Object.entries(contexto.telemetria)
+                .map(([k, v]) => `${k}=${v}`)
+                .join('  '));
+        const constraints = retrieveConstraints(model, contexto);
+        const poda = pruningPayload(constraints);
+        console.log(`\nGrafo: ${constraints.protocolosAtivos.length} protocolos ativos, ` +
+            `${constraints.bloqueios.length} bloqueios, ${constraints.vetados.length} vetos, ` +
+            `${constraints.escalonamentos.length} escalonamentos`);
+        for (const b of constraints.bloqueios) {
+            console.log(`  bloqueado: ${b.farmaco} (${b.regra})`);
+        }
+        console.log(`  decisoes admissiveis apos a poda: ${poda.acoes_permitidas.join(', ')}`);
+        if (motorIndisponivel) {
+            console.log('\n(motor de geracao indisponivel — etapa de decodificacao pulada)\n');
+            continue;
+        }
         try {
-            const response = await fetch('http://127.0.0.1:8000/generate-constrained', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: prompt, ebnf_grammar: icuEbnfGrammar })
-            });
-            if (!response.ok)
-                throw new Error(`Erro HTTP: ${response.status}`);
-            const data = await response.json();
-            console.log(`✅ [SAÍDA RESTRITA CML]:`);
-            console.log(data.resultado);
-            console.log(`\n`);
+            const resposta = await gerarPlanoRestrito(contexto, constraints);
+            console.log(`\nPlano gerado (valido: ${resposta.valido}, ` +
+                `${resposta.regras_em_g_hat} regras em G_hat):`);
+            console.log(resposta.resultado);
+            if (resposta.erro)
+                console.log(`Erro reportado: ${resposta.erro}`);
         }
         catch (error) {
-            console.error(`❌ Erro ao processar o Cenário ${i + 1}:`, error);
+            motorIndisponivel = true;
+            console.log(`\nMotor indisponivel: ${error.message}`);
+            console.log('Suba com: cd src/python_engine && uvicorn main:app --port 8000\n' +
+                'A recuperacao no grafo acima ja e a saida real e independe do motor.');
         }
+        console.log();
     }
-    console.log(`🎉 Processamento em lote finalizado com sucesso!`);
+    // O Prompt Semantico do primeiro cenario, para inspecao.
+    if (cenarios.length > 0) {
+        console.log('='.repeat(78));
+        console.log('PROMPT SEMANTICO DO CENARIO 1 (bloco factual enviado ao LLM)');
+        console.log('='.repeat(78));
+        console.log(montarPromptSemantico(retrieveConstraints(model, cenarios[0])));
+    }
 }
-processBatch();
+main().catch(err => {
+    console.error('Falha no lote:', err.message ?? err);
+    process.exit(1);
+});

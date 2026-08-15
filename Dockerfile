@@ -16,7 +16,10 @@ COPY package.json package-lock.json ./
 RUN npm install
 
 # 2. PRÉ-INSTALAÇÃO DAS BIBLIOTECAS PESADAS (Torch e Transformers)
-RUN pip install --no-cache-dir torch transformers outlines fastapi uvicorn pydantic
+# O pin de transformers acompanha o de src/requirements.txt: sem ele esta camada
+# trazia a 5.x, incompatível com o outlines 0.0.46 fixado adiante (ver o comentário
+# no requirements.txt). Instalar a 5.x aqui e rebaixá-la depois desperdiça a camada.
+RUN pip install --no-cache-dir torch "transformers==4.44.2" outlines fastapi uvicorn pydantic
 
 # 3. Copia o restante do requirements.txt
 COPY src/requirements.txt ./src/

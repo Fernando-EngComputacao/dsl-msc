@@ -1,7 +1,16 @@
 fastapi
 uvicorn
 outlines==0.0.46
-transformers
+# outlines 0.0.46 le o past_key_values no formato legado (tupla de tuplas de
+# tensores). Ate transformers 4.x, chamar o modelo com past_key_values=None
+# ativava return_legacy_cache e devolvia esse formato; na 5.x a conversao foi
+# removida e volta um objeto Cache, cujas camadas iteram como None — quebrando
+# reorder_kv_cache com "'NoneType' object has no attribute 'device'".
+# outlines nao declara transformers como dependencia, entao o pin tem de ser aqui.
+# Versao exata: a 4.44.2 ainda aceita a tupla legada (apenas avisa que e obsoleta)
+# e foi a verificada de ponta a ponta. Uma faixa <5 permitiria uma 4.5x em que a
+# compatibilidade ja nao existe, reintroduzindo a falha num build futuro.
+transformers==4.44.2
 torch
 pydantic
 lark

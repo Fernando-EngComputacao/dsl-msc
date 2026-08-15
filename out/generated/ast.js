@@ -7,17 +7,113 @@ import * as langium from 'langium';
 export const dslProjectTerminals = {
     ID: /[_a-zA-Z][\w_]*/,
     STRING: /"[^"]*"|'[^']*'/,
-    FLOAT: /[0-9]+(\.[0-9]+)?/,
+    NUMBER: /-?[0-9]+(\.[0-9]+)?/,
     WS: /\s+/,
+    ML_COMMENT: /\/\*[\s\S]*?\*\//,
+    SL_COMMENT: /\/\/[^\n\r]*/,
 };
+export function isAdjustAction(item) {
+    return item === 'reduzir_dose' || item === 'aumentar_intervalo' || item === 'suspender' || item === 'substituir' || item === 'manter' || item === 'bloquear';
+}
+export function isAlertLevel(item) {
+    return item === 'INFORMATIVO' || item === 'ATENCAO' || item === 'CRITICO' || item === 'BLOQUEANTE';
+}
+export const AlertStmt = {
+    $type: 'AlertStmt',
+    level: 'level',
+    message: 'message',
+    rule: 'rule'
+};
+export function isAlertStmt(item) {
+    return reflection.isInstance(item, AlertStmt.$type);
+}
+export const BlockRule = {
+    $type: 'BlockRule',
+    drug: 'drug',
+    operator: 'operator',
+    parameter: 'parameter',
+    reason: 'reason',
+    threshold: 'threshold'
+};
+export function isBlockRule(item) {
+    return reflection.isInstance(item, BlockRule.$type);
+}
+export function isBool(item) {
+    return item === 'sim' || item === 'nao';
+}
+export function isClinicalParameter(item) {
+    return item === 'PAM' || item === 'PAS' || item === 'PAD' || item === 'FC' || item === 'FR' || item === 'SpO2' || item === 'temperatura' || item === 'lactato' || item === 'TFG' || item === 'creatinina' || item === 'potassio' || item === 'sodio' || item === 'INR' || item === 'plaquetas' || item === 'hemoglobina' || item === 'QTc' || item === 'glicemia' || item === 'bilirrubina' || item === 'PaO2_FiO2' || item === 'RASS' || item === 'qSOFA' || item === 'SOFA' || item === 'Glasgow' || item === 'debito_urinario' || item === 'peso' || item === 'idade';
+}
+export const ConductDef = {
+    $type: 'ConductDef',
+    decision: 'decision',
+    doubleCheck: 'doubleCheck',
+    fhir: 'fhir',
+    name: 'name',
+    requiresJustification: 'requiresJustification',
+    route: 'route'
+};
+export function isConductDef(item) {
+    return reflection.isInstance(item, ConductDef.$type);
+}
+export const ContraindicationAttr = {
+    $type: 'ContraindicationAttr',
+    condition: 'condition',
+    exception: 'exception'
+};
+export function isContraindicationAttr(item) {
+    return reflection.isInstance(item, ContraindicationAttr.$type);
+}
+export const DataSchemaDef = {
+    $type: 'DataSchemaDef',
+    alerts: 'alerts',
+    conducts: 'conducts',
+    decisions: 'decisions',
+    name: 'name',
+    routes: 'routes'
+};
+export function isDataSchemaDef(item) {
+    return reflection.isInstance(item, DataSchemaDef.$type);
+}
+export function isDecision(item) {
+    return item === 'INICIAR_INFUSAO' || item === 'AUMENTAR_VAZAO' || item === 'REDUZIR_VAZAO' || item === 'MANTER_VAZAO' || item === 'MANTER_BLOQUEADO' || item === 'SUSPENDER' || item === 'SUBSTITUIR' || item === 'AJUSTAR_DOSE' || item === 'SOLICITAR_EXAME' || item === 'ESCALAR_EQUIPE' || item === 'BLOQUEAR_ORDEM';
+}
+export const DilutionAttr = {
+    $type: 'DilutionAttr',
+    concentration: 'concentration',
+    standard: 'standard'
+};
+export function isDilutionAttr(item) {
+    return reflection.isInstance(item, DilutionAttr.$type);
+}
+export function isDoseKind(item) {
+    return item === 'inicial' || item === 'maxima' || item === 'minima' || item === 'ataque' || item === 'manutencao';
+}
+export const DoseLimitAttr = {
+    $type: 'DoseLimitAttr',
+    kind: 'kind',
+    value: 'value'
+};
+export function isDoseLimitAttr(item) {
+    return reflection.isInstance(item, DoseLimitAttr.$type);
+}
+export const DrugAttribute = {
+    $type: 'DrugAttribute'
+};
+export function isDrugAttribute(item) {
+    return reflection.isInstance(item, DrugAttribute.$type);
+}
+export function isDrugClass(item) {
+    return item === 'vasopressor' || item === 'inotropico' || item === 'sedativo' || item === 'analgesico_opioide' || item === 'bloqueador_neuromuscular' || item === 'antimicrobiano' || item === 'anticoagulante' || item === 'antiarritmico' || item === 'insulina' || item === 'eletrolito' || item === 'diuretico' || item === 'corticoide' || item === 'anticonvulsivante' || item === 'broncodilatador' || item === 'antidoto';
+}
 export const DrugDef = {
     $type: 'DrugDef',
-    maxDose: 'maxDose',
-    maxDoseUnit: 'maxDoseUnit',
+    atc: 'atc',
+    attributes: 'attributes',
+    drugClass: 'drugClass',
+    highAlert: 'highAlert',
     name: 'name',
-    safeStep: 'safeStep',
-    safeStepUnit: 'safeStepUnit',
-    type: 'type'
+    rxnorm: 'rxnorm'
 };
 export function isDrugDef(item) {
     return reflection.isInstance(item, DrugDef.$type);
@@ -28,6 +124,64 @@ export const Element = {
 export function isElement(item) {
     return reflection.isInstance(item, Element.$type);
 }
+export const EscalationAttr = {
+    $type: 'EscalationAttr',
+    detail: 'detail',
+    operator: 'operator',
+    parameter: 'parameter',
+    target: 'target',
+    value: 'value'
+};
+export function isEscalationAttr(item) {
+    return reflection.isInstance(item, EscalationAttr.$type);
+}
+export function isEscalationTarget(item) {
+    return item === 'TIME_RESPOSTA_RAPIDA' || item === 'MEDICO_PLANTONISTA' || item === 'INTENSIVISTA' || item === 'FARMACIA_CLINICA' || item === 'COMISSAO_INFECCAO';
+}
+export const ForbidAttr = {
+    $type: 'ForbidAttr',
+    drug: 'drug',
+    reason: 'reason'
+};
+export function isForbidAttr(item) {
+    return reflection.isInstance(item, ForbidAttr.$type);
+}
+export const GlobalRule = {
+    $type: 'GlobalRule',
+    description: 'description',
+    reference: 'reference',
+    severity: 'severity'
+};
+export function isGlobalRule(item) {
+    return reflection.isInstance(item, GlobalRule.$type);
+}
+export const HepaticAdjustAttr = {
+    $type: 'HepaticAdjustAttr',
+    action: 'action',
+    criterion: 'criterion',
+    detail: 'detail'
+};
+export function isHepaticAdjustAttr(item) {
+    return reflection.isInstance(item, HepaticAdjustAttr.$type);
+}
+export const InteractionAttr = {
+    $type: 'InteractionAttr',
+    conduct: 'conduct',
+    mechanism: 'mechanism',
+    other: 'other',
+    severity: 'severity'
+};
+export function isInteractionAttr(item) {
+    return reflection.isInstance(item, InteractionAttr.$type);
+}
+export const LasaAttr = {
+    $type: 'LasaAttr',
+    confusable: 'confusable',
+    mitigation: 'mitigation'
+};
+export function isLasaAttr(item) {
+    return reflection.isInstance(item, LasaAttr.$type);
+}
 export const MedicalModel = {
     $type: 'MedicalModel',
     elements: 'elements'
@@ -35,39 +189,359 @@ export const MedicalModel = {
 export function isMedicalModel(item) {
     return reflection.isInstance(item, MedicalModel.$type);
 }
-export const SafetyRule = {
-    $type: 'SafetyRule',
-    condition: 'condition',
+export const MonitorAttr = {
+    $type: 'MonitorAttr',
+    goal: 'goal',
+    interval: 'interval',
+    target: 'target'
+};
+export function isMonitorAttr(item) {
+    return reflection.isInstance(item, MonitorAttr.$type);
+}
+export function isOperator(item) {
+    return item === '>=' || item === '<=' || item === '==' || item === '!=' || item === '>' || item === '<';
+}
+export const OrderStmt = {
+    $type: 'OrderStmt',
+    decision: 'decision',
+    dose: 'dose',
+    drug: 'drug',
+    justification: 'justification',
+    route: 'route'
+};
+export function isOrderStmt(item) {
+    return reflection.isInstance(item, OrderStmt.$type);
+}
+export const OutcomeAttr = {
+    $type: 'OutcomeAttr',
+    description: 'description',
+    reassess: 'reassess'
+};
+export function isOutcomeAttr(item) {
+    return reflection.isInstance(item, OutcomeAttr.$type);
+}
+export const PlanCommand = {
+    $type: 'PlanCommand',
+    alerts: 'alerts',
+    audit: 'audit',
+    name: 'name',
+    orders: 'orders',
+    patient: 'patient',
+    protocol: 'protocol',
+    schema: 'schema',
+    sequence: 'sequence'
+};
+export function isPlanCommand(item) {
+    return reflection.isInstance(item, PlanCommand.$type);
+}
+export const PopAdjust = {
+    $type: 'PopAdjust',
+    drug: 'drug',
+    factor: 'factor',
+    reason: 'reason'
+};
+export function isPopAdjust(item) {
+    return reflection.isInstance(item, PopAdjust.$type);
+}
+export const PopForbid = {
+    $type: 'PopForbid',
     drug: 'drug',
     reason: 'reason'
 };
+export function isPopForbid(item) {
+    return reflection.isInstance(item, PopForbid.$type);
+}
+export const PopRequire = {
+    $type: 'PopRequire',
+    requirement: 'requirement'
+};
+export function isPopRequire(item) {
+    return reflection.isInstance(item, PopRequire.$type);
+}
+export const PopulationDef = {
+    $type: 'PopulationDef',
+    criterion: 'criterion',
+    name: 'name',
+    restrictions: 'restrictions'
+};
+export function isPopulationDef(item) {
+    return reflection.isInstance(item, PopulationDef.$type);
+}
+export const PopulationRestriction = {
+    $type: 'PopulationRestriction'
+};
+export function isPopulationRestriction(item) {
+    return reflection.isInstance(item, PopulationRestriction.$type);
+}
+export const ProtocolAttribute = {
+    $type: 'ProtocolAttribute'
+};
+export function isProtocolAttribute(item) {
+    return reflection.isInstance(item, ProtocolAttribute.$type);
+}
+export const ProtocolDef = {
+    $type: 'ProtocolDef',
+    attributes: 'attributes',
+    icd: 'icd',
+    name: 'name'
+};
+export function isProtocolDef(item) {
+    return reflection.isInstance(item, ProtocolDef.$type);
+}
+export const PumpLimitAttr = {
+    $type: 'PumpLimitAttr',
+    hard: 'hard',
+    reservoir: 'reservoir',
+    soft: 'soft'
+};
+export function isPumpLimitAttr(item) {
+    return reflection.isInstance(item, PumpLimitAttr.$type);
+}
+export const Quantity = {
+    $type: 'Quantity',
+    unit: 'unit',
+    value: 'value'
+};
+export function isQuantity(item) {
+    return reflection.isInstance(item, Quantity.$type);
+}
+export const RecommendAttr = {
+    $type: 'RecommendAttr',
+    drug: 'drug',
+    indication: 'indication'
+};
+export function isRecommendAttr(item) {
+    return reflection.isInstance(item, RecommendAttr.$type);
+}
+export const RenalAdjustAttr = {
+    $type: 'RenalAdjustAttr',
+    action: 'action',
+    detail: 'detail',
+    operator: 'operator',
+    parameter: 'parameter',
+    threshold: 'threshold'
+};
+export function isRenalAdjustAttr(item) {
+    return reflection.isInstance(item, RenalAdjustAttr.$type);
+}
+export function isRoute(item) {
+    return item === 'ACESSO_CENTRAL' || item === 'ACESSO_PERIFERICO' || item === 'INTRAOSSEO' || item === 'IV' || item === 'IM' || item === 'VO' || item === 'SNE' || item === 'SC' || item === 'INALATORIA' || item === 'EPIDURAL';
+}
+export const RouteAttr = {
+    $type: 'RouteAttr',
+    routes: 'routes'
+};
+export function isRouteAttr(item) {
+    return reflection.isInstance(item, RouteAttr.$type);
+}
+export const SafetyRule = {
+    $type: 'SafetyRule'
+};
 export function isSafetyRule(item) {
     return reflection.isInstance(item, SafetyRule.$type);
+}
+export function isSeverity(item) {
+    return item === 'leve' || item === 'moderada' || item === 'alta' || item === 'contraindicada';
+}
+export const SnomedAttr = {
+    $type: 'SnomedAttr',
+    code: 'code'
+};
+export function isSnomedAttr(item) {
+    return reflection.isInstance(item, SnomedAttr.$type);
+}
+export const StepAttr = {
+    $type: 'StepAttr',
+    deadline: 'deadline',
+    description: 'description',
+    order: 'order'
+};
+export function isStepAttr(item) {
+    return reflection.isInstance(item, StepAttr.$type);
+}
+export const TitrationAttr = {
+    $type: 'TitrationAttr',
+    interval: 'interval',
+    step: 'step',
+    target: 'target'
+};
+export function isTitrationAttr(item) {
+    return reflection.isInstance(item, TitrationAttr.$type);
+}
+export const TriggerAttr = {
+    $type: 'TriggerAttr',
+    action: 'action',
+    operator: 'operator',
+    parameter: 'parameter',
+    value: 'value'
+};
+export function isTriggerAttr(item) {
+    return reflection.isInstance(item, TriggerAttr.$type);
+}
+export function isUnit(item) {
+    return item === 'mcg/kg/min' || item === 'mg/kg/h' || item === 'mcg/kg/h' || item === 'mg/kg' || item === 'mcg/kg' || item === 'UI/kg' || item === 'UI/h' || item === 'mL/h' || item === 'mg/h' || item === 'U/min' || item === 'mg/dL' || item === 'g/dL' || item === 'mmol/L' || item === 'mEq/L' || item === 'mg/L' || item === 'ng/mL' || item === 'mL/min' || item === '10^3/uL' || item === 'mcg' || item === 'mg' || item === 'g' || item === 'UI' || item === 'mEq' || item === 'mmol' || item === 'mL' || item === 'L' || item === 'mmHg' || item === 'bpm' || item === 'irpm' || item === 'ms' || item === 'C' || item === 'h' || item === 'min' || item === 'dias' || item === 'pontos' || item === '%';
+}
+export const WeaningAttr = {
+    $type: 'WeaningAttr',
+    criterion: 'criterion',
+    interval: 'interval',
+    step: 'step'
+};
+export function isWeaningAttr(item) {
+    return reflection.isInstance(item, WeaningAttr.$type);
 }
 export class dslProjectAstReflection extends langium.AbstractAstReflection {
     constructor() {
         super(...arguments);
         this.types = {
+            AlertStmt: {
+                name: AlertStmt.$type,
+                properties: {
+                    level: {
+                        name: AlertStmt.level
+                    },
+                    message: {
+                        name: AlertStmt.message
+                    },
+                    rule: {
+                        name: AlertStmt.rule
+                    }
+                },
+                superTypes: []
+            },
+            BlockRule: {
+                name: BlockRule.$type,
+                properties: {
+                    drug: {
+                        name: BlockRule.drug,
+                        referenceType: DrugDef.$type
+                    },
+                    operator: {
+                        name: BlockRule.operator
+                    },
+                    parameter: {
+                        name: BlockRule.parameter
+                    },
+                    reason: {
+                        name: BlockRule.reason
+                    },
+                    threshold: {
+                        name: BlockRule.threshold
+                    }
+                },
+                superTypes: [SafetyRule.$type]
+            },
+            ConductDef: {
+                name: ConductDef.$type,
+                properties: {
+                    decision: {
+                        name: ConductDef.decision
+                    },
+                    doubleCheck: {
+                        name: ConductDef.doubleCheck
+                    },
+                    fhir: {
+                        name: ConductDef.fhir
+                    },
+                    name: {
+                        name: ConductDef.name
+                    },
+                    requiresJustification: {
+                        name: ConductDef.requiresJustification
+                    },
+                    route: {
+                        name: ConductDef.route
+                    }
+                },
+                superTypes: []
+            },
+            ContraindicationAttr: {
+                name: ContraindicationAttr.$type,
+                properties: {
+                    condition: {
+                        name: ContraindicationAttr.condition
+                    },
+                    exception: {
+                        name: ContraindicationAttr.exception
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
+            },
+            DataSchemaDef: {
+                name: DataSchemaDef.$type,
+                properties: {
+                    alerts: {
+                        name: DataSchemaDef.alerts,
+                        defaultValue: []
+                    },
+                    conducts: {
+                        name: DataSchemaDef.conducts,
+                        defaultValue: []
+                    },
+                    decisions: {
+                        name: DataSchemaDef.decisions,
+                        defaultValue: []
+                    },
+                    name: {
+                        name: DataSchemaDef.name
+                    },
+                    routes: {
+                        name: DataSchemaDef.routes,
+                        defaultValue: []
+                    }
+                },
+                superTypes: [Element.$type]
+            },
+            DilutionAttr: {
+                name: DilutionAttr.$type,
+                properties: {
+                    concentration: {
+                        name: DilutionAttr.concentration
+                    },
+                    standard: {
+                        name: DilutionAttr.standard
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
+            },
+            DoseLimitAttr: {
+                name: DoseLimitAttr.$type,
+                properties: {
+                    kind: {
+                        name: DoseLimitAttr.kind
+                    },
+                    value: {
+                        name: DoseLimitAttr.value
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
+            },
+            DrugAttribute: {
+                name: DrugAttribute.$type,
+                properties: {},
+                superTypes: []
+            },
             DrugDef: {
                 name: DrugDef.$type,
                 properties: {
-                    maxDose: {
-                        name: DrugDef.maxDose
+                    atc: {
+                        name: DrugDef.atc
                     },
-                    maxDoseUnit: {
-                        name: DrugDef.maxDoseUnit
+                    attributes: {
+                        name: DrugDef.attributes,
+                        defaultValue: []
+                    },
+                    drugClass: {
+                        name: DrugDef.drugClass
+                    },
+                    highAlert: {
+                        name: DrugDef.highAlert
                     },
                     name: {
                         name: DrugDef.name
                     },
-                    safeStep: {
-                        name: DrugDef.safeStep
-                    },
-                    safeStepUnit: {
-                        name: DrugDef.safeStepUnit
-                    },
-                    type: {
-                        name: DrugDef.type
+                    rxnorm: {
+                        name: DrugDef.rxnorm
                     }
                 },
                 superTypes: [Element.$type]
@@ -76,6 +550,101 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 name: Element.$type,
                 properties: {},
                 superTypes: []
+            },
+            EscalationAttr: {
+                name: EscalationAttr.$type,
+                properties: {
+                    detail: {
+                        name: EscalationAttr.detail
+                    },
+                    operator: {
+                        name: EscalationAttr.operator
+                    },
+                    parameter: {
+                        name: EscalationAttr.parameter
+                    },
+                    target: {
+                        name: EscalationAttr.target
+                    },
+                    value: {
+                        name: EscalationAttr.value
+                    }
+                },
+                superTypes: [ProtocolAttribute.$type]
+            },
+            ForbidAttr: {
+                name: ForbidAttr.$type,
+                properties: {
+                    drug: {
+                        name: ForbidAttr.drug,
+                        referenceType: DrugDef.$type
+                    },
+                    reason: {
+                        name: ForbidAttr.reason
+                    }
+                },
+                superTypes: [ProtocolAttribute.$type]
+            },
+            GlobalRule: {
+                name: GlobalRule.$type,
+                properties: {
+                    description: {
+                        name: GlobalRule.description
+                    },
+                    reference: {
+                        name: GlobalRule.reference
+                    },
+                    severity: {
+                        name: GlobalRule.severity
+                    }
+                },
+                superTypes: [SafetyRule.$type]
+            },
+            HepaticAdjustAttr: {
+                name: HepaticAdjustAttr.$type,
+                properties: {
+                    action: {
+                        name: HepaticAdjustAttr.action
+                    },
+                    criterion: {
+                        name: HepaticAdjustAttr.criterion
+                    },
+                    detail: {
+                        name: HepaticAdjustAttr.detail
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
+            },
+            InteractionAttr: {
+                name: InteractionAttr.$type,
+                properties: {
+                    conduct: {
+                        name: InteractionAttr.conduct
+                    },
+                    mechanism: {
+                        name: InteractionAttr.mechanism
+                    },
+                    other: {
+                        name: InteractionAttr.other,
+                        referenceType: DrugDef.$type
+                    },
+                    severity: {
+                        name: InteractionAttr.severity
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
+            },
+            LasaAttr: {
+                name: LasaAttr.$type,
+                properties: {
+                    confusable: {
+                        name: LasaAttr.confusable
+                    },
+                    mitigation: {
+                        name: LasaAttr.mitigation
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
             },
             MedicalModel: {
                 name: MedicalModel.$type,
@@ -87,21 +656,318 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 },
                 superTypes: []
             },
-            SafetyRule: {
-                name: SafetyRule.$type,
+            MonitorAttr: {
+                name: MonitorAttr.$type,
                 properties: {
-                    condition: {
-                        name: SafetyRule.condition
+                    goal: {
+                        name: MonitorAttr.goal
+                    },
+                    interval: {
+                        name: MonitorAttr.interval
+                    },
+                    target: {
+                        name: MonitorAttr.target
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
+            },
+            OrderStmt: {
+                name: OrderStmt.$type,
+                properties: {
+                    decision: {
+                        name: OrderStmt.decision
+                    },
+                    dose: {
+                        name: OrderStmt.dose
                     },
                     drug: {
-                        name: SafetyRule.drug,
+                        name: OrderStmt.drug,
                         referenceType: DrugDef.$type
                     },
-                    reason: {
-                        name: SafetyRule.reason
+                    justification: {
+                        name: OrderStmt.justification
+                    },
+                    route: {
+                        name: OrderStmt.route
+                    }
+                },
+                superTypes: []
+            },
+            OutcomeAttr: {
+                name: OutcomeAttr.$type,
+                properties: {
+                    description: {
+                        name: OutcomeAttr.description
+                    },
+                    reassess: {
+                        name: OutcomeAttr.reassess
+                    }
+                },
+                superTypes: [ProtocolAttribute.$type]
+            },
+            PlanCommand: {
+                name: PlanCommand.$type,
+                properties: {
+                    alerts: {
+                        name: PlanCommand.alerts,
+                        defaultValue: []
+                    },
+                    audit: {
+                        name: PlanCommand.audit
+                    },
+                    name: {
+                        name: PlanCommand.name
+                    },
+                    orders: {
+                        name: PlanCommand.orders,
+                        defaultValue: []
+                    },
+                    patient: {
+                        name: PlanCommand.patient
+                    },
+                    protocol: {
+                        name: PlanCommand.protocol,
+                        referenceType: ProtocolDef.$type
+                    },
+                    schema: {
+                        name: PlanCommand.schema,
+                        referenceType: DataSchemaDef.$type
+                    },
+                    sequence: {
+                        name: PlanCommand.sequence,
+                        defaultValue: [],
+                        referenceType: ConductDef.$type
                     }
                 },
                 superTypes: [Element.$type]
+            },
+            PopAdjust: {
+                name: PopAdjust.$type,
+                properties: {
+                    drug: {
+                        name: PopAdjust.drug,
+                        referenceType: DrugDef.$type
+                    },
+                    factor: {
+                        name: PopAdjust.factor
+                    },
+                    reason: {
+                        name: PopAdjust.reason
+                    }
+                },
+                superTypes: [PopulationRestriction.$type]
+            },
+            PopForbid: {
+                name: PopForbid.$type,
+                properties: {
+                    drug: {
+                        name: PopForbid.drug,
+                        referenceType: DrugDef.$type
+                    },
+                    reason: {
+                        name: PopForbid.reason
+                    }
+                },
+                superTypes: [PopulationRestriction.$type]
+            },
+            PopRequire: {
+                name: PopRequire.$type,
+                properties: {
+                    requirement: {
+                        name: PopRequire.requirement
+                    }
+                },
+                superTypes: [PopulationRestriction.$type]
+            },
+            PopulationDef: {
+                name: PopulationDef.$type,
+                properties: {
+                    criterion: {
+                        name: PopulationDef.criterion
+                    },
+                    name: {
+                        name: PopulationDef.name
+                    },
+                    restrictions: {
+                        name: PopulationDef.restrictions,
+                        defaultValue: []
+                    }
+                },
+                superTypes: [Element.$type]
+            },
+            PopulationRestriction: {
+                name: PopulationRestriction.$type,
+                properties: {},
+                superTypes: []
+            },
+            ProtocolAttribute: {
+                name: ProtocolAttribute.$type,
+                properties: {},
+                superTypes: []
+            },
+            ProtocolDef: {
+                name: ProtocolDef.$type,
+                properties: {
+                    attributes: {
+                        name: ProtocolDef.attributes,
+                        defaultValue: []
+                    },
+                    icd: {
+                        name: ProtocolDef.icd
+                    },
+                    name: {
+                        name: ProtocolDef.name
+                    }
+                },
+                superTypes: [Element.$type]
+            },
+            PumpLimitAttr: {
+                name: PumpLimitAttr.$type,
+                properties: {
+                    hard: {
+                        name: PumpLimitAttr.hard
+                    },
+                    reservoir: {
+                        name: PumpLimitAttr.reservoir
+                    },
+                    soft: {
+                        name: PumpLimitAttr.soft
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
+            },
+            Quantity: {
+                name: Quantity.$type,
+                properties: {
+                    unit: {
+                        name: Quantity.unit
+                    },
+                    value: {
+                        name: Quantity.value
+                    }
+                },
+                superTypes: []
+            },
+            RecommendAttr: {
+                name: RecommendAttr.$type,
+                properties: {
+                    drug: {
+                        name: RecommendAttr.drug,
+                        referenceType: DrugDef.$type
+                    },
+                    indication: {
+                        name: RecommendAttr.indication
+                    }
+                },
+                superTypes: [ProtocolAttribute.$type]
+            },
+            RenalAdjustAttr: {
+                name: RenalAdjustAttr.$type,
+                properties: {
+                    action: {
+                        name: RenalAdjustAttr.action
+                    },
+                    detail: {
+                        name: RenalAdjustAttr.detail
+                    },
+                    operator: {
+                        name: RenalAdjustAttr.operator
+                    },
+                    parameter: {
+                        name: RenalAdjustAttr.parameter
+                    },
+                    threshold: {
+                        name: RenalAdjustAttr.threshold
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
+            },
+            RouteAttr: {
+                name: RouteAttr.$type,
+                properties: {
+                    routes: {
+                        name: RouteAttr.routes,
+                        defaultValue: []
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
+            },
+            SafetyRule: {
+                name: SafetyRule.$type,
+                properties: {},
+                superTypes: [Element.$type]
+            },
+            SnomedAttr: {
+                name: SnomedAttr.$type,
+                properties: {
+                    code: {
+                        name: SnomedAttr.code
+                    }
+                },
+                superTypes: [ProtocolAttribute.$type]
+            },
+            StepAttr: {
+                name: StepAttr.$type,
+                properties: {
+                    deadline: {
+                        name: StepAttr.deadline
+                    },
+                    description: {
+                        name: StepAttr.description
+                    },
+                    order: {
+                        name: StepAttr.order
+                    }
+                },
+                superTypes: [ProtocolAttribute.$type]
+            },
+            TitrationAttr: {
+                name: TitrationAttr.$type,
+                properties: {
+                    interval: {
+                        name: TitrationAttr.interval
+                    },
+                    step: {
+                        name: TitrationAttr.step
+                    },
+                    target: {
+                        name: TitrationAttr.target
+                    }
+                },
+                superTypes: [DrugAttribute.$type]
+            },
+            TriggerAttr: {
+                name: TriggerAttr.$type,
+                properties: {
+                    action: {
+                        name: TriggerAttr.action
+                    },
+                    operator: {
+                        name: TriggerAttr.operator
+                    },
+                    parameter: {
+                        name: TriggerAttr.parameter
+                    },
+                    value: {
+                        name: TriggerAttr.value
+                    }
+                },
+                superTypes: [ProtocolAttribute.$type]
+            },
+            WeaningAttr: {
+                name: WeaningAttr.$type,
+                properties: {
+                    criterion: {
+                        name: WeaningAttr.criterion
+                    },
+                    interval: {
+                        name: WeaningAttr.interval
+                    },
+                    step: {
+                        name: WeaningAttr.step
+                    }
+                },
+                superTypes: [ProtocolAttribute.$type]
             }
         };
     }

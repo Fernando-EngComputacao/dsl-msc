@@ -60,6 +60,13 @@ def parse_bnf(texto: str) -> dict[str, Rule]:
 
 def to_lark(rules: dict[str, Rule], start: str = "plano") -> str:
     out = []
+    # Lark entra pela regra chamada `start` quando o simbolo inicial nao e
+    # informado na construcao — e o CFGGuide do outlines constroi o parser so com
+    # o texto da gramatica. Sem este alias a decodificacao restrita morre com
+    # "Using an undefined rule: start", embora build_parser() funcione por passar
+    # start= explicitamente. E o mesmo papel do `root ::=` em to_gbnf().
+    if start != "start" and start in rules:
+        out.append(f"start: {start}")
     for name, r in rules.items():
         if r.regex is not None:
             out.append(f"{name.upper()}: /{r.regex}/")

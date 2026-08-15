@@ -1,37 +1,50 @@
-import { createDSLServices } from '../language/dsl-module.js';
-import { EmptyFileSystem } from 'langium';
-import { URI } from 'vscode-uri';
-import { isDrugDef, isSafetyRule } from '../generated/ast.js';
+/**
+ * Inspecao do modelo clinico carregado pela DSL.
+ * Executar: npx tsx src/test/test.ts [modelo.dsl]
+ *
+ * Confere que a AST expoe o Esquema de Controle e o Esquema de Dados na forma
+ * esperada pelas etapas seguintes (grafo, extracao de BNF e recuperacao).
+ */
+import * as path from 'node:path';
+import { isBlockRule, isDataSchemaDef, isDrugDef, isGlobalRule, isPopulationDef, isProtocolDef, isPumpLimitAttr, isRouteAttr } from '../generated/ast.js';
+import { loadModel } from '../database/neo4j.js';
 async function run() {
-    const { shared } = createDSLServices(EmptyFileSystem);
-    // ✅ Teste rápido embutido simulando o cenário da UTI
-    const document = shared.workspace.LangiumDocumentFactory.fromString(`farmaco Propofol { tipo "Sedativo" dose_maxima 4.0 "mg/kg/h" incremento_seguro 0.5 "mg/kg/h" }
-         regra_seguranca: bloquear_incremento Propofol se "PAM < 60" ("Risco de Hipotensao Severa")`, URI.parse('file:///tmp/test.dsl'));
-    // 🛑 Validação para garantir que não existam erros de sintaxe
-    if (document.parseResult.parserErrors.length > 0) {
-        console.error('❌ Erros de parsing encontrados:');
-        for (const err of document.parseResult.parserErrors) {
-            console.error(` - ${err.message}`);
-        }
-        return;
+    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'uti.dsl');
+    const model = await loadModel(modelPath);
+    const drugs = model.elements.filter(isDrugDef);
+    const protocols = model.elements.filter(isProtocolDef);
+    const populations = model.elements.filter(isPopulationDef);
+    const blockRules = model.elements.filter(isBlockRule);
+    const globalRules = model.elements.filter(isGlobalRule);
+    const schemas = model.elements.filter(isDataSchemaDef);
+    console.log('=== ESQUEMA DE CONTROLE ===');
+    console.log(`${drugs.length} farmacos | ${protocols.length} protocolos | ` +
+        `${populations.length} populacoes | ${blockRules.length + globalRules.length} invariantes`);
+    console.log('\n--- Farmacos de alto risco e limites DERS ---');
+    for (const drug of drugs.filter(d => d.highAlert === 'sim')) {
+        const pump = drug.attributes.find(isPumpLimitAttr);
+        const routes = drug.attributes.find(isRouteAttr);
+        const limites = pump
+            ? `hard limit ${pump.hard.value} ${pump.hard.unit}`
+            : 'sem limite de bomba declarado';
+        console.log(`  ${drug.name.padEnd(24)} [${drug.drugClass}] ${limites}`);
+        if (routes)
+            console.log(`${' '.repeat(28)}vias: ${routes.routes.join(', ')}`);
     }
-    // ✅ Cast rígido para o tipo gerado pelo langium (Sem "any")
-    const model = document.parseResult.value;
-    console.log('=== MODELO MÉDICO (AST) ===');
-    console.log('Tipo da Raiz:', model.$type);
-    console.log('Quantidade de instâncias lidas:', model.elements.length);
-    console.log('\n=== DETALHES DAS REGRAS ===');
-    for (const el of model.elements) {
-        if (isDrugDef(el)) {
-            console.log(`💊 Fármaco: ${el.name} | Tipo: ${el.type}`);
-            console.log(`   Dose Máxima: ${el.maxDose} ${el.maxDoseUnit}`);
-            console.log(`   Incremento:  ${el.safeStep} ${el.safeStepUnit}`);
-        }
-        else if (isSafetyRule(el)) {
-            console.log(`🛑 Regra de Segurança para: ${el.drug.$refText}`);
-            console.log(`   Condição de bloqueio: ${el.condition}`);
-            console.log(`   Motivo: ${el.reason}`);
-        }
+    console.log('\n--- Invariantes de bloqueio (condicoes avaliaveis por maquina) ---');
+    for (const rule of blockRules) {
+        console.log(`  ${rule.drug.$refText.padEnd(20)} bloqueado se ` +
+            `${rule.parameter} ${rule.operator} ${rule.threshold.value} ${rule.threshold.unit}`);
+        console.log(`${' '.repeat(22)}razao: ${rule.reason}`);
+    }
+    console.log('\n=== ESQUEMA DE DADOS ===');
+    for (const schema of schemas) {
+        console.log(`  esquema ${schema.name}`);
+        console.log(`    decisoes: ${schema.decisions.length} | vias: ${schema.routes.length}`);
+        console.log(`    condutas: ${schema.conducts.map(c => c.name).join(', ')}`);
     }
 }
-run();
+run().catch(err => {
+    console.error('Falha:', err.message ?? err);
+    process.exit(1);
+});

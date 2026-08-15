@@ -25,6 +25,9 @@ import {
 
 const ENDPOINT = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
 
+/** Teto por cenario. Generoso: a 1a chamada ainda baixa e carrega os pesos. */
+const TIMEOUT_MS = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600_000);
+
 /** Payload aceito por `POST /generate-constrained` (ver python_engine/main.py). */
 interface ICURequest {
     comando_humano: string;
@@ -120,11 +123,23 @@ export async function gerarPlanoRestrito(
         subgrafo_regras: pruningPayload(constraints)
     };
 
-    const response = await fetch(`${ENDPOINT}/generate-constrained`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
+    // A primeira chamada carrega os pesos sob demanda (get_model, no motor Python)
+    // e pode levar minutos; sem teto, porem, uma falha de rede fica indistinguivel
+    // de um carregamento lento e o lote trava sem diagnostico.
+    let response: Response;
+    try {
+        response = await fetch(`${ENDPOINT}/generate-constrained`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(TIMEOUT_MS)
+        });
+    } catch (error) {
+        const causa = (error as Error).name === 'TimeoutError'
+            ? `sem resposta em ${TIMEOUT_MS / 1000}s (ajuste SPC_CML_TIMEOUT_MS)`
+            : (error as Error).message;
+        throw new Error(`${ENDPOINT} inacessivel: ${causa}`);
+    }
 
     if (!response.ok) {
         throw new Error(`${ENDPOINT} respondeu ${response.status}: ${await response.text()}`);
