@@ -32,6 +32,8 @@ services:
       - NEO4J_PASSWORD=#UFG2026
       # Opcional: evita o rate limit anonimo do Hugging Face Hub.
       - HF_TOKEN=${HF_TOKEN:-}
+      # Troque para "outlines" so para reproduzir a comparacao de desempenho.
+      - SPC_CML_BACKEND=${SPC_CML_BACKEND:-llamacpp}
 
 volumes:
   neo4j_data:

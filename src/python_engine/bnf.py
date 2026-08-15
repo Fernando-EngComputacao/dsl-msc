@@ -134,28 +134,106 @@ def parses(rules_or_parser, program: str) -> bool:
 # 4. BNF -> GBNF (llama.cpp / vLLM+XGrammar: mascaramento real de logits)
 # --------------------------------------------------------------------------
 
-def to_gbnf(rules: dict[str, Rule], start: str = "plano") -> str:
-    out = [f"root ::= {start}"]
+def _gbnf_name(nome: str) -> str:
+    """
+    Nome de regra aceito pelo llama.cpp: so letras, digitos e hifen.
+
+    O is_word_char do parser GBNF nao inclui '_', entao `plano_g1 ::= ...` o faz
+    parar em `plano` e reclamar de "expecting ::=" — e o llama-cpp-python segue
+    com a gramatica quebrada ate segfaultar. Os identificadores vem da DSL
+    Langium, onde underscore e a convencao, entao a conversao e feita aqui.
+    Literais entre aspas ("MANTER_BLOQUEADO") nao passam por esta funcao.
+    """
+    return nome.replace("_", "-")
+
+
+def to_gbnf(
+    rules: dict[str, Rule],
+    start: str = "plano",
+    max_itens: int = 8,
+    max_chars: int = 160,
+) -> str:
+    out = [f"root ::= {_gbnf_name(start)}"]
     for name, r in rules.items():
         if r.regex is not None:
-            out.append(f'{name} ::= {_regex_to_gbnf(r.regex)}')
+            out.append(f'{_gbnf_name(name)} ::= {_regex_to_gbnf(r.regex, max_chars)}')
             continue
         alts = []
         for alt in r.alts:
             syms = []
             for s in alt:
-                if s.startswith('"') or s.startswith("/"):
+                if s.startswith('"'):
                     syms.append(s)
                     continue
+                if s.startswith("/") and s.endswith("/"):
+                    syms.append(_regex_to_gbnf(s[1:-1], max_chars))
+                    continue
                 base, card = (s[:-1], s[-1]) if s[-1] in "*+?" else (s, "")
-                syms.append(f"({base} ws){card}" if card else base)
+                base = _gbnf_name(base)
+                syms.append(f"({base} ws){_quantificador(card, max_itens)}" if card else base)
             alts.append(" ws ".join(syms))
-        out.append(f"{name} ::= " + " | ".join(alts))
-    out.append('ws ::= " "*')
+        out.append(f"{_gbnf_name(name)} ::= " + " | ".join(alts))
+    # Exatamente um espaco: nem `" "*`, que admitiria "planoPlano_X" — valido em
+    # GBNF e irreparseavel no Lark, marcando como invalido um plano que o proprio
+    # motor autorizou —, nem `[ \t\n]+`, que deixa o separador crescer sem limite
+    # e faz o modelo gastar o orcamento de tokens em quebras de linha. Fixo em um
+    # caractere, L(GBNF) fica contido em L(G) e cada token vai para o conteudo.
+    out.append('ws ::= " "')
     return "\n".join(out)
 
 
-def _regex_to_gbnf(rx: str) -> str:
-    # traducao suficiente para classes simples usadas no DSL
-    rx = rx.replace("[0-9]", "[0-9]").replace("[A-Z]", "[A-Z]")
-    return rx
+def _quantificador(card: str, teto: int) -> str:
+    """
+    `*` e `+` ilimitados sao uma armadilha sob mascaramento de logits: a mascara
+    autoriza repetir para sempre, e um modelo pequeno entra em loop — observado
+    tanto num identificador de 1000 caracteres quanto numa `sequencia` que nunca
+    fechava o `]`. O teto e de decodificacao, nao do idioma: nada que a poda
+    admitia deixa de ser exprimivel, so deixa de ser repetivel indefinidamente.
+    """
+    if card == "?":
+        return "?"
+    return f"{{0,{teto}}}" if card == "*" else f"{{1,{teto}}}"
+
+
+def _regex_to_gbnf(rx: str, max_chars: int = 160) -> str:
+    """
+    Traduz o subconjunto de regex do Esquema de Dados para GBNF.
+
+    GBNF e proximo de regex, mas nao identico: literais exigem aspas duplas e nao
+    ha escapes fora de classes. Sem esta traducao, `texto ::= /'[^']*'/` sairia
+    como `'[^']*'` (aspas simples nao sao literais em GBNF) e `numero` traria um
+    `\\.` invalido — a versao anterior era um no-op (dois replace identidade) e so
+    nao quebrava porque o caminho GBNF estava ocioso.
+
+        [A-Za-z_][A-Za-z_0-9]*  ->  [A-Za-z_] [A-Za-z_0-9]*
+        '[^']*'                 ->  "'" [^']* "'"
+        [0-9]+(\\.[0-9]+)?       ->  [0-9]+ ( "." [0-9]+ )?
+    """
+    out: list[str] = []
+    i, n = 0, len(rx)
+    while i < n:
+        c = rx[i]
+        if c == "[":                          # classe de caracteres: GBNF aceita igual
+            j = i + 1
+            if j < n and rx[j] == "^":
+                j += 1
+            if j < n and rx[j] == "]":        # ']' literal na primeira posicao
+                j += 1
+            while j < n and rx[j] != "]":
+                j += 2 if rx[j] == "\\" else 1
+            out.append(rx[i : j + 1])
+            i = j + 1
+        elif c in "*+?":                      # quantificador cola no simbolo anterior
+            if out:
+                out[-1] += _quantificador(c, max_chars)
+            i += 1
+        elif c in "()|":                       # estrutura: passa direto
+            out.append(c)
+            i += 1
+        elif c == "\\" and i + 1 < n:          # escape vira literal citado
+            out.append(f'"{rx[i + 1]}"')
+            i += 2
+        else:                                  # caractere literal
+            out.append('"' + c.replace("\\", "\\\\").replace('"', '\\"') + '"')
+            i += 1
+    return " ".join(out)

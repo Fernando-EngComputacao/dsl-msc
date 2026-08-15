@@ -35,6 +35,31 @@ GRAMMAR_PATH = os.path.join(BASE_DIR, "grammar", "advanced_icu.bnf")
 EXAMPLES_PATH = os.path.join(BASE_DIR, "data", "exemplos_icu.jsonl")
 MODEL_ID = os.environ.get("SPC_CML_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
 
+# Backend de decodificacao restrita. Os dois mascaram logits sobre a MESMA
+# gramatica podada — muda so o mecanismo, nao a garantia:
+#   llamacpp  GBNF compilada uma vez, mascaramento em C++ (padrao)
+#   outlines  CFG incremental em Python; reconstroi um FSM sobre todo o
+#             vocabulario a cada terminal da saida, o que nesta gramatica nao
+#             termina em tempo util. Mantido para a comparacao de desempenho.
+BACKEND = os.environ.get("SPC_CML_BACKEND", "llamacpp")
+GGUF_REPO = os.environ.get("SPC_CML_GGUF_REPO", "Qwen/Qwen2.5-0.5B-Instruct-GGUF")
+GGUF_FILE = os.environ.get("SPC_CML_GGUF_FILE", "qwen2.5-0.5b-instruct-q8_0.gguf")
+# O Prompt Semantico completo (protocolos, bloqueios, vetos, ajustes, interacoes,
+# invariantes) mais os 3 exemplares com suas G[y] dao ~3800 tokens; com 1024 de
+# saida, 4096 estourava e o llama.cpp aborta o PROCESSO (GGML_ASSERT em decode),
+# derrubando os cenarios seguintes junto. Qwen2.5 suporta ate 32k.
+N_CTX = int(os.environ.get("SPC_CML_N_CTX", "8192"))
+# Os exemplares few-shot tem ~800 caracteres; 512 tokens truncava o plano no meio.
+MAX_TOKENS = int(os.environ.get("SPC_CML_MAX_TOKENS", "1024"))
+# Teto de itens por lista (condutas, ordens, alertas). Um plano de UTI real tem
+# poucas ordens; sem teto o modelo pequeno repete a mesma ordem ate estourar os
+# tokens. Ver _quantificador em bnf.py.
+MAX_ITENS = int(os.environ.get("SPC_CML_MAX_ITENS", "4"))
+# A mascara garante que so saem itens admissiveis, mas nao impede repeti-los; a
+# penalidade desencoraja a ordem identica oito vezes seguidas.
+REPEAT_PENALTY = float(os.environ.get("SPC_CML_REPEAT_PENALTY", "1.15"))
+TEMPERATURA = float(os.environ.get("SPC_CML_TEMPERATURA", "0.3"))
+
 app = FastAPI(title="SPC-CML — decodificacao restrita", version="2.0")
 
 # 1. Gramatica completa G, derivada da DSL local.
@@ -46,7 +71,8 @@ EXEMPLOS = carregar_exemplos(EXAMPLES_PATH, RULES, PARSER)
 
 # 3. O LLM local e caro de carregar: so materializa no primeiro uso, para que
 #    /health, /grammar e /verify funcionem sem GPU.
-_MODEL = None
+_MODEL = None   # backend outlines (transformers)
+_LLAMA = None   # backend llama.cpp (GGUF)
 
 
 def get_model():
@@ -56,6 +82,58 @@ def get_model():
 
         _MODEL = outlines.models.transformers(MODEL_ID)
     return _MODEL
+
+
+def get_llama():
+    global _LLAMA
+    if _LLAMA is None:
+        from huggingface_hub import hf_hub_download
+        from llama_cpp import Llama
+
+        _LLAMA = Llama(
+            model_path=hf_hub_download(GGUF_REPO, GGUF_FILE),
+            n_ctx=N_CTX,
+            verbose=False,
+        )
+    return _LLAMA
+
+
+def _modelo_carregado() -> bool:
+    return (_MODEL if BACKEND == "outlines" else _LLAMA) is not None
+
+
+def _gerar(prompt: str, regras_hat: dict) -> str:
+    """Geracao sob mascaramento de logits pela gramatica ja podada."""
+    if BACKEND == "outlines":
+        import outlines
+
+        return outlines.generate.cfg(get_model(), to_lark(regras_hat))(prompt)
+
+    from llama_cpp import LlamaGrammar
+
+    # Guarda antes de decodificar: estourar n_ctx nao levanta excecao no llama.cpp,
+    # aborta o processo — e um cenario grande demais derrubaria todo o lote.
+    llm = get_llama()
+    n_prompt = len(llm.tokenize(prompt.encode("utf-8")))
+    if n_prompt + MAX_TOKENS > N_CTX:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Prompt de {n_prompt} tokens mais {MAX_TOKENS} de saida excede "
+                f"n_ctx={N_CTX}. Aumente SPC_CML_N_CTX ou reduza SPC_CML_MAX_TOKENS."
+            ),
+        )
+
+    saida = llm(
+        prompt,
+        grammar=LlamaGrammar.from_string(
+            to_gbnf(regras_hat, start="plano", max_itens=MAX_ITENS), verbose=False
+        ),
+        max_tokens=MAX_TOKENS,
+        temperature=TEMPERATURA,
+        repeat_penalty=REPEAT_PENALTY,
+    )
+    return saida["choices"][0]["text"].strip()
 
 
 class ICURequest(BaseModel):
@@ -101,8 +179,9 @@ def health():
         "status": "ok",
         "regras_em_G": len(RULES),
         "exemplares_few_shot": len(EXEMPLOS),
-        "modelo": MODEL_ID,
-        "modelo_carregado": _MODEL is not None,
+        "backend": BACKEND,
+        "modelo": MODEL_ID if BACKEND == "outlines" else f"{GGUF_REPO}/{GGUF_FILE}",
+        "modelo_carregado": _modelo_carregado(),
     }
 
 
@@ -139,10 +218,7 @@ def generate_constrained(req: ICURequest):
         gramatica_completa=g_hat_texto,
     )
 
-    import outlines
-
-    generator = outlines.generate.cfg(get_model(), to_lark(regras_hat))
-    resultado = generator(prompt)
+    resultado = _gerar(prompt, regras_hat)
 
     # Verificacao independente da geracao: mesmo com mascaramento de logits, a
     # saida e reparseada antes de sair do servico.

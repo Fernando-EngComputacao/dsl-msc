@@ -15,3 +15,8 @@ torch
 pydantic
 lark
 pyairports
+# Backend padrao de decodificacao restrita: compila a GBNF uma vez e mascara os
+# logits em C++. Substitui o generate.cfg do outlines, que reconstruia um FSM
+# sobre todo o vocabulario a cada terminal (ver SPC_CML_BACKEND em main.py).
+llama-cpp-python
+huggingface-hub

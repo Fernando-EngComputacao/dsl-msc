@@ -17,6 +17,8 @@ import * as path from 'node:path';
 import { loadModel } from '../database/neo4j.js';
 import { retrieveConstraints, pruningPayload } from '../knowledge/graphrag.js';
 const ENDPOINT = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
+/** Teto por cenario. Generoso: a 1a chamada ainda baixa e carrega os pesos. */
+const TIMEOUT_MS = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600000);
 /**
  * Prompt Semantico (etapa 3 da Figura 5.1): a fala do profissional unificada ao
  * bloco factual recuperado do grafo. E texto para o LLM ler, mas cada linha aqui
@@ -80,11 +82,24 @@ export async function gerarPlanoRestrito(contexto, constraints) {
         contexto_neo4j: montarPromptSemantico(constraints),
         subgrafo_regras: pruningPayload(constraints)
     };
-    const response = await fetch(`${ENDPOINT}/generate-constrained`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
+    // A primeira chamada carrega os pesos sob demanda (get_model, no motor Python)
+    // e pode levar minutos; sem teto, porem, uma falha de rede fica indistinguivel
+    // de um carregamento lento e o lote trava sem diagnostico.
+    let response;
+    try {
+        response = await fetch(`${ENDPOINT}/generate-constrained`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(TIMEOUT_MS)
+        });
+    }
+    catch (error) {
+        const causa = error.name === 'TimeoutError'
+            ? `sem resposta em ${TIMEOUT_MS / 1000}s (ajuste SPC_CML_TIMEOUT_MS)`
+            : error.message;
+        throw new Error(`${ENDPOINT} inacessivel: ${causa}`);
+    }
     if (!response.ok) {
         throw new Error(`${ENDPOINT} respondeu ${response.status}: ${await response.text()}`);
     }
