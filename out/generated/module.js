@@ -3,7 +3,13 @@
  * DO NOT EDIT MANUALLY!
  ******************************************************************************/
 import { dslProjectAstReflection } from './ast.js';
-import { DslGrammar } from './grammar.js';
+import { AgroDroneGrammar, DslGrammar } from './grammar.js';
+export const AgroDroneLanguageMetaData = {
+    languageId: 'agro',
+    fileExtensions: ['.agro'],
+    caseInsensitive: false,
+    mode: 'development'
+};
 export const DslLanguageMetaData = {
     languageId: 'dsl',
     fileExtensions: ['.dsl'],
@@ -12,6 +18,11 @@ export const DslLanguageMetaData = {
 };
 export const dslProjectGeneratedSharedModule = {
     AstReflection: () => new dslProjectAstReflection()
+};
+export const AgroDroneGeneratedModule = {
+    Grammar: () => AgroDroneGrammar(),
+    LanguageMetaData: () => AgroDroneLanguageMetaData,
+    parser: {}
 };
 export const DslGeneratedModule = {
     Grammar: () => DslGrammar(),

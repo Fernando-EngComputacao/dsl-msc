@@ -1,0 +1,266 @@
+// =============================================================================
+// Modelo do especialista — pulverizacao aerea por drone (SPC-CML, dominio agro).
+//
+// Segundo dominio da arquitetura. Escala deliberadamente menor que uti.dsl: 9
+// produtos contra 12 farmacos, 3 culturas contra 3 protocolos, 3 areas contra 4
+// populacoes — o suficiente para exercer todos os mecanismos (bloqueio por
+// sensor, veto por cultura, ajuste por area, incompatibilidade de calda) sem
+// duplicar o volume do modelo clinico.
+//
+// As condicoes que decidem seguranca sao ESTRUTURADAS (parametro, operador,
+// limiar). O que aparece como STRING e justificativa para o agronomo ler, nunca
+// criterio de decisao — decidir por prosa devolveria ao LLM a autoridade que a
+// arquitetura tira dele.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// 1) ESQUEMA DE CONTROLE — produtos
+// -----------------------------------------------------------------------------
+
+produto Glifosato {
+    classe herbicida
+    registro_mapa "MAPA-00891093"
+    toxicologica IV
+    dose recomendada 2.0 L/ha
+    dose maxima 3.0 L/ha
+    alvo: "plantas daninhas folha larga e estreita" estadio "pos-emergencia"
+    carencia 7 dias reentrada 24 h
+    deriva alta gota_minima 300 micra
+    incompativel: Mancozebe gravidade alta ("precipitacao da calda no tanque") conduta "aplicar em passadas separadas com limpeza de tanque"
+    proibido: "faixa de amortecimento de manancial hidrico"
+}
+
+produto Mancozebe {
+    classe fungicida
+    registro_mapa "MAPA-00170492"
+    toxicologica III
+    dose recomendada 1.5 kg/ha
+    alvo: "ferrugem asiatica" estadio "preventivo"
+    carencia 14 dias reentrada 48 h
+    deriva moderada gota_minima 200 micra
+    incompativel: Glifosato gravidade alta ("precipitacao da calda no tanque") conduta "aplicar em passadas separadas com limpeza de tanque"
+}
+
+produto Acefato {
+    classe inseticida
+    registro_mapa "MAPA-00420889"
+    toxicologica II
+    dose recomendada 0.6 kg/ha
+    alvo: "lagartas desfolhadoras" estadio "infestacao confirmada"
+    carencia 21 dias reentrada 48 h
+    deriva alta gota_minima 250 micra
+    incompativel: Nicosulfuron gravidade moderada ("fitotoxicidade em folha nova") conduta "respeitar intervalo de 7 dias entre aplicacoes"
+    proibido: "proximidade de apiario em florada" excecao "aplicacao noturna com aviso previo ao apicultor"
+}
+
+produto Nicosulfuron {
+    classe herbicida
+    registro_mapa "MAPA-00631197"
+    toxicologica III
+    dose recomendada 1.0 L/ha
+    alvo: "gramineas em milho" estadio "pos-emergencia inicial"
+    carencia 30 dias
+    deriva moderada gota_minima 250 micra
+    incompativel: Acefato gravidade moderada ("fitotoxicidade em folha nova")
+}
+
+produto Atrazina {
+    classe herbicida
+    registro_mapa "MAPA-00280385"
+    toxicologica III
+    dose recomendada 3.0 L/ha
+    dose maxima 4.0 L/ha
+    alvo: "folhas largas em milho" estadio "pre e pos-emergencia"
+    carencia 30 dias reentrada 24 h
+    deriva alta gota_minima 300 micra
+    proibido: "area a menos de 500 m de manancial hidrico"
+}
+
+produto Clorpirifos {
+    classe inseticida
+    registro_mapa "MAPA-00540690"
+    toxicologica II
+    dose recomendada 0.5 L/ha
+    alvo: "cigarrinha-do-milho" estadio "infestacao confirmada"
+    carencia 21 dias reentrada 72 h
+    deriva alta gota_minima 300 micra
+    incompativel: Atrazina gravidade moderada ("inibicao metabolica no milho")
+    proibido: "cultura em florada com presenca de polinizadores"
+}
+
+produto Dois_Quatro_D {
+    classe herbicida
+    registro_mapa "MAPA-00110284"
+    toxicologica I
+    dose recomendada 1.5 L/ha
+    alvo: "folhas largas em cana" estadio "pos-emergencia"
+    carencia 30 dias reentrada 48 h
+    deriva alta gota_minima 400 micra
+    incompativel: Atrazina gravidade alta ("deriva hormonal sobre cultura vizinha")
+    proibido: "proximidade de uva, maca ou oliveira"
+}
+
+produto Azoxistrobina {
+    classe fungicida
+    registro_mapa "MAPA-00760901"
+    toxicologica III
+    dose recomendada 0.2 L/ha
+    alvo: "ferrugem laranja da cana" estadio "preventivo"
+    carencia 14 dias
+    deriva leve gota_minima 150 micra
+}
+
+produto Imidacloprido {
+    classe inseticida
+    registro_mapa "MAPA-00930594"
+    toxicologica III
+    dose recomendada 0.5 L/ha
+    alvo: "broca-da-cana" estadio "infestacao confirmada"
+    carencia 21 dias reentrada 48 h
+    deriva moderada gota_minima 250 micra
+    proibido: "cultura em florada com presenca de polinizadores"
+}
+
+// -----------------------------------------------------------------------------
+// 2) ESQUEMA DE CONTROLE — culturas
+// -----------------------------------------------------------------------------
+
+cultura Soja {
+    ciclo "120 dias, semeadura outubro a dezembro"
+    gatilho: NDVI < 0.4 indice -> "queda de vigor: varredura para pragas desfolhadoras"
+    gatilho: infestacao > 15.0 % -> "nivel de dano economico atingido: aplicar inseticida"
+    recomenda Glifosato indicacao "dessecacao e manejo de daninhas em pos-emergencia"
+    recomenda Mancozebe indicacao "controle preventivo de ferrugem asiatica"
+    recomenda Acefato indicacao "controle de lagartas acima do nivel de dano"
+    veta Atrazina motivo "sem registro para soja: risco de fitotoxicidade severa"
+    escalonar: infestacao > 30.0 % -> AGRONOMO_RESPONSAVEL "infestacao severa exige avaliacao presencial"
+    janela: "06h-09h ou 17h-19h" umidade_minima 55.0 %
+}
+
+cultura Milho {
+    ciclo "140 dias, semeadura safrinha janeiro a marco"
+    gatilho: umidade_foliar < 60.0 % -> "condicao favoravel a cigarrinha: intensificar monitoramento"
+    gatilho: NDVI < 0.45 indice -> "perda de vigor: varredura para enfezamento"
+    recomenda Atrazina indicacao "controle de folhas largas em pre e pos-emergencia"
+    recomenda Nicosulfuron indicacao "controle de gramineas em pos-emergencia inicial"
+    recomenda Clorpirifos indicacao "controle de cigarrinha vetora de enfezamento"
+    veta Dois_Quatro_D motivo "risco de deriva hormonal com dano a cultura vizinha"
+    escalonar: distancia_manancial < 500.0 m -> ORGAO_AMBIENTAL "aplicacao em faixa de protecao exige autorizacao"
+    janela: "06h-10h" umidade_minima 55.0 %
+}
+
+cultura Cana_de_Acucar {
+    ciclo "12 meses, colheita maio a novembro"
+    gatilho: temperatura_foliar > 38.0 C -> "estresse hidrico: suspender aplicacao foliar"
+    gatilho: NDVI < 0.35 indice -> "falha de stand: varredura para broca"
+    recomenda Dois_Quatro_D indicacao "controle de folhas largas em pos-emergencia"
+    recomenda Azoxistrobina indicacao "controle preventivo de ferrugem laranja"
+    recomenda Imidacloprido indicacao "controle de broca-da-cana"
+    veta Nicosulfuron motivo "sem registro para cana: risco de fitotoxicidade"
+    escalonar: distancia_cultura_sensivel < 300.0 m -> AGRONOMO_RESPONSAVEL "vizinhanca sensivel a deriva hormonal"
+    janela: "sem previsao de chuva por 8 h" umidade_minima 55.0 %
+}
+
+// -----------------------------------------------------------------------------
+// 3) ESQUEMA DE CONTROLE — areas (analogo das populacoes clinicas)
+// -----------------------------------------------------------------------------
+
+area Faixa_Manancial {
+    criterio "talhao a menos de 500 m de curso d'agua ou nascente"
+    proibe Atrazina motivo "alta mobilidade no perfil do solo com risco de contaminacao de aquifero"
+    proibe Glifosato motivo "restricao de aplicacao aerea em faixa de amortecimento"
+    ajusta Imidacloprido fator 0.5 motivo "reducao de vazao para conter deriva sobre corpo d'agua"
+    exige "registro de coordenada GPS e condicao climatica no momento da aplicacao"
+}
+
+area Vizinhanca_Sensivel {
+    criterio "talhao a menos de 300 m de uva, maca, oliveira ou horticultura"
+    proibe Dois_Quatro_D motivo "deriva hormonal causa dano irreversivel em cultura sensivel"
+    ajusta Atrazina fator 0.75 motivo "reducao de vazao para conter deriva"
+    exige "aviso previo ao produtor vizinho e registro de direcao do vento"
+}
+
+area Apiario_Proximo {
+    criterio "colmeia ativa a menos de 250 m do talhao"
+    proibe Clorpirifos motivo "alta toxicidade para abelhas em periodo de forrageamento"
+    ajusta Acefato fator 0.5 motivo "reducao de exposicao de polinizadores"
+    exige "aplicacao restrita ao periodo noturno com aviso ao apicultor"
+}
+
+// -----------------------------------------------------------------------------
+// 4) INVARIANTES DE SEGURANCA
+// -----------------------------------------------------------------------------
+
+regra_seguranca: bloquear_aplicacao Glifosato se vento > 10.0 km/h ("deriva de herbicida sistemico sobre cultura vizinha")
+regra_seguranca: bloquear_aplicacao Dois_Quatro_D se vento > 8.0 km/h ("deriva hormonal com dano a cultura sensivel a longa distancia")
+regra_seguranca: bloquear_aplicacao Atrazina se distancia_manancial < 500.0 m ("contaminacao de manancial hidrico")
+regra_seguranca: bloquear_aplicacao Clorpirifos se temperatura > 32.0 C ("volatilizacao com perda de eficacia e exposicao do operador")
+regra_seguranca: bloquear_aplicacao Mancozebe se umidade < 55.0 % ("evaporacao da gota antes do alvo")
+regra_seguranca: bloquear_aplicacao Acefato se chuva_prevista > 0.0 mm ("lavagem do produto antes da absorcao")
+regra_seguranca: bloquear_aplicacao Imidacloprido se temperatura_foliar > 38.0 C ("estresse hidrico reduz absorcao e agrava fitotoxicidade")
+
+regra_global: "Limpar o tanque do drone entre culturas diferentes" severidade alta referencia "boas praticas de aplicacao aerea"
+regra_global: "Nunca aplicar simultaneamente em talhoes adjacentes com culturas diferentes se o vento exceder 8 km/h" severidade alta
+regra_global: "Toda aplicacao exige registro de coordenada GPS, vazao e condicao climatica" severidade alta referencia "NR-31"
+regra_global: "Aplicacao aerea e proibida com vento acima de 15 km/h em qualquer condicao" severidade proibida
+regra_global: "Produto classe toxicologica I exige dupla checagem antes da decolagem" severidade alta referencia "ANVISA"
+regra_global: "Toda missao gerada automaticamente exige justificativa rastreavel" severidade alta
+
+// -----------------------------------------------------------------------------
+// 5) ESQUEMA DE DADOS — universo fechado de respostas do LLM
+// -----------------------------------------------------------------------------
+
+esquema_dados AssistenteAgro_v1 {
+    decisoes [
+        INICIAR_APLICACAO, AUMENTAR_VAZAO, REDUZIR_VAZAO, MANTER_VAZAO,
+        MANTER_BLOQUEADO, SUSPENDER, SUBSTITUIR, AGUARDAR_JANELA,
+        SOLICITAR_VARREDURA, ACIONAR_AGRONOMO, BLOQUEAR_APLICACAO
+    ]
+    modos [ BARRA_TOTAL, FAIXA_DIRIGIDA, PONTO_LOCALIZADO, BAIXO_VOLUME ]
+    alertas [ INFORMATIVO, ATENCAO, CRITICO, BLOQUEANTE ]
+
+    conduta Iniciar_Pulverizacao {
+        decisao INICIAR_APLICACAO
+        modo BARRA_TOTAL
+        justificativa_obrigatoria sim
+    }
+
+    conduta Reduzir_Vazao {
+        decisao REDUZIR_VAZAO
+        modo FAIXA_DIRIGIDA
+        justificativa_obrigatoria sim
+    }
+
+    conduta Manter_Bloqueio {
+        decisao MANTER_BLOQUEADO
+        justificativa_obrigatoria sim
+    }
+
+    conduta Aguardar_Janela_Climatica {
+        decisao AGUARDAR_JANELA
+        justificativa_obrigatoria sim
+    }
+
+    conduta Suspender_Aplicacao {
+        decisao SUSPENDER
+        justificativa_obrigatoria sim
+    }
+
+    conduta Solicitar_Varredura {
+        decisao SOLICITAR_VARREDURA
+        modo PONTO_LOCALIZADO
+        justificativa_obrigatoria sim
+    }
+
+    conduta Acionar_Agronomo {
+        decisao ACIONAR_AGRONOMO
+        requer_dupla_checagem sim
+        justificativa_obrigatoria sim
+    }
+
+    conduta Bloquear_Missao_Insegura {
+        decisao BLOQUEAR_APLICACAO
+        requer_dupla_checagem sim
+        justificativa_obrigatoria sim
+    }
+}

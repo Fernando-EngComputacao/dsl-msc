@@ -37,23 +37,43 @@ import { GrammarAST, type Grammar } from 'langium';
 // Nomes do dialeto BNF (snake_case em portugues, alinhado ao motor Python)
 // --------------------------------------------------------------------------
 
-/** Regras de parser da DSL -> nao-terminais da BNF de saida. */
+/**
+ * Regras de parser da DSL -> nao-terminais da BNF de saida.
+ *
+ * As duas DSLs (clinica e agricola) compartilham este extrator: os nomes comuns
+ * — AlertStmt, Quantity, Decision, AlertLevel, Unit — sao deliberadamente iguais
+ * nas duas gramaticas, e os especificos nao colidem porque cada dominio e
+ * extraido a partir do seu proprio objeto Grammar.
+ */
 const RULE_ALIAS: Record<string, string> = {
+    // dominio clinico
     PlanCommand: 'plano',
     OrderStmt: 'ordem',
+    Route: 'via',
+    // dominio agricola
+    MissionCommand: 'missao',
+    ApplicationStmt: 'aplicacao',
+    SprayMode: 'modo',
+    // comuns aos dois
     AlertStmt: 'alerta',
     Quantity: 'quantidade',
     Decision: 'decisao',
-    Route: 'via',
     AlertLevel: 'nivel_alerta',
     Unit: 'unidade'
 };
 
 /** Alvos de referencia cruzada -> vocabularios de instancias vindos do modelo. */
 const XREF_ALIAS: Record<string, string> = {
+    // dominio clinico
     DrugDef: 'farmaco',
-    ConductDef: 'conduta',
     ProtocolDef: 'protocolo',
+    // dominio agricola
+    ProductDef: 'produto',
+    CultureDef: 'cultura',
+    AgroConductDef: 'conduta',
+    AgroSchemaDef: 'esquema',
+    // comuns aos dois
+    ConductDef: 'conduta',
     DataSchemaDef: 'esquema'
 };
 

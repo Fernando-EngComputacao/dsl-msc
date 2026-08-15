@@ -5,7 +5,14 @@
 
 import type { LangiumSharedCoreServices, LangiumCoreServices, LangiumGeneratedCoreServices, LangiumGeneratedSharedCoreServices, LanguageMetaData, Module } from 'langium';
 import { dslProjectAstReflection } from './ast.js';
-import { DslGrammar } from './grammar.js';
+import { AgroDroneGrammar, DslGrammar } from './grammar.js';
+
+export const AgroDroneLanguageMetaData = {
+    languageId: 'agro',
+    fileExtensions: ['.agro'],
+    caseInsensitive: false,
+    mode: 'development'
+} as const satisfies LanguageMetaData;
 
 export const DslLanguageMetaData = {
     languageId: 'dsl',
@@ -16,6 +23,12 @@ export const DslLanguageMetaData = {
 
 export const dslProjectGeneratedSharedModule: Module<LangiumSharedCoreServices, LangiumGeneratedSharedCoreServices> = {
     AstReflection: () => new dslProjectAstReflection()
+};
+
+export const AgroDroneGeneratedModule: Module<LangiumCoreServices, LangiumGeneratedCoreServices> = {
+    Grammar: () => AgroDroneGrammar(),
+    LanguageMetaData: () => AgroDroneLanguageMetaData,
+    parser: {}
 };
 
 export const DslGeneratedModule: Module<LangiumCoreServices, LangiumGeneratedCoreServices> = {

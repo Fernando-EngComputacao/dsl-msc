@@ -31,8 +31,28 @@ from bnf import load_bnf, parse_bnf, build_parser, to_lark, to_gbnf  # noqa: E40
 from grammar_from_kg import gramatica_do_subgrafo  # noqa: E402
 from prompt_builder import carregar_exemplos, montar_prompt  # noqa: E402
 
-GRAMMAR_PATH = os.path.join(BASE_DIR, "grammar", "advanced_icu.bnf")
-EXAMPLES_PATH = os.path.join(BASE_DIR, "data", "exemplos_icu.jsonl")
+# O dominio e escolhido na subida do servico. A gramatica e os exemplares mudam;
+# a maquinaria (poda, mascaramento, verificacao) e a mesma nos dois — e essa
+# indiferenca ao dominio e o que sustenta a generalidade da arquitetura.
+DOMINIO = os.environ.get("SPC_CML_DOMINIO", "medico")
+_GRAMATICA_PADRAO = {
+    "medico": "advanced_icu.bnf",
+    "agro": "agro_drone.bnf",
+}.get(DOMINIO, "advanced_icu.bnf")
+_EXEMPLOS_PADRAO = {
+    "medico": "exemplos_icu.jsonl",
+    "agro": "exemplos_agro.jsonl",
+}.get(DOMINIO, "exemplos_icu.jsonl")
+
+GRAMMAR_PATH = os.environ.get(
+    "SPC_CML_GRAMMAR", os.path.join(BASE_DIR, "grammar", _GRAMATICA_PADRAO)
+)
+EXAMPLES_PATH = os.environ.get(
+    "SPC_CML_EXAMPLES", os.path.join(BASE_DIR, "data", _EXEMPLOS_PADRAO)
+)
+
+# A regra inicial da BNF: `plano` na DSL clinica, `missao` na agricola.
+INICIO = os.environ.get("SPC_CML_INICIO", "missao" if DOMINIO == "agro" else "plano")
 MODEL_ID = os.environ.get("SPC_CML_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
 
 # Backend de decodificacao restrita. Os dois mascaram logits sobre a MESMA
@@ -64,7 +84,7 @@ app = FastAPI(title="SPC-CML — decodificacao restrita", version="2.0")
 
 # 1. Gramatica completa G, derivada da DSL local.
 RULES = load_bnf(GRAMMAR_PATH)
-PARSER = build_parser(RULES, start="plano")
+PARSER = build_parser(RULES, start=INICIO)
 
 # 2. Exemplares few-shot com G[y] derivado automaticamente de cada saida.
 EXEMPLOS = carregar_exemplos(EXAMPLES_PATH, RULES, PARSER)
@@ -107,7 +127,7 @@ def _gerar(prompt: str, regras_hat: dict) -> str:
     if BACKEND == "outlines":
         import outlines
 
-        return outlines.generate.cfg(get_model(), to_lark(regras_hat))(prompt)
+        return outlines.generate.cfg(get_model(), to_lark(regras_hat, start=INICIO))(prompt)
 
     from llama_cpp import LlamaGrammar
 
@@ -127,7 +147,7 @@ def _gerar(prompt: str, regras_hat: dict) -> str:
     saida = llm(
         prompt,
         grammar=LlamaGrammar.from_string(
-            to_gbnf(regras_hat, start="plano", max_itens=MAX_ITENS), verbose=False
+            to_gbnf(regras_hat, start=INICIO, max_itens=MAX_ITENS), verbose=False
         ),
         max_tokens=MAX_TOKENS,
         temperature=TEMPERATURA,
@@ -163,9 +183,9 @@ def _gramatica_efetiva(subgrafo: dict):
     """
     if not subgrafo:
         return RULES, None
-    texto = gramatica_do_subgrafo(subgrafo, RULES)
+    texto = gramatica_do_subgrafo(subgrafo, RULES, inicio=INICIO)
     regras = parse_bnf(texto)
-    if "plano" not in regras:
+    if INICIO not in regras:
         raise HTTPException(
             status_code=422,
             detail="A poda eliminou o simbolo inicial: o contexto nao admite plano algum.",
@@ -179,6 +199,8 @@ def health():
         "status": "ok",
         "regras_em_G": len(RULES),
         "exemplares_few_shot": len(EXEMPLOS),
+        "dominio": DOMINIO,
+        "inicio": INICIO,
         "backend": BACKEND,
         "modelo": MODEL_ID if BACKEND == "outlines" else f"{GGUF_REPO}/{GGUF_FILE}",
         "modelo_carregado": _modelo_carregado(),
@@ -188,7 +210,7 @@ def health():
 @app.get("/grammar")
 def grammar():
     """Expoe G nos formatos consumidos pelos dois caminhos de decodificacao."""
-    return {"lark": to_lark(RULES), "gbnf": to_gbnf(RULES, start="plano")}
+    return {"lark": to_lark(RULES, start=INICIO), "gbnf": to_gbnf(RULES, start=INICIO)}
 
 
 @app.post("/verify")
@@ -199,7 +221,7 @@ def verify(req: VerifyRequest):
     admitem mascaramento de logits.
     """
     regras, _ = _gramatica_efetiva(req.subgrafo_regras)
-    parser = build_parser(regras, start="plano")
+    parser = build_parser(regras, start=INICIO)
     try:
         parser.parse(req.plano)
         return {"valido": True}
@@ -222,7 +244,7 @@ def generate_constrained(req: ICURequest):
 
     # Verificacao independente da geracao: mesmo com mascaramento de logits, a
     # saida e reparseada antes de sair do servico.
-    parser_hat = build_parser(regras_hat, start="plano")
+    parser_hat = build_parser(regras_hat, start=INICIO)
     try:
         parser_hat.parse(resultado)
         valido = True

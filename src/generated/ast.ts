@@ -6,234 +6,634 @@
 /* eslint-disable */
 import * as langium from 'langium';
 
+/** Contains the reachable terminals & keywords and all available types of the 'AgroDrone' language. */
+export namespace AgroDrone {
+
+    export const Terminals = {
+        ID: /[_a-zA-Z][\w_]*/,
+        STRING: /"[^"]*"|'[^']*'/,
+        NUMBER: /-?[0-9]+(\.[0-9]+)?/,
+        WS: /\s+/,
+        ML_COMMENT: /\/\*[\s\S]*?\*\//,
+        SL_COMMENT: /\/\/[^\n\r]*/,
+    };
+
+    export type TerminalNames = keyof typeof Terminals;
+
+    export type KeywordNames =
+        | "!="
+        | "%"
+        | "("
+        | ")"
+        | ","
+        | "->"
+        | "<"
+        | "<="
+        | "=="
+        | ">"
+        | ">="
+        | "ACIONAR_AGRONOMO"
+        | "AGRONOMO_RESPONSAVEL"
+        | "AGUARDAR_JANELA"
+        | "ATENCAO"
+        | "AUMENTAR_VAZAO"
+        | "BAIXO_VOLUME"
+        | "BARRA_TOTAL"
+        | "BLOQUEANTE"
+        | "BLOQUEAR_APLICACAO"
+        | "C"
+        | "CENTRO_METEOROLOGICO"
+        | "CRITICO"
+        | "FAIXA_DIRIGIDA"
+        | "I"
+        | "II"
+        | "III"
+        | "INFORMATIVO"
+        | "INICIAR_APLICACAO"
+        | "IV"
+        | "L"
+        | "L/ha"
+        | "MANTER_BLOQUEADO"
+        | "MANTER_VAZAO"
+        | "NDVI"
+        | "OPERADOR_DRONE"
+        | "ORGAO_AMBIENTAL"
+        | "PONTO_LOCALIZADO"
+        | "REDUZIR_VAZAO"
+        | "SOLICITAR_VARREDURA"
+        | "SUBSTITUIR"
+        | "SUSPENDER"
+        | "["
+        | "]"
+        | "acaricida"
+        | "adjuvante"
+        | "ajusta"
+        | "alerta"
+        | "alertas"
+        | "alta"
+        | "altura_voo"
+        | "alvo:"
+        | "aplicacao"
+        | "area"
+        | "auditoria"
+        | "biologico"
+        | "bloquear_aplicacao"
+        | "carencia"
+        | "chuva_prevista"
+        | "ciclo"
+        | "classe"
+        | "conduta"
+        | "criterio"
+        | "cultura"
+        | "decisao"
+        | "decisoes"
+        | "deriva"
+        | "dias"
+        | "distancia_cultura_sensivel"
+        | "distancia_manancial"
+        | "dose"
+        | "escalonar:"
+        | "esquema_dados"
+        | "esquema_referencia"
+        | "estadio"
+        | "excecao"
+        | "exige"
+        | "fator"
+        | "fertilizante_foliar"
+        | "fungicida"
+        | "g/ha"
+        | "gatilho:"
+        | "gota_minima"
+        | "gravidade"
+        | "h"
+        | "herbicida"
+        | "hora"
+        | "incompativel:"
+        | "indicacao"
+        | "indice"
+        | "infestacao"
+        | "inseticida"
+        | "janela:"
+        | "justificativa"
+        | "justificativa_obrigatoria"
+        | "kg"
+        | "kg/ha"
+        | "km"
+        | "km/h"
+        | "leve"
+        | "m"
+        | "mL/ha"
+        | "maxima"
+        | "micra"
+        | "min"
+        | "minima"
+        | "missao"
+        | "mm"
+        | "moderada"
+        | "modo"
+        | "modos"
+        | "motivo"
+        | "nao"
+        | "para"
+        | "produto"
+        | "proibe"
+        | "proibida"
+        | "proibido:"
+        | "recomenda"
+        | "recomendada"
+        | "reentrada"
+        | "referencia"
+        | "registro_mapa"
+        | "regra"
+        | "regra_global:"
+        | "regra_seguranca:"
+        | "requer_dupla_checagem"
+        | "se"
+        | "sequencia"
+        | "severidade"
+        | "sim"
+        | "talhao"
+        | "temperatura"
+        | "temperatura_foliar"
+        | "toxicologica"
+        | "umidade"
+        | "umidade_foliar"
+        | "umidade_minima"
+        | "vazao"
+        | "vento"
+        | "veta"
+        | "{"
+        | "}";
+
+    export type TokenNames = TerminalNames | KeywordNames;
+
+    export type AstType = {
+        AgroBlockRule: AgroBlockRule
+        AgroConductDef: AgroConductDef
+        AgroElement: AgroElement
+        AgroForbidAttr: AgroForbidAttr
+        AgroModel: AgroModel
+        AgroRecommendAttr: AgroRecommendAttr
+        AgroSafetyRule: AgroSafetyRule
+        AgroSchemaDef: AgroSchemaDef
+        AlertStmt: AlertStmt
+        ApplicationStmt: ApplicationStmt
+        AreaAdjust: AreaAdjust
+        AreaDef: AreaDef
+        AreaForbid: AreaForbid
+        AreaRequire: AreaRequire
+        AreaRestriction: AreaRestriction
+        BanConditionAttr: BanConditionAttr
+        CarencyAttr: CarencyAttr
+        CultureAttribute: CultureAttribute
+        CultureDef: CultureDef
+        DoseAttr: DoseAttr
+        DriftAttr: DriftAttr
+        EscalationAttr: EscalationAttr
+        GlobalRule: GlobalRule
+        IncompatAttr: IncompatAttr
+        MissionCommand: MissionCommand
+        ProductAttribute: ProductAttribute
+        ProductDef: ProductDef
+        Quantity: Quantity
+        TargetAttr: TargetAttr
+        TriggerAttr: TriggerAttr
+        WindowAttr: WindowAttr
+    }
+
+}
+
+/** Contains the reachable terminals & keywords and all available types of the 'Dsl' language. */
+export namespace Dsl {
+
+    export const Terminals = {
+        ID: /[_a-zA-Z][\w_]*/,
+        STRING: /"[^"]*"|'[^']*'/,
+        NUMBER: /-?[0-9]+(\.[0-9]+)?/,
+        WS: /\s+/,
+        ML_COMMENT: /\/\*[\s\S]*?\*\//,
+        SL_COMMENT: /\/\/[^\n\r]*/,
+    };
+
+    export type TerminalNames = keyof typeof Terminals;
+
+    export type KeywordNames =
+        | "!="
+        | "%"
+        | "("
+        | ")"
+        | ","
+        | "->"
+        | "10^3/uL"
+        | "<"
+        | "<="
+        | "=="
+        | ">"
+        | ">="
+        | "ACESSO_CENTRAL"
+        | "ACESSO_PERIFERICO"
+        | "AJUSTAR_DOSE"
+        | "ATENCAO"
+        | "AUMENTAR_VAZAO"
+        | "BLOQUEANTE"
+        | "BLOQUEAR_ORDEM"
+        | "C"
+        | "COMISSAO_INFECCAO"
+        | "CRITICO"
+        | "EPIDURAL"
+        | "ESCALAR_EQUIPE"
+        | "FARMACIA_CLINICA"
+        | "FC"
+        | "FR"
+        | "Glasgow"
+        | "IM"
+        | "INALATORIA"
+        | "INFORMATIVO"
+        | "INICIAR_INFUSAO"
+        | "INR"
+        | "INTENSIVISTA"
+        | "INTRAOSSEO"
+        | "IV"
+        | "L"
+        | "MANTER_BLOQUEADO"
+        | "MANTER_VAZAO"
+        | "MEDICO_PLANTONISTA"
+        | "PAD"
+        | "PAM"
+        | "PAS"
+        | "PaO2_FiO2"
+        | "QTc"
+        | "RASS"
+        | "REDUZIR_VAZAO"
+        | "SC"
+        | "SNE"
+        | "SOFA"
+        | "SOLICITAR_EXAME"
+        | "SUBSTITUIR"
+        | "SUSPENDER"
+        | "SpO2"
+        | "TFG"
+        | "TIME_RESPOSTA_RAPIDA"
+        | "U/min"
+        | "UI"
+        | "UI/h"
+        | "UI/kg"
+        | "VO"
+        | "["
+        | "]"
+        | "a_cada"
+        | "ajusta"
+        | "ajuste_hepatico:"
+        | "ajuste_renal:"
+        | "alerta"
+        | "alertas"
+        | "alta"
+        | "alto_risco"
+        | "alvo"
+        | "analgesico_opioide"
+        | "antiarritmico"
+        | "anticoagulante"
+        | "anticonvulsivante"
+        | "antidoto"
+        | "antimicrobiano"
+        | "ataque"
+        | "atc"
+        | "auditoria"
+        | "aumentar_intervalo"
+        | "bilirrubina"
+        | "bloqueador_neuromuscular"
+        | "bloquear"
+        | "bloquear_incremento"
+        | "bomba"
+        | "bpm"
+        | "broncodilatador"
+        | "cid"
+        | "classe"
+        | "concentracao"
+        | "conduta"
+        | "contraindicada"
+        | "contraindicado:"
+        | "corticoide"
+        | "creatinina"
+        | "criterio"
+        | "debito_urinario"
+        | "decisao"
+        | "decisoes"
+        | "desfecho:"
+        | "desmame:"
+        | "dias"
+        | "diluicao"
+        | "diuretico"
+        | "dose"
+        | "eletrolito"
+        | "escalonar:"
+        | "esquema_dados"
+        | "esquema_referencia"
+        | "etapa"
+        | "excecao"
+        | "exige"
+        | "farmaco"
+        | "fator"
+        | "g"
+        | "g/dL"
+        | "gatilho:"
+        | "glicemia"
+        | "gravidade"
+        | "h"
+        | "hemoglobina"
+        | "idade"
+        | "indicacao"
+        | "inicial"
+        | "inotropico"
+        | "insulina"
+        | "interacao:"
+        | "irpm"
+        | "justificativa"
+        | "justificativa_obrigatoria"
+        | "lactato"
+        | "lasa:"
+        | "leve"
+        | "limite_leve"
+        | "limite_rigido"
+        | "mEq"
+        | "mEq/L"
+        | "mL"
+        | "mL/h"
+        | "mL/min"
+        | "manter"
+        | "manutencao"
+        | "maxima"
+        | "mcg"
+        | "mcg/kg"
+        | "mcg/kg/h"
+        | "mcg/kg/min"
+        | "mg"
+        | "mg/L"
+        | "mg/dL"
+        | "mg/h"
+        | "mg/kg"
+        | "mg/kg/h"
+        | "min"
+        | "minima"
+        | "mitigacao"
+        | "mmHg"
+        | "mmol"
+        | "mmol/L"
+        | "moderada"
+        | "monitorar:"
+        | "motivo"
+        | "ms"
+        | "nao"
+        | "ng/mL"
+        | "ordem"
+        | "paciente"
+        | "para"
+        | "peso"
+        | "plano"
+        | "plaquetas"
+        | "pontos"
+        | "populacao"
+        | "potassio"
+        | "prazo"
+        | "proibe"
+        | "protocolo"
+        | "qSOFA"
+        | "reavaliar_em"
+        | "recomenda"
+        | "recurso_fhir"
+        | "reduzir"
+        | "reduzir_dose"
+        | "referencia"
+        | "regra"
+        | "regra_global:"
+        | "regra_seguranca:"
+        | "requer_dupla_checagem"
+        | "reservatorio"
+        | "rxnorm"
+        | "se"
+        | "sedativo"
+        | "sequencia"
+        | "severidade"
+        | "sim"
+        | "snomed"
+        | "sodio"
+        | "substituir"
+        | "suspender"
+        | "temperatura"
+        | "titulacao"
+        | "vasopressor"
+        | "veta"
+        | "via"
+        | "vias"
+        | "{"
+        | "}";
+
+    export type TokenNames = TerminalNames | KeywordNames;
+
+    export type AstType = {
+        AlertStmt: AlertStmt
+        BlockRule: BlockRule
+        ConductDef: ConductDef
+        ContraindicationAttr: ContraindicationAttr
+        DataSchemaDef: DataSchemaDef
+        DilutionAttr: DilutionAttr
+        DoseLimitAttr: DoseLimitAttr
+        DrugAttribute: DrugAttribute
+        DrugDef: DrugDef
+        Element: Element
+        EscalationAttr: EscalationAttr
+        ForbidAttr: ForbidAttr
+        GlobalRule: GlobalRule
+        HepaticAdjustAttr: HepaticAdjustAttr
+        InteractionAttr: InteractionAttr
+        LasaAttr: LasaAttr
+        MedicalModel: MedicalModel
+        MonitorAttr: MonitorAttr
+        OrderStmt: OrderStmt
+        OutcomeAttr: OutcomeAttr
+        PlanCommand: PlanCommand
+        PopAdjust: PopAdjust
+        PopForbid: PopForbid
+        PopRequire: PopRequire
+        PopulationDef: PopulationDef
+        PopulationRestriction: PopulationRestriction
+        ProtocolAttribute: ProtocolAttribute
+        ProtocolDef: ProtocolDef
+        PumpLimitAttr: PumpLimitAttr
+        Quantity: Quantity
+        RecommendAttr: RecommendAttr
+        RenalAdjustAttr: RenalAdjustAttr
+        RouteAttr: RouteAttr
+        SafetyRule: SafetyRule
+        SnomedAttr: SnomedAttr
+        StepAttr: StepAttr
+        TitrationAttr: TitrationAttr
+        TriggerAttr: TriggerAttr
+        WeaningAttr: WeaningAttr
+    }
+
+}
+
+
+// the terminals, keywords and types of the whole 'dslProject' project
+
 export const dslProjectTerminals = {
-    ID: /[_a-zA-Z][\w_]*/,
-    STRING: /"[^"]*"|'[^']*'/,
-    NUMBER: /-?[0-9]+(\.[0-9]+)?/,
-    WS: /\s+/,
-    ML_COMMENT: /\/\*[\s\S]*?\*\//,
-    SL_COMMENT: /\/\/[^\n\r]*/,
+    ...AgroDrone.Terminals,
+    ...Dsl.Terminals,
 };
 
 export type dslProjectTerminalNames = keyof typeof dslProjectTerminals;
 
-export type dslProjectKeywordNames =
-    | "!="
-    | "%"
-    | "("
-    | ")"
-    | ","
-    | "->"
-    | "10^3/uL"
-    | "<"
-    | "<="
-    | "=="
-    | ">"
-    | ">="
-    | "ACESSO_CENTRAL"
-    | "ACESSO_PERIFERICO"
-    | "AJUSTAR_DOSE"
-    | "ATENCAO"
-    | "AUMENTAR_VAZAO"
-    | "BLOQUEANTE"
-    | "BLOQUEAR_ORDEM"
-    | "C"
-    | "COMISSAO_INFECCAO"
-    | "CRITICO"
-    | "EPIDURAL"
-    | "ESCALAR_EQUIPE"
-    | "FARMACIA_CLINICA"
-    | "FC"
-    | "FR"
-    | "Glasgow"
-    | "IM"
-    | "INALATORIA"
-    | "INFORMATIVO"
-    | "INICIAR_INFUSAO"
-    | "INR"
-    | "INTENSIVISTA"
-    | "INTRAOSSEO"
-    | "IV"
-    | "L"
-    | "MANTER_BLOQUEADO"
-    | "MANTER_VAZAO"
-    | "MEDICO_PLANTONISTA"
-    | "PAD"
-    | "PAM"
-    | "PAS"
-    | "PaO2_FiO2"
-    | "QTc"
-    | "RASS"
-    | "REDUZIR_VAZAO"
-    | "SC"
-    | "SNE"
-    | "SOFA"
-    | "SOLICITAR_EXAME"
-    | "SUBSTITUIR"
-    | "SUSPENDER"
-    | "SpO2"
-    | "TFG"
-    | "TIME_RESPOSTA_RAPIDA"
-    | "U/min"
-    | "UI"
-    | "UI/h"
-    | "UI/kg"
-    | "VO"
-    | "["
-    | "]"
-    | "a_cada"
-    | "ajusta"
-    | "ajuste_hepatico:"
-    | "ajuste_renal:"
-    | "alerta"
-    | "alertas"
-    | "alta"
-    | "alto_risco"
-    | "alvo"
-    | "analgesico_opioide"
-    | "antiarritmico"
-    | "anticoagulante"
-    | "anticonvulsivante"
-    | "antidoto"
-    | "antimicrobiano"
-    | "ataque"
-    | "atc"
-    | "auditoria"
-    | "aumentar_intervalo"
-    | "bilirrubina"
-    | "bloqueador_neuromuscular"
-    | "bloquear"
-    | "bloquear_incremento"
-    | "bomba"
-    | "bpm"
-    | "broncodilatador"
-    | "cid"
-    | "classe"
-    | "concentracao"
-    | "conduta"
-    | "contraindicada"
-    | "contraindicado:"
-    | "corticoide"
-    | "creatinina"
-    | "criterio"
-    | "debito_urinario"
-    | "decisao"
-    | "decisoes"
-    | "desfecho:"
-    | "desmame:"
-    | "dias"
-    | "diluicao"
-    | "diuretico"
-    | "dose"
-    | "eletrolito"
-    | "escalonar:"
-    | "esquema_dados"
-    | "esquema_referencia"
-    | "etapa"
-    | "excecao"
-    | "exige"
-    | "farmaco"
-    | "fator"
-    | "g"
-    | "g/dL"
-    | "gatilho:"
-    | "glicemia"
-    | "gravidade"
-    | "h"
-    | "hemoglobina"
-    | "idade"
-    | "indicacao"
-    | "inicial"
-    | "inotropico"
-    | "insulina"
-    | "interacao:"
-    | "irpm"
-    | "justificativa"
-    | "justificativa_obrigatoria"
-    | "lactato"
-    | "lasa:"
-    | "leve"
-    | "limite_leve"
-    | "limite_rigido"
-    | "mEq"
-    | "mEq/L"
-    | "mL"
-    | "mL/h"
-    | "mL/min"
-    | "manter"
-    | "manutencao"
-    | "maxima"
-    | "mcg"
-    | "mcg/kg"
-    | "mcg/kg/h"
-    | "mcg/kg/min"
-    | "mg"
-    | "mg/L"
-    | "mg/dL"
-    | "mg/h"
-    | "mg/kg"
-    | "mg/kg/h"
-    | "min"
-    | "minima"
-    | "mitigacao"
-    | "mmHg"
-    | "mmol"
-    | "mmol/L"
-    | "moderada"
-    | "monitorar:"
-    | "motivo"
-    | "ms"
-    | "nao"
-    | "ng/mL"
-    | "ordem"
-    | "paciente"
-    | "para"
-    | "peso"
-    | "plano"
-    | "plaquetas"
-    | "pontos"
-    | "populacao"
-    | "potassio"
-    | "prazo"
-    | "proibe"
-    | "protocolo"
-    | "qSOFA"
-    | "reavaliar_em"
-    | "recomenda"
-    | "recurso_fhir"
-    | "reduzir"
-    | "reduzir_dose"
-    | "referencia"
-    | "regra"
-    | "regra_global:"
-    | "regra_seguranca:"
-    | "requer_dupla_checagem"
-    | "reservatorio"
-    | "rxnorm"
-    | "se"
-    | "sedativo"
-    | "sequencia"
-    | "severidade"
-    | "sim"
-    | "snomed"
-    | "sodio"
-    | "substituir"
-    | "suspender"
-    | "temperatura"
-    | "titulacao"
-    | "vasopressor"
-    | "veta"
-    | "via"
-    | "vias"
-    | "{"
-    | "}";
+export type dslProjectKeywordNames = AgroDrone.KeywordNames | Dsl.KeywordNames;
 
 export type dslProjectTokenNames = dslProjectTerminalNames | dslProjectKeywordNames;
+
+export type dslProjectAstType = AgroDrone.AstType & Dsl.AstType
+
+
+// all type definitions of the the whole 'dslProject' project
 
 export type AdjustAction = 'aumentar_intervalo' | 'bloquear' | 'manter' | 'reduzir_dose' | 'substituir' | 'suspender';
 
 export function isAdjustAction(item: unknown): item is AdjustAction {
     return item === 'reduzir_dose' || item === 'aumentar_intervalo' || item === 'suspender' || item === 'substituir' || item === 'manter' || item === 'bloquear';
+}
+
+export interface AgroBlockRule extends langium.AstNode {
+    readonly $container: AgroModel;
+    readonly $type: 'AgroBlockRule';
+    operator: Operator;
+    parameter: SensorParameter;
+    product: langium.Reference<ProductDef>;
+    reason: string;
+    threshold: Quantity;
+}
+
+export const AgroBlockRule = {
+    $type: 'AgroBlockRule',
+    operator: 'operator',
+    parameter: 'parameter',
+    product: 'product',
+    reason: 'reason',
+    threshold: 'threshold'
+} as const;
+
+export function isAgroBlockRule(item: unknown): item is AgroBlockRule {
+    return reflection.isInstance(item, AgroBlockRule.$type);
+}
+
+export interface AgroConductDef extends langium.AstNode {
+    readonly $container: AgroSchemaDef;
+    readonly $type: 'AgroConductDef';
+    decision: Decision;
+    doubleCheck?: Bool;
+    mode?: SprayMode;
+    name: string;
+    requiresJustification?: Bool;
+}
+
+export const AgroConductDef = {
+    $type: 'AgroConductDef',
+    decision: 'decision',
+    doubleCheck: 'doubleCheck',
+    mode: 'mode',
+    name: 'name',
+    requiresJustification: 'requiresJustification'
+} as const;
+
+export function isAgroConductDef(item: unknown): item is AgroConductDef {
+    return reflection.isInstance(item, AgroConductDef.$type);
+}
+
+export type AgroElement = AgroSafetyRule | AgroSchemaDef | AreaDef | CultureDef | MissionCommand | ProductDef;
+
+export const AgroElement = {
+    $type: 'AgroElement'
+} as const;
+
+export function isAgroElement(item: unknown): item is AgroElement {
+    return reflection.isInstance(item, AgroElement.$type);
+}
+
+export interface AgroForbidAttr extends langium.AstNode {
+    readonly $container: CultureDef;
+    readonly $type: 'AgroForbidAttr';
+    product: langium.Reference<ProductDef>;
+    reason: string;
+}
+
+export const AgroForbidAttr = {
+    $type: 'AgroForbidAttr',
+    product: 'product',
+    reason: 'reason'
+} as const;
+
+export function isAgroForbidAttr(item: unknown): item is AgroForbidAttr {
+    return reflection.isInstance(item, AgroForbidAttr.$type);
+}
+
+export interface AgroModel extends langium.AstNode {
+    readonly $type: 'AgroModel';
+    elements: Array<AgroElement>;
+}
+
+export const AgroModel = {
+    $type: 'AgroModel',
+    elements: 'elements'
+} as const;
+
+export function isAgroModel(item: unknown): item is AgroModel {
+    return reflection.isInstance(item, AgroModel.$type);
+}
+
+export interface AgroRecommendAttr extends langium.AstNode {
+    readonly $container: CultureDef;
+    readonly $type: 'AgroRecommendAttr';
+    indication?: string;
+    product: langium.Reference<ProductDef>;
+}
+
+export const AgroRecommendAttr = {
+    $type: 'AgroRecommendAttr',
+    indication: 'indication',
+    product: 'product'
+} as const;
+
+export function isAgroRecommendAttr(item: unknown): item is AgroRecommendAttr {
+    return reflection.isInstance(item, AgroRecommendAttr.$type);
+}
+
+export type AgroSafetyRule = AgroBlockRule | GlobalRule;
+
+export const AgroSafetyRule = {
+    $type: 'AgroSafetyRule'
+} as const;
+
+export function isAgroSafetyRule(item: unknown): item is AgroSafetyRule {
+    return reflection.isInstance(item, AgroSafetyRule.$type);
+}
+
+export interface AgroSchemaDef extends langium.AstNode {
+    readonly $container: AgroModel;
+    readonly $type: 'AgroSchemaDef';
+    alerts: Array<AlertLevel>;
+    conducts: Array<AgroConductDef>;
+    decisions: Array<Decision>;
+    modes: Array<SprayMode>;
+    name: string;
+}
+
+export const AgroSchemaDef = {
+    $type: 'AgroSchemaDef',
+    alerts: 'alerts',
+    conducts: 'conducts',
+    decisions: 'decisions',
+    modes: 'modes',
+    name: 'name'
+} as const;
+
+export function isAgroSchemaDef(item: unknown): item is AgroSchemaDef {
+    return reflection.isInstance(item, AgroSchemaDef.$type);
 }
 
 export type AlertLevel = 'ATENCAO' | 'BLOQUEANTE' | 'CRITICO' | 'INFORMATIVO';
@@ -243,7 +643,7 @@ export function isAlertLevel(item: unknown): item is AlertLevel {
 }
 
 export interface AlertStmt extends langium.AstNode {
-    readonly $container: PlanCommand;
+    readonly $container: MissionCommand | PlanCommand;
     readonly $type: 'AlertStmt';
     level: AlertLevel;
     message: string;
@@ -259,6 +659,126 @@ export const AlertStmt = {
 
 export function isAlertStmt(item: unknown): item is AlertStmt {
     return reflection.isInstance(item, AlertStmt.$type);
+}
+
+export interface ApplicationStmt extends langium.AstNode {
+    readonly $container: MissionCommand;
+    readonly $type: 'ApplicationStmt';
+    decision: Decision;
+    justification?: string;
+    mode: SprayMode;
+    product: langium.Reference<ProductDef>;
+    rate: Quantity;
+}
+
+export const ApplicationStmt = {
+    $type: 'ApplicationStmt',
+    decision: 'decision',
+    justification: 'justification',
+    mode: 'mode',
+    product: 'product',
+    rate: 'rate'
+} as const;
+
+export function isApplicationStmt(item: unknown): item is ApplicationStmt {
+    return reflection.isInstance(item, ApplicationStmt.$type);
+}
+
+export interface AreaAdjust extends langium.AstNode {
+    readonly $container: AreaDef;
+    readonly $type: 'AreaAdjust';
+    factor: number;
+    product: langium.Reference<ProductDef>;
+    reason?: string;
+}
+
+export const AreaAdjust = {
+    $type: 'AreaAdjust',
+    factor: 'factor',
+    product: 'product',
+    reason: 'reason'
+} as const;
+
+export function isAreaAdjust(item: unknown): item is AreaAdjust {
+    return reflection.isInstance(item, AreaAdjust.$type);
+}
+
+export interface AreaDef extends langium.AstNode {
+    readonly $container: AgroModel;
+    readonly $type: 'AreaDef';
+    criterion: string;
+    name: string;
+    restrictions: Array<AreaRestriction>;
+}
+
+export const AreaDef = {
+    $type: 'AreaDef',
+    criterion: 'criterion',
+    name: 'name',
+    restrictions: 'restrictions'
+} as const;
+
+export function isAreaDef(item: unknown): item is AreaDef {
+    return reflection.isInstance(item, AreaDef.$type);
+}
+
+export interface AreaForbid extends langium.AstNode {
+    readonly $container: AreaDef;
+    readonly $type: 'AreaForbid';
+    product: langium.Reference<ProductDef>;
+    reason: string;
+}
+
+export const AreaForbid = {
+    $type: 'AreaForbid',
+    product: 'product',
+    reason: 'reason'
+} as const;
+
+export function isAreaForbid(item: unknown): item is AreaForbid {
+    return reflection.isInstance(item, AreaForbid.$type);
+}
+
+export interface AreaRequire extends langium.AstNode {
+    readonly $container: AreaDef;
+    readonly $type: 'AreaRequire';
+    requirement: string;
+}
+
+export const AreaRequire = {
+    $type: 'AreaRequire',
+    requirement: 'requirement'
+} as const;
+
+export function isAreaRequire(item: unknown): item is AreaRequire {
+    return reflection.isInstance(item, AreaRequire.$type);
+}
+
+export type AreaRestriction = AreaAdjust | AreaForbid | AreaRequire;
+
+export const AreaRestriction = {
+    $type: 'AreaRestriction'
+} as const;
+
+export function isAreaRestriction(item: unknown): item is AreaRestriction {
+    return reflection.isInstance(item, AreaRestriction.$type);
+}
+
+export interface BanConditionAttr extends langium.AstNode {
+    readonly $container: ProductDef;
+    readonly $type: 'BanConditionAttr';
+    condition: string;
+    exception?: string;
+}
+
+export const BanConditionAttr = {
+    $type: 'BanConditionAttr',
+    condition: 'condition',
+    exception: 'exception'
+} as const;
+
+export function isBanConditionAttr(item: unknown): item is BanConditionAttr {
+    return reflection.isInstance(item, BanConditionAttr.$type);
 }
 
 export interface BlockRule extends langium.AstNode {
@@ -288,6 +808,23 @@ export type Bool = 'nao' | 'sim';
 
 export function isBool(item: unknown): item is Bool {
     return item === 'sim' || item === 'nao';
+}
+
+export interface CarencyAttr extends langium.AstNode {
+    readonly $container: ProductDef;
+    readonly $type: 'CarencyAttr';
+    period: Quantity;
+    reentry?: Quantity;
+}
+
+export const CarencyAttr = {
+    $type: 'CarencyAttr',
+    period: 'period',
+    reentry: 'reentry'
+} as const;
+
+export function isCarencyAttr(item: unknown): item is CarencyAttr {
+    return reflection.isInstance(item, CarencyAttr.$type);
 }
 
 export type ClinicalParameter = 'FC' | 'FR' | 'Glasgow' | 'INR' | 'PAD' | 'PAM' | 'PAS' | 'PaO2_FiO2' | 'QTc' | 'RASS' | 'SOFA' | 'SpO2' | 'TFG' | 'bilirrubina' | 'creatinina' | 'debito_urinario' | 'glicemia' | 'hemoglobina' | 'idade' | 'lactato' | 'peso' | 'plaquetas' | 'potassio' | 'qSOFA' | 'sodio' | 'temperatura';
@@ -338,6 +875,35 @@ export function isContraindicationAttr(item: unknown): item is ContraindicationA
     return reflection.isInstance(item, ContraindicationAttr.$type);
 }
 
+export type CultureAttribute = AgroForbidAttr | AgroRecommendAttr | EscalationAttr | TriggerAttr | WindowAttr;
+
+export const CultureAttribute = {
+    $type: 'CultureAttribute'
+} as const;
+
+export function isCultureAttribute(item: unknown): item is CultureAttribute {
+    return reflection.isInstance(item, CultureAttribute.$type);
+}
+
+export interface CultureDef extends langium.AstNode {
+    readonly $container: AgroModel;
+    readonly $type: 'CultureDef';
+    attributes: Array<CultureAttribute>;
+    cycle: string;
+    name: string;
+}
+
+export const CultureDef = {
+    $type: 'CultureDef',
+    attributes: 'attributes',
+    cycle: 'cycle',
+    name: 'name'
+} as const;
+
+export function isCultureDef(item: unknown): item is CultureDef {
+    return reflection.isInstance(item, CultureDef.$type);
+}
+
 export interface DataSchemaDef extends langium.AstNode {
     readonly $container: MedicalModel;
     readonly $type: 'DataSchemaDef';
@@ -384,6 +950,23 @@ export function isDilutionAttr(item: unknown): item is DilutionAttr {
     return reflection.isInstance(item, DilutionAttr.$type);
 }
 
+export interface DoseAttr extends langium.AstNode {
+    readonly $container: ProductDef;
+    readonly $type: 'DoseAttr';
+    kind: DoseKind;
+    value: Quantity;
+}
+
+export const DoseAttr = {
+    $type: 'DoseAttr',
+    kind: 'kind',
+    value: 'value'
+} as const;
+
+export function isDoseAttr(item: unknown): item is DoseAttr {
+    return reflection.isInstance(item, DoseAttr.$type);
+}
+
 export type DoseKind = 'ataque' | 'inicial' | 'manutencao' | 'maxima' | 'minima';
 
 export function isDoseKind(item: unknown): item is DoseKind {
@@ -405,6 +988,23 @@ export const DoseLimitAttr = {
 
 export function isDoseLimitAttr(item: unknown): item is DoseLimitAttr {
     return reflection.isInstance(item, DoseLimitAttr.$type);
+}
+
+export interface DriftAttr extends langium.AstNode {
+    readonly $container: ProductDef;
+    readonly $type: 'DriftAttr';
+    droplet?: Quantity;
+    risk: Severity;
+}
+
+export const DriftAttr = {
+    $type: 'DriftAttr',
+    droplet: 'droplet',
+    risk: 'risk'
+} as const;
+
+export function isDriftAttr(item: unknown): item is DriftAttr {
+    return reflection.isInstance(item, DriftAttr.$type);
 }
 
 export type DrugAttribute = ContraindicationAttr | DilutionAttr | DoseLimitAttr | HepaticAdjustAttr | InteractionAttr | LasaAttr | MonitorAttr | PumpLimitAttr | RenalAdjustAttr | RouteAttr | TitrationAttr;
@@ -459,11 +1059,11 @@ export function isElement(item: unknown): item is Element {
 }
 
 export interface EscalationAttr extends langium.AstNode {
-    readonly $container: ProtocolDef;
+    readonly $container: CultureDef | ProtocolDef;
     readonly $type: 'EscalationAttr';
     detail: string;
     operator: Operator;
-    parameter: ClinicalParameter;
+    parameter: ClinicalParameter | SensorParameter;
     target: EscalationTarget;
     value: Quantity;
 }
@@ -505,7 +1105,7 @@ export function isForbidAttr(item: unknown): item is ForbidAttr {
 }
 
 export interface GlobalRule extends langium.AstNode {
-    readonly $container: MedicalModel;
+    readonly $container: AgroModel | MedicalModel;
     readonly $type: 'GlobalRule';
     description: string;
     reference?: string;
@@ -540,6 +1140,27 @@ export const HepaticAdjustAttr = {
 
 export function isHepaticAdjustAttr(item: unknown): item is HepaticAdjustAttr {
     return reflection.isInstance(item, HepaticAdjustAttr.$type);
+}
+
+export interface IncompatAttr extends langium.AstNode {
+    readonly $container: ProductDef;
+    readonly $type: 'IncompatAttr';
+    conduct?: string;
+    mechanism: string;
+    other: langium.Reference<ProductDef>;
+    severity: Severity;
+}
+
+export const IncompatAttr = {
+    $type: 'IncompatAttr',
+    conduct: 'conduct',
+    mechanism: 'mechanism',
+    other: 'other',
+    severity: 'severity'
+} as const;
+
+export function isIncompatAttr(item: unknown): item is IncompatAttr {
+    return reflection.isInstance(item, IncompatAttr.$type);
 }
 
 export interface InteractionAttr extends langium.AstNode {
@@ -592,6 +1213,35 @@ export const MedicalModel = {
 
 export function isMedicalModel(item: unknown): item is MedicalModel {
     return reflection.isInstance(item, MedicalModel.$type);
+}
+
+export interface MissionCommand extends langium.AstNode {
+    readonly $container: AgroModel;
+    readonly $type: 'MissionCommand';
+    alerts: Array<AlertStmt>;
+    applications: Array<ApplicationStmt>;
+    audit: string;
+    culture: langium.Reference<CultureDef>;
+    name: string;
+    plot: string;
+    schema: langium.Reference<AgroSchemaDef>;
+    sequence: Array<langium.Reference<AgroConductDef>>;
+}
+
+export const MissionCommand = {
+    $type: 'MissionCommand',
+    alerts: 'alerts',
+    applications: 'applications',
+    audit: 'audit',
+    culture: 'culture',
+    name: 'name',
+    plot: 'plot',
+    schema: 'schema',
+    sequence: 'sequence'
+} as const;
+
+export function isMissionCommand(item: unknown): item is MissionCommand {
+    return reflection.isInstance(item, MissionCommand.$type);
 }
 
 export interface MonitorAttr extends langium.AstNode {
@@ -768,6 +1418,45 @@ export function isPopulationRestriction(item: unknown): item is PopulationRestri
     return reflection.isInstance(item, PopulationRestriction.$type);
 }
 
+export type ProductAttribute = BanConditionAttr | CarencyAttr | DoseAttr | DriftAttr | IncompatAttr | TargetAttr;
+
+export const ProductAttribute = {
+    $type: 'ProductAttribute'
+} as const;
+
+export function isProductAttribute(item: unknown): item is ProductAttribute {
+    return reflection.isInstance(item, ProductAttribute.$type);
+}
+
+export type ProductClass = 'acaricida' | 'adjuvante' | 'biologico' | 'fertilizante_foliar' | 'fungicida' | 'herbicida' | 'inseticida';
+
+export function isProductClass(item: unknown): item is ProductClass {
+    return item === 'herbicida' || item === 'fungicida' || item === 'inseticida' || item === 'acaricida' || item === 'adjuvante' || item === 'fertilizante_foliar' || item === 'biologico';
+}
+
+export interface ProductDef extends langium.AstNode {
+    readonly $container: AgroModel;
+    readonly $type: 'ProductDef';
+    attributes: Array<ProductAttribute>;
+    mapa: string;
+    name: string;
+    productClass: ProductClass;
+    toxicity: ToxClass;
+}
+
+export const ProductDef = {
+    $type: 'ProductDef',
+    attributes: 'attributes',
+    mapa: 'mapa',
+    name: 'name',
+    productClass: 'productClass',
+    toxicity: 'toxicity'
+} as const;
+
+export function isProductDef(item: unknown): item is ProductDef {
+    return reflection.isInstance(item, ProductDef.$type);
+}
+
 export type ProtocolAttribute = EscalationAttr | ForbidAttr | OutcomeAttr | RecommendAttr | SnomedAttr | StepAttr | TriggerAttr | WeaningAttr;
 
 export const ProtocolAttribute = {
@@ -817,7 +1506,7 @@ export function isPumpLimitAttr(item: unknown): item is PumpLimitAttr {
 }
 
 export interface Quantity extends langium.AstNode {
-    readonly $container: BlockRule | DilutionAttr | DoseLimitAttr | EscalationAttr | MonitorAttr | OrderStmt | OutcomeAttr | PumpLimitAttr | RenalAdjustAttr | StepAttr | TitrationAttr | TriggerAttr | WeaningAttr;
+    readonly $container: AgroBlockRule | ApplicationStmt | BlockRule | CarencyAttr | DilutionAttr | DoseAttr | DoseLimitAttr | DriftAttr | EscalationAttr | MonitorAttr | OrderStmt | OutcomeAttr | PumpLimitAttr | RenalAdjustAttr | StepAttr | TitrationAttr | TriggerAttr | WeaningAttr | WindowAttr;
     readonly $type: 'Quantity';
     unit: Unit;
     value: number;
@@ -904,6 +1593,12 @@ export function isSafetyRule(item: unknown): item is SafetyRule {
     return reflection.isInstance(item, SafetyRule.$type);
 }
 
+export type SensorParameter = 'NDVI' | 'altura_voo' | 'chuva_prevista' | 'distancia_cultura_sensivel' | 'distancia_manancial' | 'hora' | 'infestacao' | 'temperatura' | 'temperatura_foliar' | 'umidade' | 'umidade_foliar' | 'vento';
+
+export function isSensorParameter(item: unknown): item is SensorParameter {
+    return item === 'vento' || item === 'temperatura' || item === 'umidade' || item === 'NDVI' || item === 'umidade_foliar' || item === 'temperatura_foliar' || item === 'distancia_manancial' || item === 'distancia_cultura_sensivel' || item === 'chuva_prevista' || item === 'altura_voo' || item === 'infestacao' || item === 'hora';
+}
+
 export type Severity = 'alta' | 'contraindicada' | 'leve' | 'moderada';
 
 export function isSeverity(item: unknown): item is Severity {
@@ -925,6 +1620,12 @@ export function isSnomedAttr(item: unknown): item is SnomedAttr {
     return reflection.isInstance(item, SnomedAttr.$type);
 }
 
+export type SprayMode = 'BAIXO_VOLUME' | 'BARRA_TOTAL' | 'FAIXA_DIRIGIDA' | 'PONTO_LOCALIZADO';
+
+export function isSprayMode(item: unknown): item is SprayMode {
+    return item === 'BARRA_TOTAL' || item === 'FAIXA_DIRIGIDA' || item === 'PONTO_LOCALIZADO' || item === 'BAIXO_VOLUME';
+}
+
 export interface StepAttr extends langium.AstNode {
     readonly $container: ProtocolDef;
     readonly $type: 'StepAttr';
@@ -942,6 +1643,23 @@ export const StepAttr = {
 
 export function isStepAttr(item: unknown): item is StepAttr {
     return reflection.isInstance(item, StepAttr.$type);
+}
+
+export interface TargetAttr extends langium.AstNode {
+    readonly $container: ProductDef;
+    readonly $type: 'TargetAttr';
+    stage?: string;
+    target: string;
+}
+
+export const TargetAttr = {
+    $type: 'TargetAttr',
+    stage: 'stage',
+    target: 'target'
+} as const;
+
+export function isTargetAttr(item: unknown): item is TargetAttr {
+    return reflection.isInstance(item, TargetAttr.$type);
 }
 
 export interface TitrationAttr extends langium.AstNode {
@@ -963,12 +1681,18 @@ export function isTitrationAttr(item: unknown): item is TitrationAttr {
     return reflection.isInstance(item, TitrationAttr.$type);
 }
 
+export type ToxClass = 'I' | 'II' | 'III' | 'IV';
+
+export function isToxClass(item: unknown): item is ToxClass {
+    return item === 'I' || item === 'II' || item === 'III' || item === 'IV';
+}
+
 export interface TriggerAttr extends langium.AstNode {
-    readonly $container: ProtocolDef;
+    readonly $container: CultureDef | ProtocolDef;
     readonly $type: 'TriggerAttr';
     action: string;
     operator: Operator;
-    parameter: ClinicalParameter;
+    parameter: ClinicalParameter | SensorParameter;
     value: Quantity;
 }
 
@@ -1009,50 +1733,141 @@ export function isWeaningAttr(item: unknown): item is WeaningAttr {
     return reflection.isInstance(item, WeaningAttr.$type);
 }
 
-export type dslProjectAstType = {
-    AlertStmt: AlertStmt
-    BlockRule: BlockRule
-    ConductDef: ConductDef
-    ContraindicationAttr: ContraindicationAttr
-    DataSchemaDef: DataSchemaDef
-    DilutionAttr: DilutionAttr
-    DoseLimitAttr: DoseLimitAttr
-    DrugAttribute: DrugAttribute
-    DrugDef: DrugDef
-    Element: Element
-    EscalationAttr: EscalationAttr
-    ForbidAttr: ForbidAttr
-    GlobalRule: GlobalRule
-    HepaticAdjustAttr: HepaticAdjustAttr
-    InteractionAttr: InteractionAttr
-    LasaAttr: LasaAttr
-    MedicalModel: MedicalModel
-    MonitorAttr: MonitorAttr
-    OrderStmt: OrderStmt
-    OutcomeAttr: OutcomeAttr
-    PlanCommand: PlanCommand
-    PopAdjust: PopAdjust
-    PopForbid: PopForbid
-    PopRequire: PopRequire
-    PopulationDef: PopulationDef
-    PopulationRestriction: PopulationRestriction
-    ProtocolAttribute: ProtocolAttribute
-    ProtocolDef: ProtocolDef
-    PumpLimitAttr: PumpLimitAttr
-    Quantity: Quantity
-    RecommendAttr: RecommendAttr
-    RenalAdjustAttr: RenalAdjustAttr
-    RouteAttr: RouteAttr
-    SafetyRule: SafetyRule
-    SnomedAttr: SnomedAttr
-    StepAttr: StepAttr
-    TitrationAttr: TitrationAttr
-    TriggerAttr: TriggerAttr
-    WeaningAttr: WeaningAttr
+export interface WindowAttr extends langium.AstNode {
+    readonly $container: CultureDef;
+    readonly $type: 'WindowAttr';
+    description: string;
+    minHumidity?: Quantity;
+}
+
+export const WindowAttr = {
+    $type: 'WindowAttr',
+    description: 'description',
+    minHumidity: 'minHumidity'
+} as const;
+
+export function isWindowAttr(item: unknown): item is WindowAttr {
+    return reflection.isInstance(item, WindowAttr.$type);
 }
 
 export class dslProjectAstReflection extends langium.AbstractAstReflection {
     override readonly types = {
+        AgroBlockRule: {
+            name: AgroBlockRule.$type,
+            properties: {
+                operator: {
+                    name: AgroBlockRule.operator
+                },
+                parameter: {
+                    name: AgroBlockRule.parameter
+                },
+                product: {
+                    name: AgroBlockRule.product,
+                    referenceType: ProductDef.$type
+                },
+                reason: {
+                    name: AgroBlockRule.reason
+                },
+                threshold: {
+                    name: AgroBlockRule.threshold
+                }
+            },
+            superTypes: [AgroSafetyRule.$type]
+        },
+        AgroConductDef: {
+            name: AgroConductDef.$type,
+            properties: {
+                decision: {
+                    name: AgroConductDef.decision
+                },
+                doubleCheck: {
+                    name: AgroConductDef.doubleCheck
+                },
+                mode: {
+                    name: AgroConductDef.mode
+                },
+                name: {
+                    name: AgroConductDef.name
+                },
+                requiresJustification: {
+                    name: AgroConductDef.requiresJustification
+                }
+            },
+            superTypes: []
+        },
+        AgroElement: {
+            name: AgroElement.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        AgroForbidAttr: {
+            name: AgroForbidAttr.$type,
+            properties: {
+                product: {
+                    name: AgroForbidAttr.product,
+                    referenceType: ProductDef.$type
+                },
+                reason: {
+                    name: AgroForbidAttr.reason
+                }
+            },
+            superTypes: [CultureAttribute.$type]
+        },
+        AgroModel: {
+            name: AgroModel.$type,
+            properties: {
+                elements: {
+                    name: AgroModel.elements,
+                    defaultValue: []
+                }
+            },
+            superTypes: []
+        },
+        AgroRecommendAttr: {
+            name: AgroRecommendAttr.$type,
+            properties: {
+                indication: {
+                    name: AgroRecommendAttr.indication
+                },
+                product: {
+                    name: AgroRecommendAttr.product,
+                    referenceType: ProductDef.$type
+                }
+            },
+            superTypes: [CultureAttribute.$type]
+        },
+        AgroSafetyRule: {
+            name: AgroSafetyRule.$type,
+            properties: {
+            },
+            superTypes: [AgroElement.$type]
+        },
+        AgroSchemaDef: {
+            name: AgroSchemaDef.$type,
+            properties: {
+                alerts: {
+                    name: AgroSchemaDef.alerts,
+                    defaultValue: []
+                },
+                conducts: {
+                    name: AgroSchemaDef.conducts,
+                    defaultValue: []
+                },
+                decisions: {
+                    name: AgroSchemaDef.decisions,
+                    defaultValue: []
+                },
+                modes: {
+                    name: AgroSchemaDef.modes,
+                    defaultValue: []
+                },
+                name: {
+                    name: AgroSchemaDef.name
+                }
+            },
+            superTypes: [AgroElement.$type]
+        },
         AlertStmt: {
             name: AlertStmt.$type,
             properties: {
@@ -1067,6 +1882,100 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 }
             },
             superTypes: []
+        },
+        ApplicationStmt: {
+            name: ApplicationStmt.$type,
+            properties: {
+                decision: {
+                    name: ApplicationStmt.decision
+                },
+                justification: {
+                    name: ApplicationStmt.justification
+                },
+                mode: {
+                    name: ApplicationStmt.mode
+                },
+                product: {
+                    name: ApplicationStmt.product,
+                    referenceType: ProductDef.$type
+                },
+                rate: {
+                    name: ApplicationStmt.rate
+                }
+            },
+            superTypes: []
+        },
+        AreaAdjust: {
+            name: AreaAdjust.$type,
+            properties: {
+                factor: {
+                    name: AreaAdjust.factor
+                },
+                product: {
+                    name: AreaAdjust.product,
+                    referenceType: ProductDef.$type
+                },
+                reason: {
+                    name: AreaAdjust.reason
+                }
+            },
+            superTypes: [AreaRestriction.$type]
+        },
+        AreaDef: {
+            name: AreaDef.$type,
+            properties: {
+                criterion: {
+                    name: AreaDef.criterion
+                },
+                name: {
+                    name: AreaDef.name
+                },
+                restrictions: {
+                    name: AreaDef.restrictions,
+                    defaultValue: []
+                }
+            },
+            superTypes: [AgroElement.$type]
+        },
+        AreaForbid: {
+            name: AreaForbid.$type,
+            properties: {
+                product: {
+                    name: AreaForbid.product,
+                    referenceType: ProductDef.$type
+                },
+                reason: {
+                    name: AreaForbid.reason
+                }
+            },
+            superTypes: [AreaRestriction.$type]
+        },
+        AreaRequire: {
+            name: AreaRequire.$type,
+            properties: {
+                requirement: {
+                    name: AreaRequire.requirement
+                }
+            },
+            superTypes: [AreaRestriction.$type]
+        },
+        AreaRestriction: {
+            name: AreaRestriction.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        BanConditionAttr: {
+            name: BanConditionAttr.$type,
+            properties: {
+                condition: {
+                    name: BanConditionAttr.condition
+                },
+                exception: {
+                    name: BanConditionAttr.exception
+                }
+            },
+            superTypes: [ProductAttribute.$type]
         },
         BlockRule: {
             name: BlockRule.$type,
@@ -1089,6 +1998,18 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 }
             },
             superTypes: [SafetyRule.$type]
+        },
+        CarencyAttr: {
+            name: CarencyAttr.$type,
+            properties: {
+                period: {
+                    name: CarencyAttr.period
+                },
+                reentry: {
+                    name: CarencyAttr.reentry
+                }
+            },
+            superTypes: [ProductAttribute.$type]
         },
         ConductDef: {
             name: ConductDef.$type,
@@ -1125,6 +2046,28 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 }
             },
             superTypes: [DrugAttribute.$type]
+        },
+        CultureAttribute: {
+            name: CultureAttribute.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        CultureDef: {
+            name: CultureDef.$type,
+            properties: {
+                attributes: {
+                    name: CultureDef.attributes,
+                    defaultValue: []
+                },
+                cycle: {
+                    name: CultureDef.cycle
+                },
+                name: {
+                    name: CultureDef.name
+                }
+            },
+            superTypes: [AgroElement.$type]
         },
         DataSchemaDef: {
             name: DataSchemaDef.$type,
@@ -1163,6 +2106,18 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
             },
             superTypes: [DrugAttribute.$type]
         },
+        DoseAttr: {
+            name: DoseAttr.$type,
+            properties: {
+                kind: {
+                    name: DoseAttr.kind
+                },
+                value: {
+                    name: DoseAttr.value
+                }
+            },
+            superTypes: [ProductAttribute.$type]
+        },
         DoseLimitAttr: {
             name: DoseLimitAttr.$type,
             properties: {
@@ -1174,6 +2129,18 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 }
             },
             superTypes: [DrugAttribute.$type]
+        },
+        DriftAttr: {
+            name: DriftAttr.$type,
+            properties: {
+                droplet: {
+                    name: DriftAttr.droplet
+                },
+                risk: {
+                    name: DriftAttr.risk
+                }
+            },
+            superTypes: [ProductAttribute.$type]
         },
         DrugAttribute: {
             name: DrugAttribute.$type,
@@ -1231,7 +2198,7 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                     name: EscalationAttr.value
                 }
             },
-            superTypes: [ProtocolAttribute.$type]
+            superTypes: [CultureAttribute.$type, ProtocolAttribute.$type]
         },
         ForbidAttr: {
             name: ForbidAttr.$type,
@@ -1259,7 +2226,7 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                     name: GlobalRule.severity
                 }
             },
-            superTypes: [SafetyRule.$type]
+            superTypes: [AgroSafetyRule.$type, SafetyRule.$type]
         },
         HepaticAdjustAttr: {
             name: HepaticAdjustAttr.$type,
@@ -1275,6 +2242,25 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 }
             },
             superTypes: [DrugAttribute.$type]
+        },
+        IncompatAttr: {
+            name: IncompatAttr.$type,
+            properties: {
+                conduct: {
+                    name: IncompatAttr.conduct
+                },
+                mechanism: {
+                    name: IncompatAttr.mechanism
+                },
+                other: {
+                    name: IncompatAttr.other,
+                    referenceType: ProductDef.$type
+                },
+                severity: {
+                    name: IncompatAttr.severity
+                }
+            },
+            superTypes: [ProductAttribute.$type]
         },
         InteractionAttr: {
             name: InteractionAttr.$type,
@@ -1316,6 +2302,42 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 }
             },
             superTypes: []
+        },
+        MissionCommand: {
+            name: MissionCommand.$type,
+            properties: {
+                alerts: {
+                    name: MissionCommand.alerts,
+                    defaultValue: []
+                },
+                applications: {
+                    name: MissionCommand.applications,
+                    defaultValue: []
+                },
+                audit: {
+                    name: MissionCommand.audit
+                },
+                culture: {
+                    name: MissionCommand.culture,
+                    referenceType: CultureDef.$type
+                },
+                name: {
+                    name: MissionCommand.name
+                },
+                plot: {
+                    name: MissionCommand.plot
+                },
+                schema: {
+                    name: MissionCommand.schema,
+                    referenceType: AgroSchemaDef.$type
+                },
+                sequence: {
+                    name: MissionCommand.sequence,
+                    defaultValue: [],
+                    referenceType: AgroConductDef.$type
+                }
+            },
+            superTypes: [AgroElement.$type]
         },
         MonitorAttr: {
             name: MonitorAttr.$type,
@@ -1462,6 +2484,34 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
             },
             superTypes: []
         },
+        ProductAttribute: {
+            name: ProductAttribute.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        ProductDef: {
+            name: ProductDef.$type,
+            properties: {
+                attributes: {
+                    name: ProductDef.attributes,
+                    defaultValue: []
+                },
+                mapa: {
+                    name: ProductDef.mapa
+                },
+                name: {
+                    name: ProductDef.name
+                },
+                productClass: {
+                    name: ProductDef.productClass
+                },
+                toxicity: {
+                    name: ProductDef.toxicity
+                }
+            },
+            superTypes: [AgroElement.$type]
+        },
         ProtocolAttribute: {
             name: ProtocolAttribute.$type,
             properties: {
@@ -1585,6 +2635,18 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
             },
             superTypes: [ProtocolAttribute.$type]
         },
+        TargetAttr: {
+            name: TargetAttr.$type,
+            properties: {
+                stage: {
+                    name: TargetAttr.stage
+                },
+                target: {
+                    name: TargetAttr.target
+                }
+            },
+            superTypes: [ProductAttribute.$type]
+        },
         TitrationAttr: {
             name: TitrationAttr.$type,
             properties: {
@@ -1616,7 +2678,7 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                     name: TriggerAttr.value
                 }
             },
-            superTypes: [ProtocolAttribute.$type]
+            superTypes: [CultureAttribute.$type, ProtocolAttribute.$type]
         },
         WeaningAttr: {
             name: WeaningAttr.$type,
@@ -1632,6 +2694,18 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 }
             },
             superTypes: [ProtocolAttribute.$type]
+        },
+        WindowAttr: {
+            name: WindowAttr.$type,
+            properties: {
+                description: {
+                    name: WindowAttr.description
+                },
+                minHumidity: {
+                    name: WindowAttr.minHumidity
+                }
+            },
+            superTypes: [CultureAttribute.$type]
         }
     } as const satisfies langium.AstMetaData
 }

@@ -4,16 +4,105 @@
  ******************************************************************************/
 /* eslint-disable */
 import * as langium from 'langium';
+/** Contains the reachable terminals & keywords and all available types of the 'AgroDrone' language. */
+export var AgroDrone;
+(function (AgroDrone) {
+    AgroDrone.Terminals = {
+        ID: /[_a-zA-Z][\w_]*/,
+        STRING: /"[^"]*"|'[^']*'/,
+        NUMBER: /-?[0-9]+(\.[0-9]+)?/,
+        WS: /\s+/,
+        ML_COMMENT: /\/\*[\s\S]*?\*\//,
+        SL_COMMENT: /\/\/[^\n\r]*/,
+    };
+})(AgroDrone || (AgroDrone = {}));
+/** Contains the reachable terminals & keywords and all available types of the 'Dsl' language. */
+export var Dsl;
+(function (Dsl) {
+    Dsl.Terminals = {
+        ID: /[_a-zA-Z][\w_]*/,
+        STRING: /"[^"]*"|'[^']*'/,
+        NUMBER: /-?[0-9]+(\.[0-9]+)?/,
+        WS: /\s+/,
+        ML_COMMENT: /\/\*[\s\S]*?\*\//,
+        SL_COMMENT: /\/\/[^\n\r]*/,
+    };
+})(Dsl || (Dsl = {}));
+// the terminals, keywords and types of the whole 'dslProject' project
 export const dslProjectTerminals = {
-    ID: /[_a-zA-Z][\w_]*/,
-    STRING: /"[^"]*"|'[^']*'/,
-    NUMBER: /-?[0-9]+(\.[0-9]+)?/,
-    WS: /\s+/,
-    ML_COMMENT: /\/\*[\s\S]*?\*\//,
-    SL_COMMENT: /\/\/[^\n\r]*/,
+    ...AgroDrone.Terminals,
+    ...Dsl.Terminals,
 };
 export function isAdjustAction(item) {
     return item === 'reduzir_dose' || item === 'aumentar_intervalo' || item === 'suspender' || item === 'substituir' || item === 'manter' || item === 'bloquear';
+}
+export const AgroBlockRule = {
+    $type: 'AgroBlockRule',
+    operator: 'operator',
+    parameter: 'parameter',
+    product: 'product',
+    reason: 'reason',
+    threshold: 'threshold'
+};
+export function isAgroBlockRule(item) {
+    return reflection.isInstance(item, AgroBlockRule.$type);
+}
+export const AgroConductDef = {
+    $type: 'AgroConductDef',
+    decision: 'decision',
+    doubleCheck: 'doubleCheck',
+    mode: 'mode',
+    name: 'name',
+    requiresJustification: 'requiresJustification'
+};
+export function isAgroConductDef(item) {
+    return reflection.isInstance(item, AgroConductDef.$type);
+}
+export const AgroElement = {
+    $type: 'AgroElement'
+};
+export function isAgroElement(item) {
+    return reflection.isInstance(item, AgroElement.$type);
+}
+export const AgroForbidAttr = {
+    $type: 'AgroForbidAttr',
+    product: 'product',
+    reason: 'reason'
+};
+export function isAgroForbidAttr(item) {
+    return reflection.isInstance(item, AgroForbidAttr.$type);
+}
+export const AgroModel = {
+    $type: 'AgroModel',
+    elements: 'elements'
+};
+export function isAgroModel(item) {
+    return reflection.isInstance(item, AgroModel.$type);
+}
+export const AgroRecommendAttr = {
+    $type: 'AgroRecommendAttr',
+    indication: 'indication',
+    product: 'product'
+};
+export function isAgroRecommendAttr(item) {
+    return reflection.isInstance(item, AgroRecommendAttr.$type);
+}
+export const AgroSafetyRule = {
+    $type: 'AgroSafetyRule'
+};
+export function isAgroSafetyRule(item) {
+    return reflection.isInstance(item, AgroSafetyRule.$type);
+}
+export const AgroSchemaDef = {
+    $type: 'AgroSchemaDef',
+    alerts: 'alerts',
+    conducts: 'conducts',
+    decisions: 'decisions',
+    modes: 'modes',
+    name: 'name'
+};
+export function isAgroSchemaDef(item) {
+    return reflection.isInstance(item, AgroSchemaDef.$type);
 }
 export function isAlertLevel(item) {
     return item === 'INFORMATIVO' || item === 'ATENCAO' || item === 'CRITICO' || item === 'BLOQUEANTE';
@@ -26,6 +115,64 @@ export const AlertStmt = {
 };
 export function isAlertStmt(item) {
     return reflection.isInstance(item, AlertStmt.$type);
+}
+export const ApplicationStmt = {
+    $type: 'ApplicationStmt',
+    decision: 'decision',
+    justification: 'justification',
+    mode: 'mode',
+    product: 'product',
+    rate: 'rate'
+};
+export function isApplicationStmt(item) {
+    return reflection.isInstance(item, ApplicationStmt.$type);
+}
+export const AreaAdjust = {
+    $type: 'AreaAdjust',
+    factor: 'factor',
+    product: 'product',
+    reason: 'reason'
+};
+export function isAreaAdjust(item) {
+    return reflection.isInstance(item, AreaAdjust.$type);
+}
+export const AreaDef = {
+    $type: 'AreaDef',
+    criterion: 'criterion',
+    name: 'name',
+    restrictions: 'restrictions'
+};
+export function isAreaDef(item) {
+    return reflection.isInstance(item, AreaDef.$type);
+}
+export const AreaForbid = {
+    $type: 'AreaForbid',
+    product: 'product',
+    reason: 'reason'
+};
+export function isAreaForbid(item) {
+    return reflection.isInstance(item, AreaForbid.$type);
+}
+export const AreaRequire = {
+    $type: 'AreaRequire',
+    requirement: 'requirement'
+};
+export function isAreaRequire(item) {
+    return reflection.isInstance(item, AreaRequire.$type);
+}
+export const AreaRestriction = {
+    $type: 'AreaRestriction'
+};
+export function isAreaRestriction(item) {
+    return reflection.isInstance(item, AreaRestriction.$type);
+}
+export const BanConditionAttr = {
+    $type: 'BanConditionAttr',
+    condition: 'condition',
+    exception: 'exception'
+};
+export function isBanConditionAttr(item) {
+    return reflection.isInstance(item, BanConditionAttr.$type);
 }
 export const BlockRule = {
     $type: 'BlockRule',
@@ -40,6 +187,14 @@ export function isBlockRule(item) {
 }
 export function isBool(item) {
     return item === 'sim' || item === 'nao';
+}
+export const CarencyAttr = {
+    $type: 'CarencyAttr',
+    period: 'period',
+    reentry: 'reentry'
+};
+export function isCarencyAttr(item) {
+    return reflection.isInstance(item, CarencyAttr.$type);
 }
 export function isClinicalParameter(item) {
     return item === 'PAM' || item === 'PAS' || item === 'PAD' || item === 'FC' || item === 'FR' || item === 'SpO2' || item === 'temperatura' || item === 'lactato' || item === 'TFG' || item === 'creatinina' || item === 'potassio' || item === 'sodio' || item === 'INR' || item === 'plaquetas' || item === 'hemoglobina' || item === 'QTc' || item === 'glicemia' || item === 'bilirrubina' || item === 'PaO2_FiO2' || item === 'RASS' || item === 'qSOFA' || item === 'SOFA' || item === 'Glasgow' || item === 'debito_urinario' || item === 'peso' || item === 'idade';
@@ -64,6 +219,21 @@ export const ContraindicationAttr = {
 export function isContraindicationAttr(item) {
     return reflection.isInstance(item, ContraindicationAttr.$type);
 }
+export const CultureAttribute = {
+    $type: 'CultureAttribute'
+};
+export function isCultureAttribute(item) {
+    return reflection.isInstance(item, CultureAttribute.$type);
+}
+export const CultureDef = {
+    $type: 'CultureDef',
+    attributes: 'attributes',
+    cycle: 'cycle',
+    name: 'name'
+};
+export function isCultureDef(item) {
+    return reflection.isInstance(item, CultureDef.$type);
+}
 export const DataSchemaDef = {
     $type: 'DataSchemaDef',
     alerts: 'alerts',
@@ -86,6 +256,14 @@ export const DilutionAttr = {
 export function isDilutionAttr(item) {
     return reflection.isInstance(item, DilutionAttr.$type);
 }
+export const DoseAttr = {
+    $type: 'DoseAttr',
+    kind: 'kind',
+    value: 'value'
+};
+export function isDoseAttr(item) {
+    return reflection.isInstance(item, DoseAttr.$type);
+}
 export function isDoseKind(item) {
     return item === 'inicial' || item === 'maxima' || item === 'minima' || item === 'ataque' || item === 'manutencao';
 }
@@ -96,6 +274,14 @@ export const DoseLimitAttr = {
 };
 export function isDoseLimitAttr(item) {
     return reflection.isInstance(item, DoseLimitAttr.$type);
+}
+export const DriftAttr = {
+    $type: 'DriftAttr',
+    droplet: 'droplet',
+    risk: 'risk'
+};
+export function isDriftAttr(item) {
+    return reflection.isInstance(item, DriftAttr.$type);
 }
 export const DrugAttribute = {
     $type: 'DrugAttribute'
@@ -164,6 +350,16 @@ export const HepaticAdjustAttr = {
 export function isHepaticAdjustAttr(item) {
     return reflection.isInstance(item, HepaticAdjustAttr.$type);
 }
+export const IncompatAttr = {
+    $type: 'IncompatAttr',
+    conduct: 'conduct',
+    mechanism: 'mechanism',
+    other: 'other',
+    severity: 'severity'
+};
+export function isIncompatAttr(item) {
+    return reflection.isInstance(item, IncompatAttr.$type);
+}
 export const InteractionAttr = {
     $type: 'InteractionAttr',
     conduct: 'conduct',
@@ -188,6 +384,20 @@ export const MedicalModel = {
 };
 export function isMedicalModel(item) {
     return reflection.isInstance(item, MedicalModel.$type);
+}
+export const MissionCommand = {
+    $type: 'MissionCommand',
+    alerts: 'alerts',
+    applications: 'applications',
+    audit: 'audit',
+    culture: 'culture',
+    name: 'name',
+    plot: 'plot',
+    schema: 'schema',
+    sequence: 'sequence'
+};
+export function isMissionCommand(item) {
+    return reflection.isInstance(item, MissionCommand.$type);
 }
 export const MonitorAttr = {
     $type: 'MonitorAttr',
@@ -273,6 +483,26 @@ export const PopulationRestriction = {
 export function isPopulationRestriction(item) {
     return reflection.isInstance(item, PopulationRestriction.$type);
 }
+export const ProductAttribute = {
+    $type: 'ProductAttribute'
+};
+export function isProductAttribute(item) {
+    return reflection.isInstance(item, ProductAttribute.$type);
+}
+export function isProductClass(item) {
+    return item === 'herbicida' || item === 'fungicida' || item === 'inseticida' || item === 'acaricida' || item === 'adjuvante' || item === 'fertilizante_foliar' || item === 'biologico';
+}
+export const ProductDef = {
+    $type: 'ProductDef',
+    attributes: 'attributes',
+    mapa: 'mapa',
+    name: 'name',
+    productClass: 'productClass',
+    toxicity: 'toxicity'
+};
+export function isProductDef(item) {
+    return reflection.isInstance(item, ProductDef.$type);
+}
 export const ProtocolAttribute = {
     $type: 'ProtocolAttribute'
 };
@@ -340,6 +570,9 @@ export const SafetyRule = {
 export function isSafetyRule(item) {
     return reflection.isInstance(item, SafetyRule.$type);
 }
+export function isSensorParameter(item) {
+    return item === 'vento' || item === 'temperatura' || item === 'umidade' || item === 'NDVI' || item === 'umidade_foliar' || item === 'temperatura_foliar' || item === 'distancia_manancial' || item === 'distancia_cultura_sensivel' || item === 'chuva_prevista' || item === 'altura_voo' || item === 'infestacao' || item === 'hora';
+}
 export function isSeverity(item) {
     return item === 'leve' || item === 'moderada' || item === 'alta' || item === 'contraindicada';
 }
@@ -350,6 +583,9 @@ export const SnomedAttr = {
 export function isSnomedAttr(item) {
     return reflection.isInstance(item, SnomedAttr.$type);
 }
+export function isSprayMode(item) {
+    return item === 'BARRA_TOTAL' || item === 'FAIXA_DIRIGIDA' || item === 'PONTO_LOCALIZADO' || item === 'BAIXO_VOLUME';
+}
 export const StepAttr = {
     $type: 'StepAttr',
     deadline: 'deadline',
@@ -359,6 +595,14 @@ export const StepAttr = {
 export function isStepAttr(item) {
     return reflection.isInstance(item, StepAttr.$type);
 }
+export const TargetAttr = {
+    $type: 'TargetAttr',
+    stage: 'stage',
+    target: 'target'
+};
+export function isTargetAttr(item) {
+    return reflection.isInstance(item, TargetAttr.$type);
+}
 export const TitrationAttr = {
     $type: 'TitrationAttr',
     interval: 'interval',
@@ -367,6 +611,9 @@ export const TitrationAttr = {
 };
 export function isTitrationAttr(item) {
     return reflection.isInstance(item, TitrationAttr.$type);
+}
+export function isToxClass(item) {
+    return item === 'I' || item === 'II' || item === 'III' || item === 'IV';
 }
 export const TriggerAttr = {
     $type: 'TriggerAttr',
@@ -390,10 +637,132 @@ export const WeaningAttr = {
 export function isWeaningAttr(item) {
     return reflection.isInstance(item, WeaningAttr.$type);
 }
+export const WindowAttr = {
+    $type: 'WindowAttr',
+    description: 'description',
+    minHumidity: 'minHumidity'
+};
+export function isWindowAttr(item) {
+    return reflection.isInstance(item, WindowAttr.$type);
+}
 export class dslProjectAstReflection extends langium.AbstractAstReflection {
     constructor() {
         super(...arguments);
         this.types = {
+            AgroBlockRule: {
+                name: AgroBlockRule.$type,
+                properties: {
+                    operator: {
+                        name: AgroBlockRule.operator
+                    },
+                    parameter: {
+                        name: AgroBlockRule.parameter
+                    },
+                    product: {
+                        name: AgroBlockRule.product,
+                        referenceType: ProductDef.$type
+                    },
+                    reason: {
+                        name: AgroBlockRule.reason
+                    },
+                    threshold: {
+                        name: AgroBlockRule.threshold
+                    }
+                },
+                superTypes: [AgroSafetyRule.$type]
+            },
+            AgroConductDef: {
+                name: AgroConductDef.$type,
+                properties: {
+                    decision: {
+                        name: AgroConductDef.decision
+                    },
+                    doubleCheck: {
+                        name: AgroConductDef.doubleCheck
+                    },
+                    mode: {
+                        name: AgroConductDef.mode
+                    },
+                    name: {
+                        name: AgroConductDef.name
+                    },
+                    requiresJustification: {
+                        name: AgroConductDef.requiresJustification
+                    }
+                },
+                superTypes: []
+            },
+            AgroElement: {
+                name: AgroElement.$type,
+                properties: {},
+                superTypes: []
+            },
+            AgroForbidAttr: {
+                name: AgroForbidAttr.$type,
+                properties: {
+                    product: {
+                        name: AgroForbidAttr.product,
+                        referenceType: ProductDef.$type
+                    },
+                    reason: {
+                        name: AgroForbidAttr.reason
+                    }
+                },
+                superTypes: [CultureAttribute.$type]
+            },
+            AgroModel: {
+                name: AgroModel.$type,
+                properties: {
+                    elements: {
+                        name: AgroModel.elements,
+                        defaultValue: []
+                    }
+                },
+                superTypes: []
+            },
+            AgroRecommendAttr: {
+                name: AgroRecommendAttr.$type,
+                properties: {
+                    indication: {
+                        name: AgroRecommendAttr.indication
+                    },
+                    product: {
+                        name: AgroRecommendAttr.product,
+                        referenceType: ProductDef.$type
+                    }
+                },
+                superTypes: [CultureAttribute.$type]
+            },
+            AgroSafetyRule: {
+                name: AgroSafetyRule.$type,
+                properties: {},
+                superTypes: [AgroElement.$type]
+            },
+            AgroSchemaDef: {
+                name: AgroSchemaDef.$type,
+                properties: {
+                    alerts: {
+                        name: AgroSchemaDef.alerts,
+                        defaultValue: []
+                    },
+                    conducts: {
+                        name: AgroSchemaDef.conducts,
+                        defaultValue: []
+                    },
+                    decisions: {
+                        name: AgroSchemaDef.decisions,
+                        defaultValue: []
+                    },
+                    modes: {
+                        name: AgroSchemaDef.modes,
+                        defaultValue: []
+                    },
+                    name: {
+                        name: AgroSchemaDef.name
+                    }
+                },
+                superTypes: [AgroElement.$type]
+            },
             AlertStmt: {
                 name: AlertStmt.$type,
                 properties: {
@@ -408,6 +777,99 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                     }
                 },
                 superTypes: []
+            },
+            ApplicationStmt: {
+                name: ApplicationStmt.$type,
+                properties: {
+                    decision: {
+                        name: ApplicationStmt.decision
+                    },
+                    justification: {
+                        name: ApplicationStmt.justification
+                    },
+                    mode: {
+                        name: ApplicationStmt.mode
+                    },
+                    product: {
+                        name: ApplicationStmt.product,
+                        referenceType: ProductDef.$type
+                    },
+                    rate: {
+                        name: ApplicationStmt.rate
+                    }
+                },
+                superTypes: []
+            },
+            AreaAdjust: {
+                name: AreaAdjust.$type,
+                properties: {
+                    factor: {
+                        name: AreaAdjust.factor
+                    },
+                    product: {
+                        name: AreaAdjust.product,
+                        referenceType: ProductDef.$type
+                    },
+                    reason: {
+                        name: AreaAdjust.reason
+                    }
+                },
+                superTypes: [AreaRestriction.$type]
+            },
+            AreaDef: {
+                name: AreaDef.$type,
+                properties: {
+                    criterion: {
+                        name: AreaDef.criterion
+                    },
+                    name: {
+                        name: AreaDef.name
+                    },
+                    restrictions: {
+                        name: AreaDef.restrictions,
+                        defaultValue: []
+                    }
+                },
+                superTypes: [AgroElement.$type]
+            },
+            AreaForbid: {
+                name: AreaForbid.$type,
+                properties: {
+                    product: {
+                        name: AreaForbid.product,
+                        referenceType: ProductDef.$type
+                    },
+                    reason: {
+                        name: AreaForbid.reason
+                    }
+                },
+                superTypes: [AreaRestriction.$type]
+            },
+            AreaRequire: {
+                name: AreaRequire.$type,
+                properties: {
+                    requirement: {
+                        name: AreaRequire.requirement
+                    }
+                },
+                superTypes: [AreaRestriction.$type]
+            },
+            AreaRestriction: {
+                name: AreaRestriction.$type,
+                properties: {},
+                superTypes: []
+            },
+            BanConditionAttr: {
+                name: BanConditionAttr.$type,
+                properties: {
+                    condition: {
+                        name: BanConditionAttr.condition
+                    },
+                    exception: {
+                        name: BanConditionAttr.exception
+                    }
+                },
+                superTypes: [ProductAttribute.$type]
             },
             BlockRule: {
                 name: BlockRule.$type,
@@ -430,6 +892,18 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                     }
                 },
                 superTypes: [SafetyRule.$type]
+            },
+            CarencyAttr: {
+                name: CarencyAttr.$type,
+                properties: {
+                    period: {
+                        name: CarencyAttr.period
+                    },
+                    reentry: {
+                        name: CarencyAttr.reentry
+                    }
+                },
+                superTypes: [ProductAttribute.$type]
             },
             ConductDef: {
                 name: ConductDef.$type,
@@ -466,6 +940,27 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                     }
                 },
                 superTypes: [DrugAttribute.$type]
+            },
+            CultureAttribute: {
+                name: CultureAttribute.$type,
+                properties: {},
+                superTypes: []
+            },
+            CultureDef: {
+                name: CultureDef.$type,
+                properties: {
+                    attributes: {
+                        name: CultureDef.attributes,
+                        defaultValue: []
+                    },
+                    cycle: {
+                        name: CultureDef.cycle
+                    },
+                    name: {
+                        name: CultureDef.name
+                    }
+                },
+                superTypes: [AgroElement.$type]
             },
             DataSchemaDef: {
                 name: DataSchemaDef.$type,
@@ -504,6 +999,18 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 },
                 superTypes: [DrugAttribute.$type]
             },
+            DoseAttr: {
+                name: DoseAttr.$type,
+                properties: {
+                    kind: {
+                        name: DoseAttr.kind
+                    },
+                    value: {
+                        name: DoseAttr.value
+                    }
+                },
+                superTypes: [ProductAttribute.$type]
+            },
             DoseLimitAttr: {
                 name: DoseLimitAttr.$type,
                 properties: {
@@ -515,6 +1022,18 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                     }
                 },
                 superTypes: [DrugAttribute.$type]
+            },
+            DriftAttr: {
+                name: DriftAttr.$type,
+                properties: {
+                    droplet: {
+                        name: DriftAttr.droplet
+                    },
+                    risk: {
+                        name: DriftAttr.risk
+                    }
+                },
+                superTypes: [ProductAttribute.$type]
             },
             DrugAttribute: {
                 name: DrugAttribute.$type,
@@ -570,7 +1089,7 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                         name: EscalationAttr.value
                     }
                 },
-                superTypes: [ProtocolAttribute.$type]
+                superTypes: [CultureAttribute.$type, ProtocolAttribute.$type]
             },
             ForbidAttr: {
                 name: ForbidAttr.$type,
@@ -598,7 +1117,7 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                         name: GlobalRule.severity
                     }
                 },
-                superTypes: [SafetyRule.$type]
+                superTypes: [AgroSafetyRule.$type, SafetyRule.$type]
             },
             HepaticAdjustAttr: {
                 name: HepaticAdjustAttr.$type,
@@ -614,6 +1133,25 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                     }
                 },
                 superTypes: [DrugAttribute.$type]
+            },
+            IncompatAttr: {
+                name: IncompatAttr.$type,
+                properties: {
+                    conduct: {
+                        name: IncompatAttr.conduct
+                    },
+                    mechanism: {
+                        name: IncompatAttr.mechanism
+                    },
+                    other: {
+                        name: IncompatAttr.other,
+                        referenceType: ProductDef.$type
+                    },
+                    severity: {
+                        name: IncompatAttr.severity
+                    }
+                },
+                superTypes: [ProductAttribute.$type]
             },
             InteractionAttr: {
                 name: InteractionAttr.$type,
@@ -655,6 +1193,42 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                     }
                 },
                 superTypes: []
+            },
+            MissionCommand: {
+                name: MissionCommand.$type,
+                properties: {
+                    alerts: {
+                        name: MissionCommand.alerts,
+                        defaultValue: []
+                    },
+                    applications: {
+                        name: MissionCommand.applications,
+                        defaultValue: []
+                    },
+                    audit: {
+                        name: MissionCommand.audit
+                    },
+                    culture: {
+                        name: MissionCommand.culture,
+                        referenceType: CultureDef.$type
+                    },
+                    name: {
+                        name: MissionCommand.name
+                    },
+                    plot: {
+                        name: MissionCommand.plot
+                    },
+                    schema: {
+                        name: MissionCommand.schema,
+                        referenceType: AgroSchemaDef.$type
+                    },
+                    sequence: {
+                        name: MissionCommand.sequence,
+                        defaultValue: [],
+                        referenceType: AgroConductDef.$type
+                    }
+                },
+                superTypes: [AgroElement.$type]
             },
             MonitorAttr: {
                 name: MonitorAttr.$type,
@@ -800,6 +1374,33 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 properties: {},
                 superTypes: []
             },
+            ProductAttribute: {
+                name: ProductAttribute.$type,
+                properties: {},
+                superTypes: []
+            },
+            ProductDef: {
+                name: ProductDef.$type,
+                properties: {
+                    attributes: {
+                        name: ProductDef.attributes,
+                        defaultValue: []
+                    },
+                    mapa: {
+                        name: ProductDef.mapa
+                    },
+                    name: {
+                        name: ProductDef.name
+                    },
+                    productClass: {
+                        name: ProductDef.productClass
+                    },
+                    toxicity: {
+                        name: ProductDef.toxicity
+                    }
+                },
+                superTypes: [AgroElement.$type]
+            },
             ProtocolAttribute: {
                 name: ProtocolAttribute.$type,
                 properties: {},
@@ -921,6 +1522,18 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                 },
                 superTypes: [ProtocolAttribute.$type]
             },
+            TargetAttr: {
+                name: TargetAttr.$type,
+                properties: {
+                    stage: {
+                        name: TargetAttr.stage
+                    },
+                    target: {
+                        name: TargetAttr.target
+                    }
+                },
+                superTypes: [ProductAttribute.$type]
+            },
             TitrationAttr: {
                 name: TitrationAttr.$type,
                 properties: {
@@ -952,7 +1565,7 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                         name: TriggerAttr.value
                     }
                 },
-                superTypes: [ProtocolAttribute.$type]
+                superTypes: [CultureAttribute.$type, ProtocolAttribute.$type]
             },
             WeaningAttr: {
                 name: WeaningAttr.$type,
@@ -968,6 +1581,18 @@ export class dslProjectAstReflection extends langium.AbstractAstReflection {
                     }
                 },
                 superTypes: [ProtocolAttribute.$type]
+            },
+            WindowAttr: {
+                name: WindowAttr.$type,
+                properties: {
+                    description: {
+                        name: WindowAttr.description
+                    },
+                    minHumidity: {
+                        name: WindowAttr.minHumidity
+                    }
+                },
+                superTypes: [CultureAttribute.$type]
             }
         };
     }

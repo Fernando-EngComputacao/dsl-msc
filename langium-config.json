@@ -8,6 +8,14 @@
       "textMate": {
         "out": "syntaxes/dsl.tmLanguage.json"
       }
+    },
+    {
+      "id": "agro",
+      "grammar": "src/language/agrodrone.langium",
+      "fileExtensions": [".agro"],
+      "textMate": {
+        "out": "syntaxes/agro.tmLanguage.json"
+      }
     }
   ],
   "out": "src/generated"

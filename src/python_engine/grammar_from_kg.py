@@ -13,12 +13,20 @@ import re
 from bnf import Rule
 
 # Nome da regra na BNF -> chave correspondente no subgrafo recuperado.
-# As tres primeiras sao as da gramatica gerada a partir da DSL Langium; as demais
-# preservam compatibilidade com a BNF manual anterior.
+#
+# O motor e agnostico de dominio: sao estes tres papeis — o que se decide, sobre
+# o que se decide, e por qual meio — que ele precisa conhecer. Cada DSL nomeia os
+# papeis a sua maneira (farmaco/via na clinica, produto/modo no agro) e ambas
+# convivem aqui, porque uma BNF so traz os nomes do seu proprio dominio.
 MAPA_PODA = {
+    # dominio clinico (dsl.langium)
     "decisao": "acoes_permitidas",
     "farmaco": "farmacos_liberados",
     "via": "vias_disponiveis",
+    # dominio agricola (agrodrone.langium)
+    "produto": "farmacos_liberados",
+    "modo": "vias_disponiveis",
+    # compatibilidade com a BNF manual anterior
     "tipo_acao": "acoes_permitidas",
     "tipo_farmaco": "farmacos_liberados",
     "tipo_via": "vias_disponiveis",

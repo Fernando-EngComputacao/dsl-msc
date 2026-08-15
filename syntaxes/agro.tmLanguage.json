@@ -1,0 +1,71 @@
+{
+  "name": "agro",
+  "scopeName": "source.agro",
+  "fileTypes": [
+    ".agro"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "name": "keyword.control.agro",
+      "match": "\\b(ACIONAR_AGRONOMO|AGRONOMO_RESPONSAVEL|AGUARDAR_JANELA|ATENCAO|AUMENTAR_VAZAO|BAIXO_VOLUME|BARRA_TOTAL|BLOQUEANTE|BLOQUEAR_APLICACAO|C|CENTRO_METEOROLOGICO|CRITICO|FAIXA_DIRIGIDA|I|II|III|INFORMATIVO|INICIAR_APLICACAO|IV|L|L/ha|MANTER_BLOQUEADO|MANTER_VAZAO|NDVI|OPERADOR_DRONE|ORGAO_AMBIENTAL|PONTO_LOCALIZADO|REDUZIR_VAZAO|SOLICITAR_VARREDURA|SUBSTITUIR|SUSPENDER|acaricida|adjuvante|ajusta|alerta|alertas|alta|altura_voo|aplicacao|area|auditoria|biologico|bloquear_aplicacao|carencia|chuva_prevista|ciclo|classe|conduta|criterio|cultura|decisao|decisoes|deriva|dias|distancia_cultura_sensivel|distancia_manancial|dose|esquema_dados|esquema_referencia|estadio|excecao|exige|fator|fertilizante_foliar|fungicida|g/ha|gota_minima|gravidade|h|herbicida|hora|indicacao|indice|infestacao|inseticida|justificativa|justificativa_obrigatoria|kg|kg/ha|km|km/h|leve|m|mL/ha|maxima|micra|min|minima|missao|mm|moderada|modo|modos|motivo|nao|para|produto|proibe|proibida|recomenda|recomendada|reentrada|referencia|registro_mapa|regra|requer_dupla_checagem|se|sequencia|severidade|sim|talhao|temperatura|temperatura_foliar|toxicologica|umidade|umidade_foliar|umidade_minima|vazao|vento|veta)\\b|\\b(alvo:|escalonar:|gatilho:|incompativel:|janela:|proibido:|regra_global:|regra_seguranca:)\\B"
+    },
+    {
+      "name": "string.quoted.double.agro",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "include": "#string-character-escape"
+        }
+      ]
+    },
+    {
+      "name": "string.quoted.single.agro",
+      "begin": "'",
+      "end": "'",
+      "patterns": [
+        {
+          "include": "#string-character-escape"
+        }
+      ]
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.agro",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.agro"
+            }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.agro"
+            }
+          }
+        },
+        {
+          "begin": "//",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.whitespace.comment.leading.agro"
+            }
+          },
+          "end": "(?=$)",
+          "name": "comment.line.agro"
+        }
+      ]
+    },
+    "string-character-escape": {
+      "name": "constant.character.escape.agro",
+      "match": "\\\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|u\\{[0-9A-Fa-f]+\\}|[0-2][0-7]{0,2}|3[0-6][0-7]?|37[0-7]?|[4-7][0-7]?|.|$)"
+    }
+  }
+}

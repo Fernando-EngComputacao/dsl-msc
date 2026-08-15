@@ -1,0 +1,30 @@
+# GRAMATICA G — Esquema de Dados da DSL agricola (SPC-CML).
+# 
+# ARQUIVO GERADO AUTOMATICAMENTE — NAO EDITAR A MAO.
+# Gerado por: src/cli/export-bnf-agro.ts
+# Gramatica:  src/language/agrodrone.langium (regra MissionCommand)
+# Modelo:     lavoura.agro (esquema_dados AssistenteAgro_v1)
+# 
+# Produtos citaveis: 9 | Condutas: 8 | Decisoes: 11 | Modos: 4
+# 
+# Toda alternativa desta gramatica corresponde a uma entidade declarada no
+# modelo do agronomo. O que nao esta aqui e inexprimivel pelo LLM.
+
+missao_g1 ::= "," conduta
+missao_g2 ::= aplicacao
+missao_g3 ::= alerta
+missao ::= "missao" identificador "para" cultura "{" "esquema_referencia" esquema "talhao" texto "sequencia" "[" conduta missao_g1* "]" missao_g2* missao_g3* "auditoria" texto "}"
+aplicacao ::= "aplicacao" produto "decisao" decisao "vazao" quantidade "modo" modo "justificativa" texto
+alerta ::= "alerta" nivel_alerta texto "regra" texto
+quantidade ::= numero unidade
+conduta ::= "Iniciar_Pulverizacao" | "Reduzir_Vazao" | "Manter_Bloqueio" | "Aguardar_Janela_Climatica" | "Suspender_Aplicacao" | "Solicitar_Varredura" | "Acionar_Agronomo" | "Bloquear_Missao_Insegura"
+cultura ::= "Soja" | "Milho" | "Cana_de_Acucar"
+esquema ::= "AssistenteAgro_v1"
+produto ::= "Glifosato" | "Mancozebe" | "Acefato" | "Nicosulfuron" | "Atrazina" | "Clorpirifos" | "Dois_Quatro_D" | "Azoxistrobina" | "Imidacloprido"
+decisao ::= "INICIAR_APLICACAO" | "AUMENTAR_VAZAO" | "REDUZIR_VAZAO" | "MANTER_VAZAO" | "MANTER_BLOQUEADO" | "SUSPENDER" | "SUBSTITUIR" | "AGUARDAR_JANELA" | "SOLICITAR_VARREDURA" | "ACIONAR_AGRONOMO" | "BLOQUEAR_APLICACAO"
+modo ::= "BARRA_TOTAL" | "FAIXA_DIRIGIDA" | "PONTO_LOCALIZADO" | "BAIXO_VOLUME"
+nivel_alerta ::= "INFORMATIVO" | "ATENCAO" | "CRITICO" | "BLOQUEANTE"
+unidade ::= "L/ha" | "kg/ha"
+identificador ::= /[A-Za-z_][A-Za-z_0-9]*/
+texto ::= /'[^']*'/
+numero ::= /[0-9]+(\.[0-9]+)?/
