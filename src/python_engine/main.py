@@ -53,7 +53,7 @@ EXAMPLES_PATH = os.environ.get(
 
 # A regra inicial da BNF: `plano` na DSL clinica, `missao` na agricola.
 INICIO = os.environ.get("SPC_CML_INICIO", "missao" if DOMINIO == "agro" else "plano")
-MODEL_ID = os.environ.get("SPC_CML_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
+MODEL_ID = os.environ.get("SPC_CML_MODEL", "Qwen/Qwen2.5-7B-Instruct")
 
 # Backend de decodificacao restrita. Os dois mascaram logits sobre a MESMA
 # gramatica podada — muda so o mecanismo, nao a garantia:
@@ -62,12 +62,26 @@ MODEL_ID = os.environ.get("SPC_CML_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
 #             vocabulario a cada terminal da saida, o que nesta gramatica nao
 #             termina em tempo util. Mantido para a comparacao de desempenho.
 BACKEND = os.environ.get("SPC_CML_BACKEND", "llamacpp")
-GGUF_REPO = os.environ.get("SPC_CML_GGUF_REPO", "Qwen/Qwen2.5-0.5B-Instruct-GGUF")
-GGUF_FILE = os.environ.get("SPC_CML_GGUF_FILE", "qwen2.5-0.5b-instruct-q8_0.gguf")
+# Q4_K_M do 7B fica em ~4.7 GB de pesos; com n_ctx=8192 o KV cache soma mais
+# algumas centenas de MB, cabendo confortavelmente nos 6 GB de VRAM de uma RTX
+# de notebook. Trocar para o 0.5B antigo (Qwen2.5-0.5B-Instruct-GGUF /
+# qwen2.5-0.5b-instruct-q8_0.gguf) continua funcionando em qualquer maquina,
+# inclusive sem GPU.
+# O repo oficial da Qwen publica o Q4_K_M do 7B em duas partes
+# (-00001-of-00002.gguf); o do bartowski e o mesmo quant num arquivo unico, o
+# que hf_hub_download baixa direto sem precisar montar os shards.
+GGUF_REPO = os.environ.get("SPC_CML_GGUF_REPO", "bartowski/Qwen2.5-7B-Instruct-GGUF")
+GGUF_FILE = os.environ.get("SPC_CML_GGUF_FILE", "Qwen2.5-7B-Instruct-Q4_K_M.gguf")
+# -1 = offload todas as camadas para a GPU. Sem build CUDA do llama-cpp-python
+# (rodando so em CPU) o parametro e ignorado silenciosamente — nao quebra nada,
+# so nao acelera. Ver README para a instalacao da wheel com suporte a CUDA.
+N_GPU_LAYERS = int(os.environ.get("SPC_CML_N_GPU_LAYERS", "-1"))
 # O Prompt Semantico completo (protocolos, bloqueios, vetos, ajustes, interacoes,
 # invariantes) mais os 3 exemplares com suas G[y] dao ~3800 tokens; com 1024 de
 # saida, 4096 estourava e o llama.cpp aborta o PROCESSO (GGML_ASSERT em decode),
-# derrubando os cenarios seguintes junto. Qwen2.5 suporta ate 32k.
+# derrubando os cenarios seguintes junto. Qwen2.5 suporta ate 32k — esse teto e
+# sobre o orcamento de prompt+saida, nao sobre o tamanho do modelo, entao vale
+# tanto para o 0.5B quanto para o 7B.
 N_CTX = int(os.environ.get("SPC_CML_N_CTX", "8192"))
 # Os exemplares few-shot tem ~800 caracteres; 512 tokens truncava o plano no meio.
 MAX_TOKENS = int(os.environ.get("SPC_CML_MAX_TOKENS", "1024"))
@@ -113,6 +127,7 @@ def get_llama():
         _LLAMA = Llama(
             model_path=hf_hub_download(GGUF_REPO, GGUF_FILE),
             n_ctx=N_CTX,
+            n_gpu_layers=N_GPU_LAYERS,
             verbose=False,
         )
     return _LLAMA
@@ -154,6 +169,70 @@ def _gerar(prompt: str, regras_hat: dict) -> str:
         repeat_penalty=REPEAT_PENALTY,
     )
     return saida["choices"][0]["text"].strip()
+
+
+# Gramatica GBNF fixa (nao deriva da DSL) so para o formato da resposta desta
+# checagem: forca exatamente duas linhas, "VALIDO"/"INVALIDO" seguido do motivo.
+# O ponto e nao confiar em texto livre nem aqui — a mesma garantia estrutural do
+# resto da arquitetura, so que sobre um julgamento em vez de um plano.
+VALIDACAO_GBNF = r"""
+root ::= status "\nmotivo: " motivo
+status ::= "VALIDO" | "INVALIDO"
+motivo ::= [^\n]+
+"""
+VALIDACAO_MAX_TOKENS = int(os.environ.get("SPC_CML_VALIDACAO_MAX_TOKENS", "200"))
+
+VALIDACAO_INSTRUCAO = """Voce e um verificador de comandos para um sistema de decisao restrita.
+Sua unica tarefa e julgar se o comando abaixo tem informacao suficiente e
+coerente para ser processado, ou se esta contraditorio, ambiguo ou incompleto
+demais.
+
+Considere contraditorio quando o comando pede duas coisas que se cancelam.
+Considere ambiguo quando falta o alvo ou a acao principal fica indefinida.
+Considere incompleto quando falta uma informacao essencial para agir (o que,
+onde, ou em qual produto/farmaco).
+
+comando: {comando}
+
+Responda exatamente neste formato, sem mais nada:
+VALIDO
+motivo: <por que esta claro e completo>
+
+ou
+
+INVALIDO
+motivo: <o que esta contraditorio, ambiguo ou incompleto>
+
+resposta:
+"""
+
+
+def _validar_comando(comando: str) -> tuple[bool, str]:
+    """
+    Julgamento sob a mesma decodificacao restrita do resto do motor — o modelo
+    nao escreve texto livre nem aqui, so preenche VALIDO/INVALIDO + motivo.
+    Usa sempre o llama.cpp, independente de SPC_CML_BACKEND: e uma gramatica
+    pequena e fixa, nao a CFG da DSL onde o backend outlines nao termina a tempo.
+    """
+    from llama_cpp import LlamaGrammar
+
+    llm = get_llama()
+    prompt = VALIDACAO_INSTRUCAO.format(comando=comando)
+    saida = llm(
+        prompt,
+        grammar=LlamaGrammar.from_string(VALIDACAO_GBNF, verbose=False),
+        max_tokens=VALIDACAO_MAX_TOKENS,
+        temperature=0.1,
+    )
+    texto = saida["choices"][0]["text"].strip()
+    linhas = texto.splitlines()
+    status = linhas[0].strip() if linhas else "INVALIDO"
+    motivo = linhas[1][len("motivo: "):].strip() if len(linhas) > 1 else "sem motivo reportado pelo modelo"
+    return status == "VALIDO", motivo
+
+
+class ValidarRequest(BaseModel):
+    comando_humano: str = Field(..., description="Texto digitado pelo usuario, a validar antes de entrar no fluxo")
 
 
 class ICURequest(BaseModel):
@@ -227,6 +306,19 @@ def verify(req: VerifyRequest):
         return {"valido": True}
     except Exception as exc:
         return {"valido": False, "erro": str(exc)}
+
+
+@app.post("/validar-comando")
+def validar_comando(req: ValidarRequest):
+    """
+    Filtro previo ao fluxo principal: o comando digitado e compreensivel o
+    bastante pra virar um plano, ou esta contraditorio/ambiguo/incompleto?
+    Chamado pela CLI interativa antes de acionar a recuperacao no grafo e a
+    geracao — nao substitui a verificacao estrutural de /generate-constrained,
+    so evita gastar uma geracao inteira num comando que ja nasceu inviavel.
+    """
+    compreensivel, motivo = _validar_comando(req.comando_humano)
+    return {"compreensivel": compreensivel, "motivo": motivo}
 
 
 @app.post("/generate-constrained")

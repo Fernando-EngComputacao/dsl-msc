@@ -21,6 +21,8 @@
     "graph:sync:agro": "tsx src/database/neo4j-agro.ts",
     "batch:agro": "tsx src/inference/agro-client.ts",
 
+    "start": "tsx src/inference/cli.ts",
+
     "deploy:med": "bash src/scripts/deploy-med.sh",
     "deploy:agro": "bash src/scripts/deploy-agro.sh",
 

@@ -18,5 +18,9 @@ pyairports
 # Backend padrao de decodificacao restrita: compila a GBNF uma vez e mascara os
 # logits em C++. Substitui o generate.cfg do outlines, que reconstruia um FSM
 # sobre todo o vocabulario a cada terminal (ver SPC_CML_BACKEND em main.py).
+# Esta linha instala a wheel generica (CPU only). Para offload em GPU (ver
+# SPC_CML_N_GPU_LAYERS em main.py), troque por uma wheel pre-compilada com CUDA
+# — nao da para fixar aqui porque depende da versao do CUDA do host. Instrucoes
+# no README, secao "Motor de decodificacao restrita".
 llama-cpp-python
 huggingface-hub

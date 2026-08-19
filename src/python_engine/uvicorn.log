@@ -1,9 +1,0 @@
-INFO:     Started server process [366]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:58686 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58702 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58718 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49076 - "POST /generate-constrained HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58114 - "POST /generate-constrained HTTP/1.1" 200 OK

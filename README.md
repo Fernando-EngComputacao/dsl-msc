@@ -407,6 +407,38 @@ uvicorn main:app --port 8000
 
 O LLM é carregado preguiçosamente: `/health`, `/grammar` e `/verify` funcionam sem GPU.
 
+**Aceleração por GPU (opcional, recomendado com VRAM dedicada):** a wheel padrão de
+`llama-cpp-python` no `requirements.txt` é CPU-only. Para descarregar as camadas do
+modelo na placa de vídeo (`SPC_CML_N_GPU_LAYERS`, ver `main.py`), rode o motor fora do
+Docker, num venv nativo, e instale a wheel pré-compilada com CUDA:
+
+```powershell
+# 1. Confira a versao do driver/CUDA
+nvidia-smi
+
+# 2. Ambiente virtual nativo (fora do container)
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r src\requirements.txt
+
+# 3. Substitui a wheel CPU-only por uma com CUDA (troque cu124 pela sua versao:
+#    cu121/cu122/cu124/cu125 — CUDA 12.1 a 12.5 cobre a maioria dos drivers recentes)
+pip install llama-cpp-python --prefer-binary --force-reinstall --no-deps `
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+
+# 4. Suba so o Neo4j via Docker; o motor Python roda direto no Windows
+docker compose up -d neo4j
+
+# 5. Rode o motor nativamente (NEO4J_URI ja cai em bolt://localhost:7687 por padrao)
+cd src\python_engine
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Confira em `GET /health` se `modelo_carregado` fica `true` após a primeira chamada a
+`/generate-constrained` (o GGUF baixa do Hugging Face na primeira vez). Se o
+`llama_cpp` não foi compilado com CUDA, `n_gpu_layers` é ignorado silenciosamente — o
+motor continua funcionando, só que em CPU.
+
 ```bash
 curl -X POST http://127.0.0.1:8000/verify -H 'Content-Type: application/json' -d '{
   "plano": "plano P para Choque_Septico { esquema_referencia AssistenteUTI_v2 paciente '\''PT-1'\'' sequencia [ Manter_Bloqueio ] ordem Propofol decisao AUMENTAR_VAZAO dose 1.0 mg/kg/h via ACESSO_CENTRAL justificativa '\''x'\'' alerta CRITICO '\''y'\'' regra '\''z'\'' auditoria '\''a'\'' }",
@@ -414,6 +446,23 @@ curl -X POST http://127.0.0.1:8000/verify -H 'Content-Type: application/json' -d
 }'
 # → {"valido": false, ...}
 ```
+
+### 6.6 Entrada interativa
+
+```bash
+npm run start
+```
+
+Pergunta o domínio (agrícola ou clínico) e depois a fonte: rodar a bateria de
+cenários prontos do arquivo (mesmo comportamento de `npm run batch` /
+`npm run batch:agro`) ou digitar um comando novo no terminal.
+
+Um comando digitado passa primeiro por `POST /validar-comando`: o próprio LLM
+local julga — sob a mesma decodificação restrita do resto da arquitetura, nunca
+texto livre — se o comando está contraditório, ambíguo ou incompleto demais. Se
+estiver, pede para digitar de novo; se estiver claro, o comando segue o fluxo
+normal (recuperação no grafo → Prompt Semântico → geração sob mascaramento de
+logits), igual a um cenário do arquivo.
 
 ---
 

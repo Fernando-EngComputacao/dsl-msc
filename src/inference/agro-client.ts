@@ -36,7 +36,7 @@ interface AgroResponse {
 }
 
 /** Telemetria usada quando a entrada e um .txt sem leituras proprias. */
-const TELEMETRIA_PADRAO: AgroContext = {
+export const TELEMETRIA_PADRAO: AgroContext = {
     talhao: 'TL-REFERENCIA',
     telemetria: {
         vento: 14,
@@ -162,10 +162,7 @@ function carregarCenarios(filePath: string): AgroContext[] {
     return linhas.map(l => ({ ...TELEMETRIA_PADRAO, intencao: l.trim() }));
 }
 
-async function main(): Promise<void> {
-    const entrada = process.argv[2] ?? path.join('src', 'examples', 'prompt-agro.txt');
-    const modelPath = process.argv[3] ?? path.join('src', 'examples', 'lavoura.agro');
-
+export async function rodarLote(entrada: string, modelPath: string): Promise<void> {
     if (!fs.existsSync(entrada)) {
         console.error(`Arquivo de cenarios nao encontrado: ${entrada}`);
         process.exit(1);
@@ -231,6 +228,12 @@ async function main(): Promise<void> {
         console.log('='.repeat(78));
         console.log(montarPromptSemanticoAgro(retrieveAgroConstraints(model, cenarios[0])));
     }
+}
+
+async function main(): Promise<void> {
+    const entrada = process.argv[2] ?? path.join('src', 'examples', 'prompt-agro.txt');
+    const modelPath = process.argv[3] ?? path.join('src', 'examples', 'lavoura.agro');
+    await rodarLote(entrada, modelPath);
 }
 
 const isMain = process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]));

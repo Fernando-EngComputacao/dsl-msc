@@ -28,7 +28,7 @@ import {
 import { montarPromptSemantico, gerarPlanoRestrito } from './llm-client.js';
 
 /** Telemetria usada quando a entrada e um .txt sem dados de monitor. */
-const TELEMETRIA_PADRAO: ClinicalContext = {
+export const TELEMETRIA_PADRAO: ClinicalContext = {
     paciente: 'PT-REFERENCIA',
     telemetria: { PAM: 52, FC: 145, lactato: 4.8, RASS: 2, TFG: 28, plaquetas: 45, glicemia: 210 },
     populacoes: ['Renal_Cronico'],
@@ -47,10 +47,7 @@ function carregarCenarios(filePath: string): ClinicalContext[] {
     return linhas.map(l => ({ ...TELEMETRIA_PADRAO, intencao: l.trim() }));
 }
 
-async function main(): Promise<void> {
-    const entrada = process.argv[2] ?? path.join('src', 'examples', 'cenarios.jsonl');
-    const modelPath = process.argv[3] ?? path.join('src', 'examples', 'uti.dsl');
-
+export async function rodarLote(entrada: string, modelPath: string): Promise<void> {
     if (!fs.existsSync(entrada)) {
         console.error(`Arquivo de cenarios nao encontrado: ${entrada}`);
         process.exit(1);
@@ -117,7 +114,16 @@ async function main(): Promise<void> {
     }
 }
 
-main().catch(err => {
-    console.error('Falha no lote:', err.message ?? err);
-    process.exit(1);
-});
+async function main(): Promise<void> {
+    const entrada = process.argv[2] ?? path.join('src', 'examples', 'cenarios.jsonl');
+    const modelPath = process.argv[3] ?? path.join('src', 'examples', 'uti.dsl');
+    await rodarLote(entrada, modelPath);
+}
+
+const isMain = process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]));
+if (isMain) {
+    main().catch(err => {
+        console.error('Falha no lote:', err.message ?? err);
+        process.exit(1);
+    });
+}

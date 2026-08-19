@@ -1,2 +1,16 @@
 /node_modules
 out/
+/venv
+
+# Gerado por `npm run langium:generate` a partir da DSL — nao editar a mao.
+src/generated/
+
+# Cache/artefatos de execucao do motor Python.
+src/python_engine/__pycache__/
+**/__pycache__/
+*.pyc
+src/python_engine/uvicorn.log
+src/python_engine/uvicorn.pid
+
+# Config local (senha do Neo4j, HF_TOKEN) — nunca commitar.
+.env
