@@ -146,11 +146,29 @@ type EmitirEstagio = (texto: string) => Promise<void>;
 const PAUSA_ESTAGIO_MS = 450;
 const pausa = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
-async function processarMed(texto: string, estagio: EmitirEstagio): Promise<RespostaComando> {
-    await estagio('Sorteando paciente e telemetria…');
-    const paciente = linhaAleatoria<PerfilPaciente>(PACIENTES_PATH);
-    const { telemetria } = linhaAleatoria<AmostraTelemetria>(TELEMETRIAS_PATH);
-    const contexto: ClinicalContext = { ...paciente, telemetria, intencao: texto };
+async function processarMed(
+    texto: string,
+    estagio: EmitirEstagio,
+    contextoForcado?: Record<string, unknown>
+): Promise<RespostaComando> {
+    let telemetria: Record<string, number>;
+    let contexto: ClinicalContext;
+    if (contextoForcado) {
+        await estagio('Usando cenário do lote…');
+        telemetria = (contextoForcado.telemetria as Record<string, number>) ?? {};
+        contexto = {
+            paciente: contextoForcado.paciente as string | undefined,
+            populacoes: (contextoForcado.populacoes as string[]) ?? [],
+            farmacosEmUso: (contextoForcado.farmacosEmUso as string[]) ?? [],
+            telemetria,
+            intencao: texto
+        };
+    } else {
+        await estagio('Sorteando paciente e telemetria…');
+        const paciente = linhaAleatoria<PerfilPaciente>(PACIENTES_PATH);
+        telemetria = linhaAleatoria<AmostraTelemetria>(TELEMETRIAS_PATH).telemetria;
+        contexto = { ...paciente, telemetria, intencao: texto };
+    }
 
     await estagio('Buscando regras no grafo de conhecimento…');
     let constraints = retrieveConstraints(modeloMed, contexto);
@@ -178,7 +196,7 @@ async function processarMed(texto: string, estagio: EmitirEstagio): Promise<Resp
 
     const poda = pruningPayload(constraints);
     const promptSemantico = montarPromptSemantico(constraints);
-    const sorteio = { paciente: contexto.paciente, telemetria, populacoes: paciente.populacoes, farmacosEmUso: paciente.farmacosEmUso };
+    const sorteio = { paciente: contexto.paciente, telemetria, populacoes: contexto.populacoes, farmacosEmUso: contexto.farmacosEmUso };
 
     let motivoValidacao: string | undefined;
     if (VALIDACAO_ATIVA) {
@@ -209,11 +227,29 @@ async function processarMed(texto: string, estagio: EmitirEstagio): Promise<Resp
     };
 }
 
-async function processarAgro(texto: string, estagio: EmitirEstagio): Promise<RespostaComando> {
-    await estagio('Sorteando talhão e leitura de sensores…');
-    const talhao = linhaAleatoria<PerfilTalhao>(TALHOES_PATH);
-    const { telemetria } = linhaAleatoria<AmostraTelemetria>(SENSORES_PATH);
-    const contexto: AgroContext = { ...talhao, telemetria, intencao: texto };
+async function processarAgro(
+    texto: string,
+    estagio: EmitirEstagio,
+    contextoForcado?: Record<string, unknown>
+): Promise<RespostaComando> {
+    let telemetria: Record<string, number>;
+    let contexto: AgroContext;
+    if (contextoForcado) {
+        await estagio('Usando cenário do lote…');
+        telemetria = (contextoForcado.telemetria as Record<string, number>) ?? {};
+        contexto = {
+            talhao: contextoForcado.talhao as string | undefined,
+            areas: (contextoForcado.areas as string[]) ?? [],
+            produtosEmUso: (contextoForcado.produtosEmUso as string[]) ?? [],
+            telemetria,
+            intencao: texto
+        };
+    } else {
+        await estagio('Sorteando talhão e leitura de sensores…');
+        const talhao = linhaAleatoria<PerfilTalhao>(TALHOES_PATH);
+        telemetria = linhaAleatoria<AmostraTelemetria>(SENSORES_PATH).telemetria;
+        contexto = { ...talhao, telemetria, intencao: texto };
+    }
 
     await estagio('Buscando regras no grafo de conhecimento…');
     let constraints = retrieveAgroConstraints(modeloAgro, contexto);
@@ -241,7 +277,7 @@ async function processarAgro(texto: string, estagio: EmitirEstagio): Promise<Res
 
     const poda = agroPruningPayload(constraints);
     const promptSemantico = montarPromptSemanticoAgro(constraints);
-    const sorteio = { talhao: contexto.talhao, telemetria, areas: talhao.areas, produtosEmUso: talhao.produtosEmUso };
+    const sorteio = { talhao: contexto.talhao, telemetria, areas: contexto.areas, produtosEmUso: contexto.produtosEmUso };
 
     let motivoValidacao: string | undefined;
     if (VALIDACAO_ATIVA) {
@@ -313,7 +349,11 @@ const servidor = http.createServer(async (req, res) => {
         }
 
         if (req.method === 'POST' && req.url === '/api/comando') {
-            const corpo = JSON.parse((await lerCorpo(req)) || '{}') as { dominio?: string; texto?: string };
+            const corpo = JSON.parse((await lerCorpo(req)) || '{}') as {
+                dominio?: string;
+                texto?: string;
+                contexto?: Record<string, unknown>;
+            };
             const dominio = corpo.dominio;
             const texto = (corpo.texto ?? '').trim();
 
@@ -346,7 +386,9 @@ const servidor = http.createServer(async (req, res) => {
 
             try {
                 const resultado =
-                    dominio === 'med' ? await processarMed(texto, estagio) : await processarAgro(texto, estagio);
+                    dominio === 'med'
+                        ? await processarMed(texto, estagio, corpo.contexto)
+                        : await processarAgro(texto, estagio, corpo.contexto);
                 emitir('final', resultado);
             } catch (error) {
                 emitir('erro', { erro: (error as Error).message });

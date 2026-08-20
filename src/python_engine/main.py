@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from unittest.mock import MagicMock
 
 # outlines 0.0.46 importa pacotes de dominio irrelevantes para este uso e que
@@ -116,6 +117,21 @@ _MODEL = None   # backend outlines (transformers)
 _LLAMA = None   # backend llama.cpp (GGUF)
 _EMBED = None   # modelo de embedding (CPU)
 
+# FastAPI roda endpoints sync (def, nao async def) numa threadpool — duas
+# requisicoes concorrentes (ex.: /embed e /generate-constrained ao mesmo tempo)
+# chamam llama.cpp de threads diferentes. O binding nao e thread-safe para uso
+# concorrente sobre o mesmo dispositivo CUDA: os dois modelos (LLM + embedder)
+# compartilham o alocador de pool de memoria da GPU, e uma chamada a
+# llama_decode() enquanto outra ainda esta em andamento corrompe a contabilidade
+# do pool — e exatamente o `GGML_ASSERT(ptr == pool_addr + pool_used)` que
+# derrubava o processo inteiro. O lock serializa toda chamada real ao llama.cpp
+# (geracao, validacao, embedding); o resto do pipeline (grafo, poda, parsing)
+# continua concorrente normalmente.
+# RLock, nao Lock: get_embedder() carrega o LLM principal primeiro (ver
+# comentario em get_embedder) e ambos tomam o lock — a mesma thread precisa
+# poder re-entrar.
+_LLAMA_LOCK = threading.RLock()
+
 
 def get_model():
     global _MODEL
@@ -128,43 +144,45 @@ def get_model():
 
 def get_llama():
     global _LLAMA
-    if _LLAMA is None:
-        from huggingface_hub import hf_hub_download
-        from llama_cpp import Llama
+    with _LLAMA_LOCK:
+        if _LLAMA is None:
+            from huggingface_hub import hf_hub_download
+            from llama_cpp import Llama
 
-        _LLAMA = Llama(
-            model_path=hf_hub_download(GGUF_REPO, GGUF_FILE),
-            n_ctx=N_CTX,
-            n_gpu_layers=N_GPU_LAYERS,
-            verbose=False,
-        )
-    return _LLAMA
+            _LLAMA = Llama(
+                model_path=hf_hub_download(GGUF_REPO, GGUF_FILE),
+                n_ctx=N_CTX,
+                n_gpu_layers=N_GPU_LAYERS,
+                verbose=False,
+            )
+        return _LLAMA
 
 
 def get_embedder():
     global _EMBED
-    if _EMBED is None:
-        # O llama.cpp inicializa um contexto CUDA (com overhead de VRAM) mesmo
-        # para n_gpu_layers=0 — o backend e compilado com suporte a GPU e sonda o
-        # dispositivo ao carregar qualquer modelo, use-o ou nao. Carregar o
-        # embedder primeiro reservaria esse overhead antes do modelo principal
-        # pedir os ~4.7 GB dos pesos, e o cudaMalloc falha por pouco. Garantir
-        # que o modelo principal carrega primeiro elimina a dependencia de
-        # ordem: depois dele, o overhead do embedder cabe folgado no restante.
-        if BACKEND == "llamacpp":
-            get_llama()
+    with _LLAMA_LOCK:
+        if _EMBED is None:
+            # O llama.cpp inicializa um contexto CUDA (com overhead de VRAM) mesmo
+            # para n_gpu_layers=0 — o backend e compilado com suporte a GPU e sonda o
+            # dispositivo ao carregar qualquer modelo, use-o ou nao. Carregar o
+            # embedder primeiro reservaria esse overhead antes do modelo principal
+            # pedir os ~4.7 GB dos pesos, e o cudaMalloc falha por pouco. Garantir
+            # que o modelo principal carrega primeiro elimina a dependencia de
+            # ordem: depois dele, o overhead do embedder cabe folgado no restante.
+            if BACKEND == "llamacpp":
+                get_llama()
 
-        from huggingface_hub import hf_hub_download
-        from llama_cpp import Llama
+            from huggingface_hub import hf_hub_download
+            from llama_cpp import Llama
 
-        _EMBED = Llama(
-            model_path=hf_hub_download(EMBED_GGUF_REPO, EMBED_GGUF_FILE),
-            embedding=True,
-            n_ctx=EMBED_N_CTX,
-            n_gpu_layers=0,
-            verbose=False,
-        )
-    return _EMBED
+            _EMBED = Llama(
+                model_path=hf_hub_download(EMBED_GGUF_REPO, EMBED_GGUF_FILE),
+                embedding=True,
+                n_ctx=EMBED_N_CTX,
+                n_gpu_layers=0,
+                verbose=False,
+            )
+        return _EMBED
 
 
 def _modelo_carregado() -> bool:
@@ -193,15 +211,16 @@ def _gerar(prompt: str, regras_hat: dict) -> str:
             ),
         )
 
-    saida = llm(
-        prompt,
-        grammar=LlamaGrammar.from_string(
-            to_gbnf(regras_hat, start=INICIO, max_itens=MAX_ITENS), verbose=False
-        ),
-        max_tokens=MAX_TOKENS,
-        temperature=TEMPERATURA,
-        repeat_penalty=REPEAT_PENALTY,
-    )
+    with _LLAMA_LOCK:
+        saida = llm(
+            prompt,
+            grammar=LlamaGrammar.from_string(
+                to_gbnf(regras_hat, start=INICIO, max_itens=MAX_ITENS), verbose=False
+            ),
+            max_tokens=MAX_TOKENS,
+            temperature=TEMPERATURA,
+            repeat_penalty=REPEAT_PENALTY,
+        )
     return saida["choices"][0]["text"].strip()
 
 
@@ -252,12 +271,13 @@ def _validar_comando(comando: str) -> tuple[bool, str]:
 
     llm = get_llama()
     prompt = VALIDACAO_INSTRUCAO.format(comando=comando)
-    saida = llm(
-        prompt,
-        grammar=LlamaGrammar.from_string(VALIDACAO_GBNF, verbose=False),
-        max_tokens=VALIDACAO_MAX_TOKENS,
-        temperature=0.1,
-    )
+    with _LLAMA_LOCK:
+        saida = llm(
+            prompt,
+            grammar=LlamaGrammar.from_string(VALIDACAO_GBNF, verbose=False),
+            max_tokens=VALIDACAO_MAX_TOKENS,
+            temperature=0.1,
+        )
     texto = saida["choices"][0]["text"].strip()
     linhas = texto.splitlines()
     status = linhas[0].strip() if linhas else "INVALIDO"
@@ -369,7 +389,8 @@ def embed(req: EmbedRequest):
     consulta (embute a intencao digitada para achar os nos mais proximos no
     indice vetorial). Mesmo modelo dos dois lados — vetores comparaveis.
     """
-    vetor = get_embedder().create_embedding(req.texto)["data"][0]["embedding"]
+    with _LLAMA_LOCK:
+        vetor = get_embedder().create_embedding(req.texto)["data"][0]["embedding"]
     return {"vetor": vetor, "dimensoes": len(vetor)}
 
 

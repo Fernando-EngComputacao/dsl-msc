@@ -36,12 +36,13 @@ export async function enviarComandoStream(
     dominio: string,
     texto: string,
     aoEstagio: (texto: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    contexto?: Record<string, unknown>
 ): Promise<RespostaComando> {
     const resp = await fetch(`${BASE_URL}/api/comando`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dominio, texto }),
+        body: JSON.stringify(contexto ? { dominio, texto, contexto } : { dominio, texto }),
         signal
     });
 

@@ -3,11 +3,13 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import DomainPicker from './components/DomainPicker.vue';
 import ChatMessage from './components/ChatMessage.vue';
 import ModelSwitchDivider from './components/ModelSwitchDivider.vue';
+import BatchProgress from './components/BatchProgress.vue';
 import ConfirmModal from './components/ConfirmModal.vue';
 import { buscarDominios, enviarComandoStream, type Dominio } from './api';
-import type { Mensagem } from './types';
+import type { Mensagem, ItemResultadoLote } from './types';
+import { parseArquivoLote, type CenarioLote } from './lote';
 import { escuro, iniciarTema, alternarTema } from './theme';
-import logoUfg from './assets/imgs/logo_pppgcc_inf_ufg.png';
+import logoUfg from './assets/imgs/logo_ufg.png';
 
 const dominios = ref<Dominio[]>([]);
 const dominioAtual = ref<'med' | 'agro'>('med');
@@ -22,6 +24,11 @@ let proximoId = 1;
 const controladorAtual = ref<AbortController | null>(null);
 const modalTrocaAberto = ref(false);
 const dominioPendente = ref<'med' | 'agro' | null>(null);
+
+const inputArquivoLote = ref<HTMLInputElement | null>(null);
+const loteAtivo = ref(false);
+const loteControlador = ref<AbortController | null>(null);
+const modalPararLoteAberto = ref(false);
 
 function nomeDominio(id: 'med' | 'agro'): string {
     return dominios.value.find(d => d.id === id)?.nome ?? id;
@@ -61,7 +68,7 @@ async function rolarParaFinal(): Promise<void> {
 
 async function enviar(textoForcado?: string): Promise<void> {
     const texto = (textoForcado ?? textoInput.value).trim();
-    if (!texto || enviando.value) return;
+    if (!texto || enviando.value || loteAtivo.value) return;
 
     textoInput.value = '';
     enviando.value = true;
@@ -138,7 +145,7 @@ function aoEscolherDominio(novo: string): void {
     const alvo = novo as 'med' | 'agro';
     if (alvo === dominioAtual.value) return;
 
-    if (enviando.value) {
+    if (enviando.value || loteAtivo.value) {
         dominioPendente.value = alvo;
         modalTrocaAberto.value = true;
         return;
@@ -156,6 +163,10 @@ function confirmarTrocaDominio(): void {
     }
     controladorAtual.value?.abort();
 
+    const loteEmAndamento = mensagens.value.find(m => m.autor === 'lote' && m.lote && !m.lote.finalizado);
+    if (loteEmAndamento?.lote) loteEmAndamento.lote.cancelado = true;
+    loteControlador.value?.abort();
+
     const novo = dominioPendente.value;
     modalTrocaAberto.value = false;
     dominioPendente.value = null;
@@ -165,6 +176,140 @@ function confirmarTrocaDominio(): void {
 function cancelarTrocaDominio(): void {
     modalTrocaAberto.value = false;
     dominioPendente.value = null;
+}
+
+function abrirSeletorArquivo(): void {
+    if (enviando.value || loteAtivo.value) return;
+    inputArquivoLote.value?.click();
+}
+
+async function aoSelecionarArquivo(evento: Event): Promise<void> {
+    const input = evento.target as HTMLInputElement;
+    const arquivo = input.files?.[0];
+    input.value = '';
+    if (!arquivo || enviando.value || loteAtivo.value) return;
+
+    const dominio = dominioAtual.value;
+    let cenarios: CenarioLote[];
+    try {
+        const conteudo = await arquivo.text();
+        cenarios = parseArquivoLote(arquivo.name, conteudo, dominio);
+    } catch (error) {
+        mensagens.value.push({
+            id: proximoId++,
+            autor: 'assistente',
+            dominio,
+            erro: `Falha ao ler "${arquivo.name}": ${(error as Error).message}`
+        });
+        rolarParaFinal();
+        return;
+    }
+
+    const idLote = proximoId++;
+    mensagens.value.push({
+        id: idLote,
+        autor: 'lote',
+        dominio,
+        lote: {
+            nomeArquivo: arquivo.name,
+            total: cenarios.length,
+            concluidos: 0,
+            cancelado: false,
+            finalizado: false,
+            resultados: []
+        }
+    });
+    rolarParaFinal();
+    await rodarLote(cenarios, idLote, dominio);
+}
+
+/** Roda o pipeline completo uma vez por cenario do lote, sequencialmente — permite
+ *  acompanhar "N/total concluidos" e cancelar entre um cenario e outro. */
+async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med' | 'agro'): Promise<void> {
+    const msg = mensagens.value.find(m => m.id === idLote);
+    if (!msg?.lote) return;
+
+    loteAtivo.value = true;
+    const controlador = new AbortController();
+    loteControlador.value = controlador;
+
+    for (const [i, cenario] of cenarios.entries()) {
+        if (controlador.signal.aborted) break;
+
+        let item: ItemResultadoLote;
+        try {
+            const resposta = await enviarComandoStream(
+                dominio,
+                cenario.intencao,
+                textoEstagio => {
+                    msg.lote!.estagioAtual = textoEstagio;
+                },
+                controlador.signal,
+                cenario.contexto
+            );
+            item = {
+                linha: i + 1,
+                intencao: cenario.intencao,
+                aceito: resposta.aceito,
+                valido: resposta.valido,
+                erroMotor: resposta.erroMotor,
+                regrasEmGHat: resposta.regrasEmGHat,
+                telemetria: resposta.sorteio,
+                promptSemantico: resposta.promptSemantico,
+                foco: resposta.foco,
+                plano: resposta.resultado
+            };
+        } catch (error) {
+            if ((error as Error).name === 'AbortError') break;
+            item = { linha: i + 1, intencao: cenario.intencao, aceito: false, erro: (error as Error).message };
+        }
+
+        msg.lote.resultados.push(item);
+        msg.lote.concluidos++;
+        rolarParaFinal();
+    }
+
+    msg.lote.finalizado = true;
+    msg.lote.estagioAtual = undefined;
+    loteAtivo.value = false;
+    loteControlador.value = null;
+}
+
+function pedirPararLote(): void {
+    modalPararLoteAberto.value = true;
+}
+
+function confirmarPararLote(): void {
+    modalPararLoteAberto.value = false;
+    const msg = mensagens.value.find(m => m.autor === 'lote' && m.lote && !m.lote.finalizado);
+    if (msg?.lote) msg.lote.cancelado = true;
+    loteControlador.value?.abort();
+}
+
+function cancelarPararLote(): void {
+    modalPararLoteAberto.value = false;
+}
+
+function nomeArquivoLote(): string {
+    const d = new Date();
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}_${d.getFullYear()}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.jsonl`;
+}
+
+function baixarResultadosLote(msg: Mensagem): void {
+    const l = msg.lote;
+    if (!l) return;
+
+    const conteudo = l.resultados.map(r => JSON.stringify(r)).join('\n');
+    const blob = new Blob([conteudo], { type: 'application/x-ndjson;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `results/${nomeArquivoLote()}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
 }
 </script>
 
@@ -191,7 +336,16 @@ function cancelarTrocaDominio(): void {
             <span class="justify-self-start text-sm font-medium text-neutral-500 dark:text-neutral-400">SPC-CML</span>
 
             <div class="justify-self-center ">
+                INF
+                <span class="text-xs text-neutral-400 dark:text-neutral-500"> · </span>
+                PPGCC
+                <span class="text-xs text-neutral-400 dark:text-neutral-500"> · </span>
+                UFG
+
+                <div>
                 <img :src="logoUfg" alt="PPGCC · INF · UFG" class="h-10 w-auto" />
+
+                </div>
             </div>
 
             <button
@@ -230,6 +384,7 @@ function cancelarTrocaDominio(): void {
             <div v-else class="mx-auto max-w-3xl">
                 <template v-for="m in mensagens">
                     <ModelSwitchDivider v-if="m.autor === 'sistema'" :key="`d-${m.id}`" :dominio-nome="m.dominioNome ?? ''" />
+                    <BatchProgress v-else-if="m.autor === 'lote'" :key="`l-${m.id}`" :mensagem="m" @baixar="baixarResultadosLote(m)" />
                     <ChatMessage v-else :key="`m-${m.id}`" :mensagem="m" />
                 </template>
             </div>
@@ -237,6 +392,32 @@ function cancelarTrocaDominio(): void {
 
         <footer class="relative z-10 px-4 pb-4.5 sm:px-6">
             <div class="mx-auto flex max-w-3xl items-end gap-2 rounded-3xl bg-neutral-100 py-2 pr-2 pl-5 dark:border dark:border-white/10 dark:bg-white/5 dark:shadow-xl dark:shadow-black/20 dark:backdrop-blur-xl">
+                <input
+                    ref="inputArquivoLote"
+                    type="file"
+                    accept=".jsonl,.csv"
+                    class="hidden"
+                    @change="aoSelecionarArquivo"
+                />
+                <button
+                    type="button"
+                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-200 disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-white/10"
+                    :disabled="enviando || loteAtivo"
+                    title="Enviar arquivo .jsonl/.csv em lote"
+                    @click="abrirSeletorArquivo"
+                >
+                    <svg width="18" height="18" viewBox="0 0 24 24">
+                        <path
+                            d="M21.44 11.05l-8.49 8.49a5 5 0 01-7.07-7.07l8.49-8.49a3.5 3.5 0 014.95 4.95l-8.49 8.49a2 2 0 01-2.83-2.83l7.78-7.78"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        />
+                    </svg>
+                </button>
+
                 <textarea
                     v-model="textoInput"
                     rows="1"
@@ -256,11 +437,11 @@ function cancelarTrocaDominio(): void {
                 <button
                     type="button"
                     class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition-colors disabled:bg-neutral-300 disabled:text-neutral-500 dark:disabled:bg-neutral-700 dark:disabled:text-neutral-400"
-                    :disabled="!enviando && !textoInput.trim()"
-                    :title="enviando ? 'Parar' : 'Enviar'"
-                    @click="enviando ? pararGeracao() : enviar()"
+                    :disabled="!enviando && !loteAtivo && !textoInput.trim()"
+                    :title="enviando ? 'Parar' : loteAtivo ? 'Parar lote' : 'Enviar'"
+                    @click="enviando ? pararGeracao() : loteAtivo ? pedirPararLote() : enviar()"
                 >
-                    <svg v-if="enviando" width="14" height="14" viewBox="0 0 24 24">
+                    <svg v-if="enviando || loteAtivo" width="14" height="14" viewBox="0 0 24 24">
                         <rect x="5" y="5" width="14" height="14" rx="2.5" fill="currentColor" />
                     </svg>
                     <svg v-else width="19" height="19" viewBox="0 0 24 24">
@@ -282,6 +463,16 @@ function cancelarTrocaDominio(): void {
             texto-cancelar="Cancelar"
             @confirmar="confirmarTrocaDominio"
             @cancelar="cancelarTrocaDominio"
+        />
+
+        <ConfirmModal
+            :aberto="modalPararLoteAberto"
+            titulo="Encerrar o lote?"
+            mensagem="Isso vai parar o processamento do arquivo em lote. Os resultados já concluídos continuam disponíveis para download."
+            texto-confirmar="Encerrar lote"
+            texto-cancelar="Continuar"
+            @confirmar="confirmarPararLote"
+            @cancelar="cancelarPararLote"
         />
     </div>
 </template>

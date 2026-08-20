@@ -168,7 +168,7 @@ function baixar(): void {
                 </svg>
             </div>
             <div class="min-w-0 flex-1 pt-0.5">
-                <div v-if="mensagem.carregando" class="flex items-center gap-2.5 py-2">
+                <div v-if="mensagem.carregando" class="flex flex-col items-start justify-center gap-2.5 py-2">
                     <span class="flex gap-1">
                         <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-neutral-400 [animation-delay:-0.3s] dark:bg-neutral-500"></span>
                         <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-neutral-400 [animation-delay:-0.15s] dark:bg-neutral-500"></span>
