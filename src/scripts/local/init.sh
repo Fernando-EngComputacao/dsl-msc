@@ -2,9 +2,10 @@
 
 # Sobe o ambiente local COMPLETO do SPC-CML — fora do Docker, tudo no host.
 #
-# Diferente de src/scripts/init.sh, que reconstroi os containers e roda o deploy
-# dentro deles, este script assume o caminho nativo do README (secao 6.5): as
-# dependencias Python vivem num venv local e o motor roda direto no host.
+# Diferente de src/scripts/docker/init-docker.sh, que reconstroi os containers
+# e deixa o motor pronto para os scripts de docker/, este script assume o
+# caminho nativo do README (secao 6.5): as dependencias Python vivem num venv
+# local e o motor roda direto no host.
 #
 # Sobe, nesta ordem:
 #   Neo4j (apenas verifica)     bolt://localhost:7687
@@ -20,15 +21,20 @@
 # processos, e o llama.cpp os mapeia com mmap — as paginas do modelo sao
 # compartilhadas pelo cache do SO, entao o custo de RAM nao dobra.
 #
-# Uso:
-#   ./init.sh                sobe tudo e deixa os modelos quentes
-#   ./init.sh --sem-sync     nao re-sincroniza os grafos (subida mais rapida)
-#   ./init.sh --sem-chat     so a infraestrutura, sem o front Vue
-#   ./init.sh --parar        derruba tudo que este script subiu
+# Ficam ativos ao final tambem para servir de base aos deploys em lote: depois
+# deste script, "bash src/scripts/local/deploy-med.sh" ou "deploy-agro.sh"
+# encontram o motor do dominio certo ja no ar (subir_motor detecta e nao
+# reinicia) e vao direto para a inferencia em lote.
+#
+# Uso (a partir de qualquer diretorio):
+#   bash src/scripts/local/init.sh                sobe tudo e deixa os modelos quentes
+#   bash src/scripts/local/init.sh --sem-sync      nao re-sincroniza os grafos (subida mais rapida)
+#   bash src/scripts/local/init.sh --sem-chat      so a infraestrutura, sem o front Vue
+#   bash src/scripts/local/init.sh --parar         derruba tudo que este script subiu
 
 set -euo pipefail
 
-raiz="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+raiz="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$raiz"
 
 EXEC_DIR=".run"
@@ -54,7 +60,7 @@ for arg in "$@"; do
         --parar) apenas_parar=1 ;;
         *)
             echo "argumento desconhecido: $arg"
-            echo "uso: ./init.sh [--sem-sync] [--sem-chat] [--parar]"
+            echo "uso: bash src/scripts/local/init.sh [--sem-sync] [--sem-chat] [--parar]"
             exit 1
             ;;
     esac
@@ -180,7 +186,7 @@ subir_motor_local() {
             return 0
         fi
         echo "   ❌ a porta $porta tem um motor no dominio '$atual', nao '$dominio'."
-        echo "      ./init.sh --parar     (ou derrube o processo que ocupa a porta)"
+        echo "      bash src/scripts/local/init.sh --parar     (ou derrube o processo que ocupa a porta)"
         exit 1
     fi
 
@@ -308,5 +314,6 @@ echo "   Motor agro      $URL_AGRO/health"
 echo "   Neo4j Browser   http://localhost:7474"
 echo
 echo "   Logs            $EXEC_DIR/*.log"
-echo "   Derrubar tudo   ./init.sh --parar"
+echo "   Deploy em lote   bash src/scripts/local/deploy-med.sh  |  deploy-agro.sh"
+echo "   Derrubar tudo    bash src/scripts/local/init.sh --parar"
 echo "===================================================="

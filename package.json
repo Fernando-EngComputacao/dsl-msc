@@ -24,8 +24,10 @@
     "start": "tsx src/inference/cli.ts",
     "web:api": "tsx src/web/server.ts",
 
-    "deploy:med": "bash src/scripts/deploy-med.sh",
-    "deploy:agro": "bash src/scripts/deploy-agro.sh",
+    "deploy:med": "bash src/scripts/local/deploy-med.sh",
+    "deploy:agro": "bash src/scripts/local/deploy-agro.sh",
+    "deploy:docker:med": "bash src/scripts/docker/deploy-docker-med.sh",
+    "deploy:docker:agro": "bash src/scripts/docker/deploy-docker-agro.sh",
 
     "test:model": "tsx src/test/test.ts",
     "test:earley": "tsx src/test/earley.test.ts",

@@ -7,13 +7,15 @@
 cd "$(dirname "$0")/../.."
 
 echo "===================================================="
-echo "ℹ️  O deploy agora é separado por domínio:"
+echo "ℹ️  O deploy agora é separado por domínio e por ambiente:"
 echo
-echo "      src/scripts/deploy-med.sh    clínico  (uti.dsl)"
-echo "      src/scripts/deploy-agro.sh   agrícola (lavoura.agro)"
+echo "      src/scripts/local/deploy-med.sh           clínico  (host/venv)"
+echo "      src/scripts/local/deploy-agro.sh          agrícola (host/venv)"
+echo "      src/scripts/docker/deploy-docker-med.sh    clínico  (container)"
+echo "      src/scripts/docker/deploy-docker-agro.sh   agrícola (container)"
 echo
-echo "   Encaminhando para o clínico..."
+echo "   Encaminhando para o clínico local..."
 echo "===================================================="
 echo
 
-exec bash src/scripts/deploy-med.sh "$@"
+exec bash src/scripts/local/deploy-med.sh "$@"

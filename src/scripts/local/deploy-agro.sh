@@ -3,7 +3,7 @@
 # Encerra o script imediatamente se algum comando falhar
 set -e
 
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../../.."
 source src/scripts/lib-motor.sh
 
 echo "===================================================="

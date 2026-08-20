@@ -58,10 +58,9 @@ subir_motor() {
     if ! command -v uvicorn > /dev/null 2>&1; then
         echo "   ❌ 'uvicorn' não existe neste ambiente."
         echo
-        echo "   As dependências Python vivem no container, não no host Windows."
-        echo "   Rode o deploy de dentro dele:"
+        echo "   Ou ative o venv local (README secao 6.5), ou rode via Docker:"
         echo
-        echo "       docker exec -it dsl_cml_engine bash src/scripts/$(basename "$0")"
+        echo "       bash src/scripts/docker/deploy-docker-$([ "$dominio" = medico ] && echo med || echo agro).sh"
         echo
         exit 1
     fi

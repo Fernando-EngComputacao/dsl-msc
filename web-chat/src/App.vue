@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue';
 import DomainPicker from './components/DomainPicker.vue';
+import DomainModal from './components/DomainModal.vue';
 import ChatMessage from './components/ChatMessage.vue';
 import ModelSwitchDivider from './components/ModelSwitchDivider.vue';
 import BatchProgress from './components/BatchProgress.vue';
@@ -29,6 +30,8 @@ const inputArquivoLote = ref<HTMLInputElement | null>(null);
 const loteAtivo = ref(false);
 const loteControlador = ref<AbortController | null>(null);
 const modalPararLoteAberto = ref(false);
+const modalEscolherModeloLoteAberto = ref(false);
+const dominioLoteSelecionado = ref<'med' | 'agro' | null>(null);
 
 function nomeDominio(id: 'med' | 'agro'): string {
     return dominios.value.find(d => d.id === id)?.nome ?? id;
@@ -180,16 +183,29 @@ function cancelarTrocaDominio(): void {
 
 function abrirSeletorArquivo(): void {
     if (enviando.value || loteAtivo.value) return;
+    modalEscolherModeloLoteAberto.value = true;
+}
+
+function escolherModeloLote(id: string): void {
+    modalEscolherModeloLoteAberto.value = false;
+    const dominio = id as 'med' | 'agro';
+    dominioLoteSelecionado.value = dominio;
+    if (dominio !== dominioAtual.value) trocarDominio(dominio);
     inputArquivoLote.value?.click();
+}
+
+function cancelarEscolhaModeloLote(): void {
+    modalEscolherModeloLoteAberto.value = false;
 }
 
 async function aoSelecionarArquivo(evento: Event): Promise<void> {
     const input = evento.target as HTMLInputElement;
     const arquivo = input.files?.[0];
     input.value = '';
+    const dominio = dominioLoteSelecionado.value ?? dominioAtual.value;
+    dominioLoteSelecionado.value = null;
     if (!arquivo || enviando.value || loteAtivo.value) return;
 
-    const dominio = dominioAtual.value;
     let cenarios: CenarioLote[];
     try {
         const conteudo = await arquivo.text();
@@ -335,16 +351,38 @@ function baixarResultadosLote(msg: Mensagem): void {
         >
             <span class="justify-self-start text-sm font-medium text-neutral-500 dark:text-neutral-400">SPC-CML</span>
 
-            <div class="justify-self-center ">
-                INF
-                <span class="text-xs text-neutral-400 dark:text-neutral-500"> · </span>
-                PPGCC
-                <span class="text-xs text-neutral-400 dark:text-neutral-500"> · </span>
-                UFG
+            <!-- Logo da instituição -->
+            <div class="flex items-center justify-self-center gap-4">
+                <div>
+                    <p class="text-xs leading-none font-bold text-neutral-800 dark:text-neutral-100">PPGCC</p>
+                    <p class="mt-1 text-[9px] leading-tight tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+                        Programa de
+                        <br />
+                        Pós-Graduação em
+                        <br />
+                        Ciência da Computação
+                    </p>
+                </div>
 
                 <div>
-                <img :src="logoUfg" alt="PPGCC · INF · UFG" class="h-10 w-auto" />
+                    <p class="text-xs leading-none font-bold text-neutral-800 dark:text-neutral-100">INF</p>
+                    <p class="mt-1 text-[9px] leading-tight tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+                        Instituto de
+                        <br />
+                        Informática
+                    </p>
+                </div>
 
+                <div class="flex items-center gap-1.5">
+                    <img :src="logoUfg" alt="UFG" class="h-8 w-auto" />
+                    <div>
+                        <p class="text-xs leading-none font-bold text-neutral-800 dark:text-neutral-100">UFG</p>
+                        <p class="mt-1 text-[9px] leading-tight tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+                            Universidade
+                            <br />
+                            Federal de Goiás
+                        </p>
+                    </div>
                 </div>
             </div>
 
@@ -399,24 +437,31 @@ function baixarResultadosLote(msg: Mensagem): void {
                     class="hidden"
                     @change="aoSelecionarArquivo"
                 />
-                <button
-                    type="button"
-                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-200 disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-white/10"
-                    :disabled="enviando || loteAtivo"
-                    title="Enviar arquivo .jsonl/.csv em lote"
-                    @click="abrirSeletorArquivo"
+                <DomainModal
+                    :aberto="modalEscolherModeloLoteAberto"
+                    :dominios="dominios"
+                    @selecionar="escolherModeloLote"
+                    @cancelar="cancelarEscolhaModeloLote"
                 >
-                    <svg width="18" height="18" viewBox="0 0 24 24">
-                        <path
-                            d="M21.44 11.05l-8.49 8.49a5 5 0 01-7.07-7.07l8.49-8.49a3.5 3.5 0 014.95 4.95l-8.49 8.49a2 2 0 01-2.83-2.83l7.78-7.78"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        />
-                    </svg>
-                </button>
+                    <button
+                        type="button"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-200 disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-white/10"
+                        :disabled="enviando || loteAtivo"
+                        title="Enviar arquivo .jsonl/.csv em lote"
+                        @click="abrirSeletorArquivo"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24">
+                            <path
+                                d="M21.44 11.05l-8.49 8.49a5 5 0 01-7.07-7.07l8.49-8.49a3.5 3.5 0 014.95 4.95l-8.49 8.49a2 2 0 01-2.83-2.83l7.78-7.78"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            />
+                        </svg>
+                    </button>
+                </DomainModal>
 
                 <textarea
                     v-model="textoInput"
