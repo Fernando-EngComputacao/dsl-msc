@@ -35,12 +35,14 @@ export async function buscarDominios(): Promise<Dominio[]> {
 export async function enviarComandoStream(
     dominio: string,
     texto: string,
-    aoEstagio: (texto: string) => void
+    aoEstagio: (texto: string) => void,
+    signal?: AbortSignal
 ): Promise<RespostaComando> {
     const resp = await fetch(`${BASE_URL}/api/comando`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dominio, texto })
+        body: JSON.stringify({ dominio, texto }),
+        signal
     });
 
     if (!resp.ok || !resp.body) {

@@ -2,6 +2,8 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import DomainPicker from './components/DomainPicker.vue';
 import ChatMessage from './components/ChatMessage.vue';
+import ModelSwitchDivider from './components/ModelSwitchDivider.vue';
+import ConfirmModal from './components/ConfirmModal.vue';
 import { buscarDominios, enviarComandoStream, type Dominio } from './api';
 import type { Mensagem } from './types';
 import { escuro, iniciarTema, alternarTema } from './theme';
@@ -16,6 +18,14 @@ const textoInput = ref('');
 const enviando = ref(false);
 const areaMensagens = ref<HTMLElement | null>(null);
 let proximoId = 1;
+
+const controladorAtual = ref<AbortController | null>(null);
+const modalTrocaAberto = ref(false);
+const dominioPendente = ref<'med' | 'agro' | null>(null);
+
+function nomeDominio(id: 'med' | 'agro'): string {
+    return dominios.value.find(d => d.id === id)?.nome ?? id;
+}
 
 const SUGESTOES: Record<'med' | 'agro', string[]> = {
     med: [
@@ -55,6 +65,8 @@ async function enviar(textoForcado?: string): Promise<void> {
 
     textoInput.value = '';
     enviando.value = true;
+    const controlador = new AbortController();
+    controladorAtual.value = controlador;
 
     mensagens.value.push({ id: proximoId++, autor: 'usuario', dominio: dominioAtual.value, texto });
     const idResposta = proximoId++;
@@ -62,11 +74,16 @@ async function enviar(textoForcado?: string): Promise<void> {
     rolarParaFinal();
 
     try {
-        const resposta = await enviarComandoStream(dominioAtual.value, texto, textoEstagio => {
-            const alvo = mensagens.value.find(m => m.id === idResposta);
-            if (alvo) alvo.estagio = textoEstagio;
-            rolarParaFinal();
-        });
+        const resposta = await enviarComandoStream(
+            dominioAtual.value,
+            texto,
+            textoEstagio => {
+                const alvo = mensagens.value.find(m => m.id === idResposta);
+                if (alvo) alvo.estagio = textoEstagio;
+                rolarParaFinal();
+            },
+            controlador.signal
+        );
         const alvo = mensagens.value.find(m => m.id === idResposta);
         if (alvo) {
             alvo.carregando = false;
@@ -74,6 +91,10 @@ async function enviar(textoForcado?: string): Promise<void> {
             alvo.texto = texto;
         }
     } catch (error) {
+        // Abortado por causa de uma troca de modelo confirmada: essa mensagem ja
+        // foi marcada como interrompida em confirmarTrocaDominio, nada a fazer aqui.
+        if ((error as Error).name === 'AbortError') return;
+
         const alvo = mensagens.value.find(m => m.id === idResposta);
         if (alvo) {
             alvo.carregando = false;
@@ -81,6 +102,7 @@ async function enviar(textoForcado?: string): Promise<void> {
         }
     } finally {
         enviando.value = false;
+        controladorAtual.value = null;
         rolarParaFinal();
     }
 }
@@ -91,17 +113,66 @@ function aoTeclar(evento: KeyboardEvent): void {
         enviar();
     }
 }
+
+/** Aplica a troca de dominio de fato: atualiza o estado e anuncia na conversa. */
+function trocarDominio(novo: 'med' | 'agro'): void {
+    dominioAtual.value = novo;
+    if (mensagens.value.length > 0) {
+        mensagens.value.push({ id: proximoId++, autor: 'sistema', dominio: novo, dominioNome: nomeDominio(novo) });
+        rolarParaFinal();
+    }
+}
+
+/** Handler do DomainPicker: so troca na hora se nao houver nada em andamento. */
+function aoEscolherDominio(novo: string): void {
+    const alvo = novo as 'med' | 'agro';
+    if (alvo === dominioAtual.value) return;
+
+    if (enviando.value) {
+        dominioPendente.value = alvo;
+        modalTrocaAberto.value = true;
+        return;
+    }
+    trocarDominio(alvo);
+}
+
+function confirmarTrocaDominio(): void {
+    if (!dominioPendente.value) return;
+
+    const emAndamento = mensagens.value.find(m => m.autor === 'assistente' && m.carregando);
+    if (emAndamento) {
+        emAndamento.carregando = false;
+        emAndamento.erro = 'Interrompido: o modelo foi alterado antes da resposta terminar.';
+    }
+    controladorAtual.value?.abort();
+
+    const novo = dominioPendente.value;
+    modalTrocaAberto.value = false;
+    dominioPendente.value = null;
+    trocarDominio(novo);
+}
+
+function cancelarTrocaDominio(): void {
+    modalTrocaAberto.value = false;
+    dominioPendente.value = null;
+}
 </script>
 
 <template>
-    <div class="relative flex h-screen flex-col overflow-hidden bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <div class="relative flex h-screen flex-col overflow-hidden bg-white/10 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
         <!-- Manchas de cor desfocadas: sem elas o backdrop-blur dos paineis "de vidro"
-             abaixo nao tem nada para desfocar, e o efeito some. So no escuro. -->
-        <div class="pointer-events-none fixed inset-0 -z-10 hidden dark:block">
-            <div class="absolute -top-40 -left-32 h-120 w-120 rounded-full bg-blue-500/60 blur-[90px]"></div>
-            <div class="absolute top-1/4 -right-32 h-112 w-112 rounded-full bg-fuchsia-500/50 blur-[90px]"></div>
-            <div class="absolute -bottom-40 left-1/4 h-112 w-112 rounded-full bg-rose-500/45 blur-[90px]"></div>
-            <div class="absolute bottom-1/4 right-1/4 h-72 w-72 rounded-full bg-cyan-400/35 blur-[90px]"></div>
+             abaixo nao tem nada para desfocar, e o efeito some. So no escuro.
+             SEM z-index negativo: dentro de um container flex, header/main/footer
+             (itens flex) pintam com z-index 0 implicito por especificacao, o que os
+             coloca ACIMA de qualquer -z-10 do pai — teria que forcar z tao alto que
+             cobriria tudo. Em vez disso, essa camada fica primeiro no DOM (logo
+             atras dos itens flex na ordem de pintura) e cada item flex e transparente
+             o bastante (bg com opacidade) para deixá-la aparecer por baixo. -->
+        <div class="pointer-events-none absolute inset-0 hidden dark:block">
+            <div class="absolute -top-40 -left-32 h-120 w-120 rounded-full bg-blue-500 opacity-25 blur-3xl"></div>
+            <div class="absolute top-1/4 -right-32 h-112 w-112 rounded-full bg-fuchsia-500 opacity-20 blur-3xl"></div>
+            <div class="absolute -bottom-40 left-1/4 h-112 w-112 rounded-full bg-rose-500 opacity-20 blur-3xl"></div>
+            <div class="absolute bottom-1/4 right-1/4 h-72 w-72 rounded-full bg-cyan-400 opacity-15 blur-3xl"></div>
         </div>
 
         <header
@@ -147,7 +218,10 @@ function aoTeclar(evento: KeyboardEvent): void {
             </div>
 
             <div v-else class="mx-auto max-w-3xl">
-                <ChatMessage v-for="m in mensagens" :key="m.id" :mensagem="m" />
+                <template v-for="m in mensagens">
+                    <ModelSwitchDivider v-if="m.autor === 'sistema'" :key="`d-${m.id}`" :dominio-nome="m.dominioNome ?? ''" />
+                    <ChatMessage v-else :key="`m-${m.id}`" :mensagem="m" />
+                </template>
             </div>
         </main>
 
@@ -161,7 +235,12 @@ function aoTeclar(evento: KeyboardEvent): void {
                     @keydown="aoTeclar"
                 ></textarea>
 
-                <DomainPicker v-if="dominios.length" v-model="dominioAtual" :dominios="dominios" />
+                <DomainPicker
+                    v-if="dominios.length"
+                    :model-value="dominioAtual"
+                    :dominios="dominios"
+                    @update:model-value="aoEscolherDominio"
+                />
                 <span v-else-if="erroCarregamento" class="shrink-0 text-xs text-red-600 dark:text-red-400">API indisponível</span>
 
                 <button
@@ -180,6 +259,16 @@ function aoTeclar(evento: KeyboardEvent): void {
             <!-- Os modelos de linguagem são ferramentas de apoio e não substituem o julgamento profissional. Sempre verifique as informações antes de tomar decisões críticas. -->
             </p>
         </footer>
+
+        <ConfirmModal
+            :aberto="modalTrocaAberto"
+            titulo="Trocar de modelo?"
+            :mensagem="`Mudar para “${dominioPendente ? nomeDominio(dominioPendente) : ''}” vai interromper a geração da resposta em andamento. Deseja continuar mesmo assim?`"
+            texto-confirmar="Trocar mesmo assim"
+            texto-cancelar="Cancelar"
+            @confirmar="confirmarTrocaDominio"
+            @cancelar="cancelarTrocaDominio"
+        />
     </div>
 </template>
 
