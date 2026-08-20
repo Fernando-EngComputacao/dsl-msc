@@ -33,7 +33,7 @@ npx --yes tsx src/database/neo4j.ts src/examples/uti.dsl
 echo "[5/5] 🧠 Inspecionando prompts do usuário com Grammar Prompting..."
 subir_motor medico
 
-npx --yes tsx src/inference/batch-client.ts src/examples/prompt.txt
+npx --yes tsx src/inference/batch-client.ts src/examples/cenarios.jsonl
 
 echo "===================================================="
 echo "✅ Deploy e Inferência Restrita Finalizados (clínico)!"
