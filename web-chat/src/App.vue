@@ -168,11 +168,11 @@ function cancelarTrocaDominio(): void {
              cobriria tudo. Em vez disso, essa camada fica primeiro no DOM (logo
              atras dos itens flex na ordem de pintura) e cada item flex e transparente
              o bastante (bg com opacidade) para deixá-la aparecer por baixo. -->
-        <div class="pointer-events-none absolute inset-0 hidden dark:block">
-            <div class="absolute -top-40 -left-32 h-120 w-120 rounded-full bg-blue-500 opacity-25 blur-3xl"></div>
-            <div class="absolute top-1/4 -right-32 h-112 w-112 rounded-full bg-fuchsia-500 opacity-20 blur-3xl"></div>
-            <div class="absolute -bottom-40 left-1/4 h-112 w-112 rounded-full bg-rose-500 opacity-20 blur-3xl"></div>
-            <div class="absolute bottom-1/4 right-1/4 h-72 w-72 rounded-full bg-cyan-400 opacity-15 blur-3xl"></div>
+        <div class="pointer-events-none absolute inset-0 overflow-hidden">
+            <div class="animate-blob absolute -top-40 -left-32 h-120 w-120 rounded-full bg-blue-500 opacity-8 blur-3xl [animation-delay:-2s] dark:opacity-25"></div>
+            <div class="animate-blob absolute top-1/4 -right-32 h-112 w-112 rounded-full bg-fuchsia-500 opacity-6 blur-3xl [animation-delay:-8s] dark:opacity-20"></div>
+            <div class="animate-blob absolute -bottom-40 left-1/4 h-112 w-112 rounded-full bg-rose-500 opacity-6 blur-3xl [animation-delay:-14s] dark:opacity-20"></div>
+            <div class="animate-blob absolute bottom-1/4 right-1/4 h-72 w-72 rounded-full bg-cyan-400 opacity-5 blur-3xl [animation-delay:-19s] dark:opacity-15"></div>
         </div>
 
         <header
@@ -200,7 +200,7 @@ function cancelarTrocaDominio(): void {
             </button>
         </header>
 
-        <main ref="areaMensagens" class="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
+        <main ref="areaMensagens" class="flex-1 overflow-y-auto px-4 py-6 [overflow-anchor:none] sm:px-6">
             <div v-if="mensagens.length === 0" class="mx-auto mt-[8vh] max-w-xl text-center">
                 <h1 class="mb-2 bg-gradient-to-r from-blue-500 via-purple-400 to-rose-400 bg-clip-text text-4xl font-medium text-transparent">SPC-CML</h1>
                 <p class="mb-7 text-[15px] text-neutral-500 dark:text-neutral-400">Decodificação restrita por gramática, ancorada no grafo de conhecimento.</p>

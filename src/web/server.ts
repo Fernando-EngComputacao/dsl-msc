@@ -1,8 +1,16 @@
 /**
  * Ponte HTTP entre o front-end de chat (Vue, projeto separado em `web-chat/`)
- * e a mesma logica que o CLI interativo usa (`src/inference/cli.ts`):
- * validacao -> sorteio de paciente/talhao+telemetria -> recuperacao no grafo
- * -> foco por embedding -> geracao restrita.
+ * e a mesma logica que o CLI interativo usa (`src/inference/cli.ts`): sorteio
+ * de paciente/talhao+telemetria -> recuperacao no grafo -> foco por embedding
+ * -> geracao restrita.
+ *
+ * A validacao PRECISA vir depois do grafo (usando-o como contexto), nunca
+ * antes — julgar a fala isolada faz o modelo local rejeitar comandos corretos
+ * (ex.: "RASS -5, reduz a infusao" parece contraditorio sem saber que RASS -5
+ * e sedacao profunda) e, na pratica, engole o primeiro estagio visivel do
+ * front-end com uma chamada de LLM antes mesmo do grafo ser consultado. Por
+ * ora ela fica DESLIGADA (ver VALIDACAO_ATIVA) — reativar exige tambem passar
+ * o Prompt Semantico como contexto pro /validar-comando, nao só o texto.
  *
  * Sem framework HTTP (nao adiciona dependencia ao projeto raiz) — so
  * `node:http` com um roteador minimo, propositalmente pequeno.
@@ -41,18 +49,22 @@ const TIMEOUT_MS = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600_000);
 const PORT = Number(process.env.SPC_CML_WEB_PORT ?? 4000);
 const ORIGEM_PERMITIDA = process.env.SPC_CML_WEB_ORIGIN ?? '*';
 
+// Desligada por padrao: ver o comentario no topo do arquivo. Reativar com
+// SPC_CML_VALIDACAO_ATIVA=true.
+const VALIDACAO_ATIVA = process.env.SPC_CML_VALIDACAO_ATIVA === 'true';
+
 interface ValidacaoResposta {
     compreensivel: boolean;
     motivo: string;
 }
 
-async function validarComando(comando: string): Promise<ValidacaoResposta> {
+async function validarComando(comando: string, contextoNeo4j: string): Promise<ValidacaoResposta> {
     let response: Response;
     try {
         response = await fetch(`${ENGINE}/validar-comando`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ comando_humano: comando }),
+            body: JSON.stringify({ comando_humano: comando, contexto_neo4j: contextoNeo4j }),
             signal: AbortSignal.timeout(TIMEOUT_MS)
         });
     } catch (error) {
@@ -121,17 +133,22 @@ interface RespostaComando {
     regrasEmGHat?: number;
 }
 
-type EmitirEstagio = (texto: string) => void;
+type EmitirEstagio = (texto: string) => Promise<void>;
+
+/** Etapas locais (sorteio/grafo/embedding) terminam em milissegundos — sem uma
+ *  pausa minima, o usuario nunca chega a ver a maioria delas piscar na tela. */
+const PAUSA_ESTAGIO_MS = 450;
+const pausa = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 async function processarMed(texto: string, estagio: EmitirEstagio): Promise<RespostaComando> {
-    estagio('Sorteando paciente e telemetria…');
+    await estagio('Sorteando paciente e telemetria…');
     const paciente = linhaAleatoria<PerfilPaciente>(PACIENTES_PATH);
     const { telemetria } = linhaAleatoria<AmostraTelemetria>(TELEMETRIAS_PATH);
     const contexto: ClinicalContext = { ...paciente, telemetria, intencao: texto };
 
-    estagio('Buscando regras no grafo de conhecimento…');
+    await estagio('Buscando regras no grafo de conhecimento…');
     let constraints = retrieveConstraints(modeloMed, contexto);
-    estagio(
+    await estagio(
         `Regras recuperadas: ${constraints.protocolosAtivos.length} protocolos ativos, ` +
             `${constraints.bloqueios.length} bloqueios, ${constraints.vetados.length} vetos`
     );
@@ -139,30 +156,42 @@ async function processarMed(texto: string, estagio: EmitirEstagio): Promise<Resp
     let foco: RespostaComando['foco'] = null;
     let focoIndisponivel: string | undefined;
 
-    estagio('Calculando foco por embedding no subgrafo…');
+    await estagio('Calculando foco por embedding no subgrafo…');
     const session = driver.session();
     try {
         const f = await retrieverFoco(session, texto);
         constraints = filtrarPorFoco(constraints, f);
         foco = { farmacos: [...f.farmacos], protocolos: [...f.protocolos] };
-        estagio(`Foco recuperado: farmacos [${foco.farmacos?.join(', ') || '—'}], protocolos [${foco.protocolos?.join(', ') || '—'}]`);
+        await estagio(`Foco recuperado: farmacos [${foco.farmacos?.join(', ') || '—'}], protocolos [${foco.protocolos?.join(', ') || '—'}]`);
     } catch (error) {
         focoIndisponivel = (error as Error).message;
-        estagio('Foco por embedding indisponível — seguindo com o grafo completo');
+        await estagio('Foco por embedding indisponível — seguindo com o grafo completo');
     } finally {
         await session.close();
     }
 
     const poda = pruningPayload(constraints);
     const promptSemantico = montarPromptSemantico(constraints);
+    const sorteio = { paciente: contexto.paciente, telemetria, populacoes: paciente.populacoes, farmacosEmUso: paciente.farmacosEmUso };
 
-    estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
+    let motivoValidacao: string | undefined;
+    if (VALIDACAO_ATIVA) {
+        await estagio('Validando comando com o modelo local (usando o grafo recuperado)…');
+        const validacao = await validarComando(texto, promptSemantico);
+        motivoValidacao = validacao.motivo;
+        if (!validacao.compreensivel) {
+            return { aceito: false, motivoValidacao, sorteio, foco, focoIndisponivel, promptSemantico };
+        }
+    }
+
+    await estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
     const resposta = await gerarPlanoRestrito(contexto, constraints);
-    estagio('Plano gerado.');
+    await estagio('Plano gerado.');
 
     return {
         aceito: true,
-        sorteio: { paciente: contexto.paciente, telemetria, populacoes: paciente.populacoes, farmacosEmUso: paciente.farmacosEmUso },
+        motivoValidacao,
+        sorteio,
         foco,
         focoIndisponivel,
         promptSemantico,
@@ -175,14 +204,14 @@ async function processarMed(texto: string, estagio: EmitirEstagio): Promise<Resp
 }
 
 async function processarAgro(texto: string, estagio: EmitirEstagio): Promise<RespostaComando> {
-    estagio('Sorteando talhão e leitura de sensores…');
+    await estagio('Sorteando talhão e leitura de sensores…');
     const talhao = linhaAleatoria<PerfilTalhao>(TALHOES_PATH);
     const { telemetria } = linhaAleatoria<AmostraTelemetria>(SENSORES_PATH);
     const contexto: AgroContext = { ...talhao, telemetria, intencao: texto };
 
-    estagio('Buscando regras no grafo de conhecimento…');
+    await estagio('Buscando regras no grafo de conhecimento…');
     let constraints = retrieveAgroConstraints(modeloAgro, contexto);
-    estagio(
+    await estagio(
         `Regras recuperadas: ${constraints.culturasAtivas.length} culturas ativas, ` +
             `${constraints.bloqueios.length} bloqueios, ${constraints.vetados.length} vetos`
     );
@@ -190,30 +219,42 @@ async function processarAgro(texto: string, estagio: EmitirEstagio): Promise<Res
     let foco: RespostaComando['foco'] = null;
     let focoIndisponivel: string | undefined;
 
-    estagio('Calculando foco por embedding no subgrafo…');
+    await estagio('Calculando foco por embedding no subgrafo…');
     const session = driver.session();
     try {
         const f = await retrieverFocoAgro(session, texto);
         constraints = filtrarPorFocoAgro(constraints, f);
         foco = { produtos: [...f.produtos], culturas: [...f.culturas] };
-        estagio(`Foco recuperado: produtos [${foco.produtos?.join(', ') || '—'}], culturas [${foco.culturas?.join(', ') || '—'}]`);
+        await estagio(`Foco recuperado: produtos [${foco.produtos?.join(', ') || '—'}], culturas [${foco.culturas?.join(', ') || '—'}]`);
     } catch (error) {
         focoIndisponivel = (error as Error).message;
-        estagio('Foco por embedding indisponível — seguindo com o grafo completo');
+        await estagio('Foco por embedding indisponível — seguindo com o grafo completo');
     } finally {
         await session.close();
     }
 
     const poda = agroPruningPayload(constraints);
     const promptSemantico = montarPromptSemanticoAgro(constraints);
+    const sorteio = { talhao: contexto.talhao, telemetria, areas: talhao.areas, produtosEmUso: talhao.produtosEmUso };
 
-    estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
+    let motivoValidacao: string | undefined;
+    if (VALIDACAO_ATIVA) {
+        await estagio('Validando comando com o modelo local (usando o grafo recuperado)…');
+        const validacao = await validarComando(texto, promptSemantico);
+        motivoValidacao = validacao.motivo;
+        if (!validacao.compreensivel) {
+            return { aceito: false, motivoValidacao, sorteio, foco, focoIndisponivel, promptSemantico };
+        }
+    }
+
+    await estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
     const resposta = await gerarMissaoRestrita(contexto, constraints);
-    estagio('Missão gerada.');
+    await estagio('Missão gerada.');
 
     return {
         aceito: true,
-        sorteio: { talhao: contexto.talhao, telemetria, areas: talhao.areas, produtosEmUso: talhao.produtosEmUso },
+        motivoValidacao,
+        sorteio,
         foco,
         focoIndisponivel,
         promptSemantico,
@@ -280,7 +321,9 @@ const servidor = http.createServer(async (req, res) => {
             }
 
             // SSE: o front-end acompanha em tempo real por onde o fluxo esta passando
-            // (validacao -> sorteio -> grafo -> embedding -> grammar prompting).
+            // (sorteio -> grafo -> embedding -> grammar prompting). A validacao, quando
+            // ligada, entra DENTRO de processarMed/processarAgro, depois do grafo — ver
+            // VALIDACAO_ATIVA e o comentario no topo do arquivo.
             res.writeHead(200, {
                 'Content-Type': 'text/event-stream; charset=utf-8',
                 'Cache-Control': 'no-cache',
@@ -290,21 +333,15 @@ const servidor = http.createServer(async (req, res) => {
             const emitir = (evento: string, dados: unknown): void => {
                 res.write(`event: ${evento}\ndata: ${JSON.stringify(dados)}\n\n`);
             };
-            const estagio: EmitirEstagio = texto => emitir('estagio', { texto });
+            const estagio: EmitirEstagio = async texto => {
+                emitir('estagio', { texto });
+                await pausa(PAUSA_ESTAGIO_MS);
+            };
 
             try {
-                estagio('Validando comando com o modelo local…');
-                const validacao = await validarComando(texto);
-
-                if (!validacao.compreensivel) {
-                    emitir('final', { aceito: false, motivoValidacao: validacao.motivo });
-                    res.end();
-                    return;
-                }
-
                 const resultado =
                     dominio === 'med' ? await processarMed(texto, estagio) : await processarAgro(texto, estagio);
-                emitir('final', { ...resultado, motivoValidacao: validacao.motivo });
+                emitir('final', resultado);
             } catch (error) {
                 emitir('erro', { erro: (error as Error).message });
             } finally {

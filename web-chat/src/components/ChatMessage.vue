@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { Mensagem } from '../types';
+import CopyButton from './CopyButton.vue';
 
 const props = defineProps<{ mensagem: Mensagem }>();
 
@@ -10,15 +11,84 @@ const idSorteio = computed(() => {
     return (s.paciente as string | undefined) ?? (s.talhao as string | undefined) ?? null;
 });
 
-const telemetriaResumo = computed(() => {
-    const t = props.mensagem.resposta?.sorteio?.telemetria as Record<string, number> | undefined;
-    if (!t) return '';
-    return Object.entries(t)
-        .map(([k, v]) => `${k}=${v}`)
-        .join('  ');
+/** Bloco completo (comando + paciente/talhão + telemetria + populações/áreas +
+ *  fármacos/produtos em uso) — usado tanto pra exibir no painel expansível
+ *  quanto pro botão de copiar e pro download. */
+const dadosTelemetriaTexto = computed(() => {
+    const s = props.mensagem.resposta?.sorteio;
+    if (!s) return '';
+
+    const linhas: string[] = [];
+    linhas.push(`Comando digitado: ${props.mensagem.texto ?? ''}`);
+
+    if (s.paciente) linhas.push(`Paciente: ${s.paciente}`);
+    else if (s.talhao) linhas.push(`Talhão: ${s.talhao}`);
+
+    const telemetria = s.telemetria as Record<string, number> | undefined;
+    if (telemetria) {
+        linhas.push('Telemetria:');
+        for (const [chave, valor] of Object.entries(telemetria)) linhas.push(`  ${chave}: ${valor}`);
+    }
+
+    const populacoes = s.populacoes as string[] | undefined;
+    if (populacoes?.length) linhas.push(`Populações: ${populacoes.join(', ')}`);
+    const areas = s.areas as string[] | undefined;
+    if (areas?.length) linhas.push(`Áreas: ${areas.join(', ')}`);
+
+    const farmacosEmUso = s.farmacosEmUso as string[] | undefined;
+    if (farmacosEmUso?.length) linhas.push(`Fármacos em uso: ${farmacosEmUso.join(', ')}`);
+    const produtosEmUso = s.produtosEmUso as string[] | undefined;
+    if (produtosEmUso?.length) linhas.push(`Produtos em uso: ${produtosEmUso.join(', ')}`);
+
+    return linhas.join('\n');
 });
 
 const foco = computed(() => props.mensagem.resposta?.foco);
+
+const focoTexto = computed(() => {
+    const f = foco.value;
+    if (!f) return '';
+    const linhas: string[] = [];
+    if (f.farmacos) linhas.push(`farmacos: ${f.farmacos.join(', ') || '—'}`);
+    if (f.protocolos) linhas.push(`protocolos: ${f.protocolos.join(', ') || '—'}`);
+    if (f.produtos) linhas.push(`produtos: ${f.produtos.join(', ') || '—'}`);
+    if (f.culturas) linhas.push(`culturas: ${f.culturas.join(', ') || '—'}`);
+    return linhas.join('\n');
+});
+
+// Campos de 1o nivel do plano/missao (ver PlanCommand/MissionCommand em
+// dsl.langium e agrodrone.langium) e os sub-campos de cada ordem/aplicacao/alerta.
+const CAMPOS_TOPO = ['esquema_referencia', 'paciente', 'talhao', 'sequencia', 'ordem', 'aplicacao', 'alerta', 'auditoria'];
+const CAMPOS_SUB = ['decisao', 'dose', 'vazao', 'via', 'modo', 'justificativa', 'regra'];
+
+/**
+ * O motor devolve o plano/missao numa unica linha (a gramatica so garante a
+ * sintaxe, nao a formatacao). Reformata pra leitura: cada campo de topo numa
+ * linha, sub-campos de ordem/aplicacao/alerta indentados. As strings entre
+ * aspas simples sao protegidas antes de quebrar linhas — senao uma
+ * justificativa que contenha a palavra "dose" ou "via" quebraria no lugar errado.
+ */
+function formatarPlano(bruto: string | undefined): string {
+    if (!bruto) return '';
+
+    const strings: string[] = [];
+    const MARCADOR = ''; // Private Use Area — nunca aparece em texto real
+    let t = bruto
+        .trim()
+        .replace(/\s+/g, ' ')
+        .replace(/'[^']*'/g, correspondencia => {
+            strings.push(correspondencia);
+            return `${MARCADOR}${strings.length - 1}${MARCADOR}`;
+        });
+
+    t = t.replace(/\s*\{\s*/, ' {\n    ').replace(/\s*\}\s*$/, '\n}');
+    t = t.replace(new RegExp(`\\s+(?=(${CAMPOS_TOPO.join('|')})\\b)`, 'g'), '\n    ');
+    t = t.replace(new RegExp(`\\s+(?=(${CAMPOS_SUB.join('|')})\\b)`, 'g'), '\n        ');
+
+    return t.replace(new RegExp(`${MARCADOR}(\\d+)${MARCADOR}`, 'g'), (_, indice) => strings[Number(indice)]);
+}
+
+const planoFormatado = computed(() => formatarPlano(props.mensagem.resposta?.resultado));
 
 function baixar(): void {
     const r = props.mensagem.resposta;
@@ -26,10 +96,12 @@ function baixar(): void {
 
     const linhas: string[] = [];
     linhas.push(`Dominio: ${props.mensagem.dominio === 'med' ? 'Clinico (UTI)' : 'Agricola (drone)'}`);
-    linhas.push(`Comando: ${props.mensagem.texto ?? ''}`);
     linhas.push('');
-    if (idSorteio.value) linhas.push(`Sorteado: ${idSorteio.value} — ${telemetriaResumo.value}`);
-    linhas.push('');
+    if (dadosTelemetriaTexto.value) {
+        linhas.push('=== DADOS TELEMETRICOS ===');
+        linhas.push(dadosTelemetriaTexto.value);
+        linhas.push('');
+    }
     if (r.promptSemantico) {
         linhas.push('=== PROMPT SEMANTICO ===');
         linhas.push(r.promptSemantico);
@@ -40,7 +112,7 @@ function baixar(): void {
         linhas.push('');
     }
     linhas.push(`=== RESULTADO (valido: ${r.valido}, ${r.regrasEmGHat} regras em G_hat) ===`);
-    linhas.push(r.resultado ?? '');
+    linhas.push(planoFormatado.value);
     if (r.erroMotor) {
         linhas.push('');
         linhas.push(`Erro reportado: ${r.erroMotor}`);
@@ -117,8 +189,6 @@ function baixar(): void {
 
                     <template v-else>
                         <div class="mb-2.5 flex flex-wrap gap-2">
-                            <span v-if="idSorteio" class="rounded-full bg-neutral-100 px-3 py-1 text-xs text-neutral-600 dark:border dark:border-white/10 dark:bg-white/10 dark:text-neutral-300 dark:backdrop-blur-md">{{ idSorteio }}</span>
-                            <span v-if="telemetriaResumo" class="rounded-full bg-neutral-100 px-3 py-1 font-mono text-xs text-neutral-600 dark:border dark:border-white/10 dark:bg-white/10 dark:text-neutral-300 dark:backdrop-blur-md">{{ telemetriaResumo }}</span>
                             <span
                                 class="rounded-full px-3 py-1 text-xs"
                                 :class="mensagem.resposta.valido
@@ -130,23 +200,56 @@ function baixar(): void {
                             <span class="rounded-full bg-neutral-100 px-3 py-1 text-xs text-neutral-600 dark:border dark:border-white/10 dark:bg-white/10 dark:text-neutral-300 dark:backdrop-blur-md">{{ mensagem.resposta.regrasEmGHat }} regras em G_hat</span>
                         </div>
 
-                        <details v-if="mensagem.resposta.promptSemantico" class="mb-2.5 rounded-2xl border border-neutral-200 px-4 py-2.5 dark:border-white/10 dark:bg-white/5 dark:backdrop-blur-md">
-                            <summary class="cursor-pointer text-sm font-medium text-neutral-500 dark:text-neutral-400">Prompt Semântico (recuperado do grafo)</summary>
+                        <details v-if="dadosTelemetriaTexto" class="group mb-2.5 rounded-2xl border border-neutral-200 px-4 py-2.5 dark:border-white/10 dark:bg-white/5 dark:backdrop-blur-md">
+                            <summary class="flex cursor-pointer items-center justify-between gap-2 text-sm font-medium text-neutral-500 dark:text-neutral-400">
+                                <span class="flex min-w-0 items-center gap-1.5">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" class="shrink-0 transition-transform duration-200 group-open:rotate-90">
+                                        <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                    <span>Dados telemétricos ({{ idSorteio }})</span>
+                                </span>
+                                <CopyButton :texto="dadosTelemetriaTexto" />
+                            </summary>
+                            <pre class="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-xl bg-neutral-50 p-3.5 font-mono text-xs leading-relaxed text-neutral-700 dark:border dark:border-white/10 dark:bg-black/20 dark:text-neutral-300">{{ dadosTelemetriaTexto }}</pre>
+                        </details>
+
+                        <details v-if="mensagem.resposta.promptSemantico" class="group mb-2.5 rounded-2xl border border-neutral-200 px-4 py-2.5 dark:border-white/10 dark:bg-white/5 dark:backdrop-blur-md">
+                            <summary class="flex cursor-pointer items-center justify-between gap-2 text-sm font-medium text-neutral-500 dark:text-neutral-400">
+                                <span class="flex min-w-0 items-center gap-1.5">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" class="shrink-0 transition-transform duration-200 group-open:rotate-90">
+                                        <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                    <span>Prompt Semântico (recuperado do grafo)</span>
+                                </span>
+                                <CopyButton :texto="mensagem.resposta.promptSemantico" />
+                            </summary>
                             <pre class="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-xl bg-neutral-50 p-3.5 font-mono text-xs leading-relaxed text-neutral-700 dark:border dark:border-white/10 dark:bg-black/20 dark:text-neutral-300">{{ mensagem.resposta.promptSemantico }}</pre>
                         </details>
 
                         <details
                             v-if="foco && (foco.farmacos?.length || foco.protocolos?.length || foco.produtos?.length || foco.culturas?.length)"
-                            class="mb-2.5 rounded-2xl border border-neutral-200 px-4 py-2.5 dark:border-white/10 dark:bg-white/5 dark:backdrop-blur-md"
+                            class="group mb-2.5 rounded-2xl border border-neutral-200 px-4 py-2.5 dark:border-white/10 dark:bg-white/5 dark:backdrop-blur-md"
                         >
-                            <summary class="cursor-pointer text-sm font-medium text-neutral-500 dark:text-neutral-400">Foco recuperado por embedding</summary>
+                            <summary class="flex cursor-pointer items-center justify-between gap-2 text-sm font-medium text-neutral-500 dark:text-neutral-400">
+                                <span class="flex min-w-0 items-center gap-1.5">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" class="shrink-0 transition-transform duration-200 group-open:rotate-90">
+                                        <path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                    <span>Foco recuperado por embedding</span>
+                                </span>
+                                <CopyButton :texto="focoTexto" />
+                            </summary>
                             <p class="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400" v-if="foco.farmacos">farmacos: {{ foco.farmacos.join(', ') || '—' }}</p>
                             <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400" v-if="foco.protocolos">protocolos: {{ foco.protocolos.join(', ') || '—' }}</p>
                             <p class="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400" v-if="foco.produtos">produtos: {{ foco.produtos.join(', ') || '—' }}</p>
                             <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400" v-if="foco.culturas">culturas: {{ foco.culturas.join(', ') || '—' }}</p>
                         </details>
 
-                        <pre class="my-2 overflow-x-auto whitespace-pre-wrap break-words rounded-2xl border border-neutral-200 bg-neutral-50 p-4 font-mono text-[13px] leading-relaxed text-neutral-800 dark:border-white/10 dark:bg-black/20 dark:text-neutral-200 dark:shadow-lg dark:shadow-black/10 dark:backdrop-blur-md">{{ mensagem.resposta.resultado }}</pre>
+                        <div class="mt-2 mb-1 flex items-center justify-between">
+                            <span class="text-sm font-medium text-neutral-500 dark:text-neutral-400">{{ mensagem.dominio === 'med' ? 'Plano gerado' : 'Missão gerada' }}</span>
+                            <CopyButton :texto="planoFormatado" />
+                        </div>
+                        <pre class="mb-2 overflow-x-auto whitespace-pre-wrap break-words rounded-2xl border border-neutral-200 bg-neutral-50 p-4 font-mono text-[13px] leading-relaxed text-neutral-800 dark:border-white/10 dark:bg-black/20 dark:text-neutral-200 dark:shadow-lg dark:shadow-black/10 dark:backdrop-blur-md">{{ planoFormatado }}</pre>
 
                         <p v-if="mensagem.resposta.erroMotor" class="mt-2.5 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 dark:border dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400 dark:backdrop-blur-md">
                             Erro reportado: {{ mensagem.resposta.erroMotor }}
