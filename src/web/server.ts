@@ -37,6 +37,15 @@ import {
 import { montarPromptSemanticoAgro, gerarMissaoRestrita } from '../inference/agro-client.js';
 
 const ENGINE = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
+// Um motor por dominio: main.py fixa a gramatica na subida, e o chat oferece med e
+// agro lado a lado. Sem SPC_CML_ENDPOINT_AGRO os dois caem no mesmo motor, que e o
+// comportamento de quem sobe so um — util, mas ai o outro dominio responde 422
+// ("a poda eliminou o simbolo inicial") em vez de gerar contra a gramatica errada.
+const ENGINE_AGRO = process.env.SPC_CML_ENDPOINT_AGRO ?? ENGINE;
+
+function motorDoDominio(dominio: 'med' | 'agro'): string {
+    return dominio === 'agro' ? ENGINE_AGRO : ENGINE;
+}
 const TIMEOUT_MS = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600_000);
 const PORT = Number(process.env.SPC_CML_WEB_PORT ?? 4000);
 const ORIGEM_PERMITIDA = process.env.SPC_CML_WEB_ORIGIN ?? '*';
@@ -46,10 +55,10 @@ interface ValidacaoResposta {
     motivo: string;
 }
 
-async function validarComando(comando: string): Promise<ValidacaoResposta> {
+async function validarComando(comando: string, motor: string): Promise<ValidacaoResposta> {
     let response: Response;
     try {
-        response = await fetch(`${ENGINE}/validar-comando`, {
+        response = await fetch(`${motor}/validar-comando`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ comando_humano: comando }),
@@ -60,7 +69,7 @@ async function validarComando(comando: string): Promise<ValidacaoResposta> {
             (error as Error).name === 'TimeoutError'
                 ? `sem resposta em ${TIMEOUT_MS / 1000}s`
                 : (error as Error).message;
-        throw new Error(`motor (${ENGINE}) inacessivel: ${causa}`);
+        throw new Error(`motor (${motor}) inacessivel: ${causa}`);
     }
     if (!response.ok) {
         throw new Error(`motor respondeu ${response.status}: ${await response.text()}`);
@@ -294,7 +303,7 @@ const servidor = http.createServer(async (req, res) => {
 
             try {
                 estagio('Validando comando com o modelo local…');
-                const validacao = await validarComando(texto);
+                const validacao = await validarComando(texto, motorDoDominio(dominio));
 
                 if (!validacao.compreensivel) {
                     emitir('final', { aceito: false, motivoValidacao: validacao.motivo });

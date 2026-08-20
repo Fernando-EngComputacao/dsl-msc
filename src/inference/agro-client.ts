@@ -24,7 +24,13 @@ import {
     type RetrievedAgroConstraints
 } from '../knowledge/graphrag-agro.js';
 
-const ENDPOINT = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
+// O motor fixa a gramatica na subida (SPC_CML_DOMINIO em main.py), entao os dois
+// dominios nao cabem no mesmo processo. Com o chat web, que oferece os dois lado a
+// lado, cada um ganha seu motor: ./init.sh sobe medico na 8000 e agro na 8001.
+// Sem SPC_CML_ENDPOINT_AGRO cai no endpoint unico — preservando o deploy-agro.sh,
+// onde subir_motor coloca o dominio agricola na propria 8000.
+const ENDPOINT =
+    process.env.SPC_CML_ENDPOINT_AGRO ?? process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
 const TIMEOUT_MS = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600_000);
 
 interface AgroResponse {
