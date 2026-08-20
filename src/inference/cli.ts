@@ -19,6 +19,7 @@
  *   npx tsx src/inference/cli.ts
  */
 
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
@@ -33,7 +34,7 @@ import {
     type ClinicalContext
 } from '../knowledge/graphrag.js';
 import { montarPromptSemantico, gerarPlanoRestrito } from './llm-client.js';
-import { rodarLote as rodarLoteUti, TELEMETRIA_PADRAO as TELEMETRIA_UTI } from './batch-client.js';
+import { rodarLote as rodarLoteUti } from './batch-client.js';
 
 import { loadAgroModel } from '../database/neo4j-agro.js';
 import {
@@ -117,16 +118,60 @@ async function digitarComandoValido(rl: readline.Interface): Promise<string | nu
     }
 }
 
+interface PerfilPaciente {
+    paciente: string;
+    populacoes: string[];
+    farmacosEmUso: string[];
+}
+
+interface AmostraTelemetria {
+    telemetria: Record<string, number>;
+}
+
+function linhaAleatoria<T>(caminho: string): T {
+    const linhas = fs
+        .readFileSync(caminho, 'utf-8')
+        .split('\n')
+        .filter(l => l.trim().length > 0);
+    return JSON.parse(linhas[Math.floor(Math.random() * linhas.length)]) as T;
+}
+
+/**
+ * Sorteia paciente e telemetria de DOIS pools independentes (400 linhas cada):
+ * a fala digitada no terminal nao vem com monitor de beira-leito atras dela, e
+ * "quem e o paciente" e "o que o monitor mostra agora" sao independentes entre
+ * si — sortear os dois do mesmo pool acoplaria demografia a instante clinico
+ * sem motivo.
+ */
+function sortearContextoUti(
+    pacientesPath: string,
+    telemetriasPath: string
+): Omit<ClinicalContext, 'intencao'> {
+    const paciente = linhaAleatoria<PerfilPaciente>(pacientesPath);
+    const { telemetria } = linhaAleatoria<AmostraTelemetria>(telemetriasPath);
+    return { ...paciente, telemetria };
+}
+
 async function loopDigitarUti(
     rl: readline.Interface,
     model: Awaited<ReturnType<typeof loadModel>>,
-    session: Session
+    session: Session,
+    pacientesPath: string,
+    telemetriasPath: string
 ): Promise<void> {
     while (true) {
         const texto = await digitarComandoValido(rl);
         if (texto === null) return;
 
-        const contexto: ClinicalContext = { ...TELEMETRIA_UTI, intencao: texto };
+        const sorteio = sortearContextoUti(pacientesPath, telemetriasPath);
+        const contexto: ClinicalContext = { ...sorteio, intencao: texto };
+        console.log(
+            `\nPaciente sorteado: ${contexto.paciente ?? 's/ id'} — ` +
+                Object.entries(contexto.telemetria)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join('  ')
+        );
+
         let constraints = retrieveConstraints(model, contexto);
 
         try {
@@ -237,11 +282,17 @@ async function main(): Promise<void> {
         } else {
             const modelPath = path.join('src', 'examples', 'uti.dsl');
             if (fonte === 1) {
-                await rodarLoteUti(path.join('src', 'examples', 'prompt.txt'), modelPath);
+                await rodarLoteUti(path.join('src', 'examples', 'cenarios.jsonl'), modelPath);
             } else {
                 const model = await loadModel(modelPath);
                 driver = abrirDriverNeo4j();
-                await loopDigitarUti(rl, model, driver.session());
+                await loopDigitarUti(
+                    rl,
+                    model,
+                    driver.session(),
+                    path.join('src', 'examples', 'pacientes.jsonl'),
+                    path.join('src', 'examples', 'telemetrias.jsonl')
+                );
             }
         }
     } finally {
