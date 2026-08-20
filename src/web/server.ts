@@ -121,29 +121,44 @@ interface RespostaComando {
     regrasEmGHat?: number;
 }
 
-async function processarMed(texto: string): Promise<RespostaComando> {
+type EmitirEstagio = (texto: string) => void;
+
+async function processarMed(texto: string, estagio: EmitirEstagio): Promise<RespostaComando> {
+    estagio('Sorteando paciente e telemetria…');
     const paciente = linhaAleatoria<PerfilPaciente>(PACIENTES_PATH);
     const { telemetria } = linhaAleatoria<AmostraTelemetria>(TELEMETRIAS_PATH);
     const contexto: ClinicalContext = { ...paciente, telemetria, intencao: texto };
 
+    estagio('Buscando regras no grafo de conhecimento…');
     let constraints = retrieveConstraints(modeloMed, contexto);
+    estagio(
+        `Regras recuperadas: ${constraints.protocolosAtivos.length} protocolos ativos, ` +
+            `${constraints.bloqueios.length} bloqueios, ${constraints.vetados.length} vetos`
+    );
+
     let foco: RespostaComando['foco'] = null;
     let focoIndisponivel: string | undefined;
 
+    estagio('Calculando foco por embedding no subgrafo…');
     const session = driver.session();
     try {
         const f = await retrieverFoco(session, texto);
         constraints = filtrarPorFoco(constraints, f);
         foco = { farmacos: [...f.farmacos], protocolos: [...f.protocolos] };
+        estagio(`Foco recuperado: farmacos [${foco.farmacos?.join(', ') || '—'}], protocolos [${foco.protocolos?.join(', ') || '—'}]`);
     } catch (error) {
         focoIndisponivel = (error as Error).message;
+        estagio('Foco por embedding indisponível — seguindo com o grafo completo');
     } finally {
         await session.close();
     }
 
     const poda = pruningPayload(constraints);
     const promptSemantico = montarPromptSemantico(constraints);
+
+    estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
     const resposta = await gerarPlanoRestrito(contexto, constraints);
+    estagio('Plano gerado.');
 
     return {
         aceito: true,
@@ -159,29 +174,42 @@ async function processarMed(texto: string): Promise<RespostaComando> {
     };
 }
 
-async function processarAgro(texto: string): Promise<RespostaComando> {
+async function processarAgro(texto: string, estagio: EmitirEstagio): Promise<RespostaComando> {
+    estagio('Sorteando talhão e leitura de sensores…');
     const talhao = linhaAleatoria<PerfilTalhao>(TALHOES_PATH);
     const { telemetria } = linhaAleatoria<AmostraTelemetria>(SENSORES_PATH);
     const contexto: AgroContext = { ...talhao, telemetria, intencao: texto };
 
+    estagio('Buscando regras no grafo de conhecimento…');
     let constraints = retrieveAgroConstraints(modeloAgro, contexto);
+    estagio(
+        `Regras recuperadas: ${constraints.culturasAtivas.length} culturas ativas, ` +
+            `${constraints.bloqueios.length} bloqueios, ${constraints.vetados.length} vetos`
+    );
+
     let foco: RespostaComando['foco'] = null;
     let focoIndisponivel: string | undefined;
 
+    estagio('Calculando foco por embedding no subgrafo…');
     const session = driver.session();
     try {
         const f = await retrieverFocoAgro(session, texto);
         constraints = filtrarPorFocoAgro(constraints, f);
         foco = { produtos: [...f.produtos], culturas: [...f.culturas] };
+        estagio(`Foco recuperado: produtos [${foco.produtos?.join(', ') || '—'}], culturas [${foco.culturas?.join(', ') || '—'}]`);
     } catch (error) {
         focoIndisponivel = (error as Error).message;
+        estagio('Foco por embedding indisponível — seguindo com o grafo completo');
     } finally {
         await session.close();
     }
 
     const poda = agroPruningPayload(constraints);
     const promptSemantico = montarPromptSemanticoAgro(constraints);
+
+    estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
     const resposta = await gerarMissaoRestrita(contexto, constraints);
+    estagio('Missão gerada.');
 
     return {
         aceito: true,
@@ -251,22 +279,37 @@ const servidor = http.createServer(async (req, res) => {
                 return;
             }
 
-            let validacao: ValidacaoResposta;
+            // SSE: o front-end acompanha em tempo real por onde o fluxo esta passando
+            // (validacao -> sorteio -> grafo -> embedding -> grammar prompting).
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream; charset=utf-8',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive',
+                'Access-Control-Allow-Origin': ORIGEM_PERMITIDA
+            });
+            const emitir = (evento: string, dados: unknown): void => {
+                res.write(`event: ${evento}\ndata: ${JSON.stringify(dados)}\n\n`);
+            };
+            const estagio: EmitirEstagio = texto => emitir('estagio', { texto });
+
             try {
-                validacao = await validarComando(texto);
+                estagio('Validando comando com o modelo local…');
+                const validacao = await validarComando(texto);
+
+                if (!validacao.compreensivel) {
+                    emitir('final', { aceito: false, motivoValidacao: validacao.motivo });
+                    res.end();
+                    return;
+                }
+
+                const resultado =
+                    dominio === 'med' ? await processarMed(texto, estagio) : await processarAgro(texto, estagio);
+                emitir('final', { ...resultado, motivoValidacao: validacao.motivo });
             } catch (error) {
-                jsonResponse(res, 502, { erro: (error as Error).message });
-                return;
+                emitir('erro', { erro: (error as Error).message });
+            } finally {
+                res.end();
             }
-
-            if (!validacao.compreensivel) {
-                jsonResponse(res, 200, { aceito: false, motivoValidacao: validacao.motivo });
-                return;
-            }
-
-            const resultado =
-                dominio === 'med' ? await processarMed(texto) : await processarAgro(texto);
-            jsonResponse(res, 200, { ...resultado, motivoValidacao: validacao.motivo });
             return;
         }
 
@@ -279,7 +322,7 @@ const servidor = http.createServer(async (req, res) => {
 servidor.listen(PORT, () => {
     console.log(`API do SPC-CML no ar em http://localhost:${PORT}`);
     console.log(`  GET  /api/dominios`);
-    console.log(`  POST /api/comando   { dominio: 'med'|'agro', texto: string }`);
+    console.log(`  POST /api/comando   { dominio: 'med'|'agro', texto: string }  (SSE: event "estagio"*, "final"|"erro")`);
 });
 
 process.on('SIGINT', async () => {

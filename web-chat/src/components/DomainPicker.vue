@@ -27,7 +27,7 @@ function atual(): Dominio | undefined {
     <div class="relative">
         <button
             type="button"
-            class="flex items-center gap-1.5 rounded-full bg-neutral-100 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+            class="flex items-center gap-1.5 rounded-full bg-neutral-100 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-200 dark:border dark:border-white/10 dark:bg-white/10 dark:text-neutral-200 dark:backdrop-blur-md dark:hover:bg-white/20"
             @click="aberto = !aberto"
             :aria-expanded="aberto"
         >
@@ -47,13 +47,13 @@ function atual(): Dominio | undefined {
 
         <div
             v-if="aberto"
-            class="absolute bottom-[calc(100%+8px)] left-0 z-20 min-w-[260px] rounded-2xl border border-neutral-200 bg-white p-1.5 shadow-xl dark:border-neutral-700 dark:bg-neutral-800"
+            class="absolute bottom-[calc(100%+8px)] left-0 z-20 min-w-[260px] rounded-2xl border border-neutral-200 bg-white p-1.5 shadow-xl dark:border-white/10 dark:bg-neutral-900/70 dark:shadow-2xl dark:shadow-black/40 dark:backdrop-blur-xl"
         >
             <button
                 v-for="d in dominios"
                 :key="d.id"
                 type="button"
-                class="flex w-full flex-col items-start gap-0.5 rounded-xl px-3 py-2.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                class="flex w-full flex-col items-start gap-0.5 rounded-xl px-3 py-2.5 text-left hover:bg-neutral-100 dark:hover:bg-white/10"
                 :class="d.id === modelValue ? 'bg-blue-50 dark:bg-blue-500/15' : ''"
                 @click="selecionar(d.id)"
             >

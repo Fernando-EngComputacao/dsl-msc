@@ -6,6 +6,7 @@ export interface Mensagem {
     dominio: 'med' | 'agro';
     texto?: string;
     carregando?: boolean;
+    estagio?: string;
     resposta?: RespostaComando;
     erro?: string;
 }

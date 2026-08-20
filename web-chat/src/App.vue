@@ -2,9 +2,10 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import DomainPicker from './components/DomainPicker.vue';
 import ChatMessage from './components/ChatMessage.vue';
-import { buscarDominios, enviarComando, type Dominio } from './api';
+import { buscarDominios, enviarComandoStream, type Dominio } from './api';
 import type { Mensagem } from './types';
 import { escuro, iniciarTema, alternarTema } from './theme';
+import logoUfg from './assets/imgs/logo_pppgcc_inf_ufg.png';
 
 const dominios = ref<Dominio[]>([]);
 const dominioAtual = ref<'med' | 'agro'>('med');
@@ -61,7 +62,11 @@ async function enviar(textoForcado?: string): Promise<void> {
     rolarParaFinal();
 
     try {
-        const resposta = await enviarComando(dominioAtual.value, texto);
+        const resposta = await enviarComandoStream(dominioAtual.value, texto, textoEstagio => {
+            const alvo = mensagens.value.find(m => m.id === idResposta);
+            if (alvo) alvo.estagio = textoEstagio;
+            rolarParaFinal();
+        });
         const alvo = mensagens.value.find(m => m.id === idResposta);
         if (alvo) {
             alvo.carregando = false;
@@ -89,12 +94,28 @@ function aoTeclar(evento: KeyboardEvent): void {
 </script>
 
 <template>
-    <div class="flex h-screen flex-col bg-white text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
-        <header class="flex items-center justify-between border-b border-neutral-200 px-6 py-3.5 dark:border-neutral-800">
-            <span class="text-sm font-medium text-neutral-500 dark:text-neutral-400">SPC-CML</span>
+    <div class="relative flex h-screen flex-col overflow-hidden bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+        <!-- Manchas de cor desfocadas: sem elas o backdrop-blur dos paineis "de vidro"
+             abaixo nao tem nada para desfocar, e o efeito some. So no escuro. -->
+        <div class="pointer-events-none fixed inset-0 -z-10 hidden dark:block">
+            <div class="absolute -top-40 -left-32 h-120 w-120 rounded-full bg-blue-500/60 blur-[90px]"></div>
+            <div class="absolute top-1/4 -right-32 h-112 w-112 rounded-full bg-fuchsia-500/50 blur-[90px]"></div>
+            <div class="absolute -bottom-40 left-1/4 h-112 w-112 rounded-full bg-rose-500/45 blur-[90px]"></div>
+            <div class="absolute bottom-1/4 right-1/4 h-72 w-72 rounded-full bg-cyan-400/35 blur-[90px]"></div>
+        </div>
+
+        <header
+            class="sticky top-0 z-10 grid grid-cols-3 items-center border-b border-neutral-200 px-6 py-3 dark:border-white/10 dark:bg-neutral-900/40 dark:shadow-lg dark:shadow-black/20 dark:backdrop-blur-xl"
+        >
+            <span class="justify-self-start text-sm font-medium text-neutral-500 dark:text-neutral-400">SPC-CML</span>
+
+            <div class="justify-self-center ">
+                <img :src="logoUfg" alt="PPGCC · INF · UFG" class="h-10 w-auto" />
+            </div>
+
             <button
                 type="button"
-                class="flex h-9 w-9 items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+                class="flex h-9 w-9 items-center justify-center justify-self-end rounded-full text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-white/10"
                 @click="alternarTema"
                 :title="escuro ? 'Mudar para tema claro' : 'Mudar para tema escuro'"
             >
@@ -117,7 +138,7 @@ function aoTeclar(evento: KeyboardEvent): void {
                         v-for="s in sugestoesAtuais"
                         :key="s"
                         type="button"
-                        class="rounded-2xl border border-neutral-200 bg-neutral-50 px-4.5 py-3.5 text-left text-sm text-neutral-800 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-800/60 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                        class="rounded-2xl border border-neutral-200 bg-neutral-50 px-4.5 py-3.5 text-left text-sm text-neutral-800 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/5 dark:text-neutral-200 dark:shadow-lg dark:shadow-black/10 dark:backdrop-blur-xl dark:hover:bg-white/10"
                         @click="enviar(s)"
                     >
                         {{ s }}
@@ -130,8 +151,8 @@ function aoTeclar(evento: KeyboardEvent): void {
             </div>
         </main>
 
-        <footer class="px-4 pb-4.5 sm:px-6">
-            <div class="mx-auto flex max-w-3xl items-end gap-2 rounded-3xl bg-neutral-100 py-2 pr-2 pl-5 dark:bg-neutral-800">
+        <footer class="relative z-10 px-4 pb-4.5 sm:px-6">
+            <div class="mx-auto flex max-w-3xl items-end gap-2 rounded-3xl bg-neutral-100 py-2 pr-2 pl-5 dark:border dark:border-white/10 dark:bg-white/5 dark:shadow-xl dark:shadow-black/20 dark:backdrop-blur-xl">
                 <textarea
                     v-model="textoInput"
                     rows="1"
@@ -155,8 +176,10 @@ function aoTeclar(evento: KeyboardEvent): void {
                 </button>
             </div>
             <p class="mx-auto mt-2.5 max-w-3xl text-center text-xs text-neutral-400 dark:text-neutral-500">
-                O modelo pode cometer erros de julgamento clínico/agronômico. Sempre confira antes de agir.
+                Os modelos "Agrícula e Clínico" foram criados para testagem da arquitetura SPC-CML, aplicado a bateria de experimentos.
+            <!-- Os modelos de linguagem são ferramentas de apoio e não substituem o julgamento profissional. Sempre verifique as informações antes de tomar decisões críticas. -->
             </p>
         </footer>
     </div>
 </template>
+

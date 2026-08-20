@@ -6,6 +6,7 @@
 @theme {
     --font-sans: 'Google Sans', 'Roboto', system-ui, -apple-system, sans-serif;
     --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    --animate-spin-slow: spin 2.4s linear infinite;
 }
 
 html,
