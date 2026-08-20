@@ -14,3 +14,9 @@ src/python_engine/uvicorn.pid
 
 # Config local (senha do Neo4j, HF_TOKEN) — nunca commitar.
 .env
+
+# PIDs e logs do ./init.sh (ambiente local, fora do Docker).
+.run/
+
+# Arvore npm propria do front de chat.
+/web-chat/node_modules
