@@ -20,9 +20,9 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
-      # Sem isto, os ~1 GB de pesos do Qwen sao rebaixados a cada recriacao do
-      # container — e um download interrompido deixa um .incomplete que faz a
-      # primeira inferencia travar sem erro.
+      # Sem isto, os ~6 GB de pesos (Qwen + bge-m3) sao rebaixados a cada
+      # recriacao do container — e um download interrompido deixa um
+      # .incomplete que faz a primeira inferencia travar sem erro.
       - hf_cache:/root/.cache/huggingface
     environment:
       - NEO4J_URI=bolt://neo4j:7687
@@ -32,6 +32,19 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
       # Troque para "outlines" so para reproduzir a comparacao de desempenho.
       - SPC_CML_BACKEND=${SPC_CML_BACKEND:-llamacpp}
+    # Passthrough da GPU do host — o llama-cpp-python compilado com CUDA (ver
+    # Dockerfile, passo 4) so descarrega camadas na GPU se o container enxergar
+    # uma. Requer Docker Desktop com WSL2 + suporte a GPU NVIDIA (confirmado
+    # funcionando nesta maquina via `docker run --gpus all ... nvidia-smi`). Sem
+    # isso disponivel, `docker compose up` falha ao criar o container — remova
+    # este bloco pra rodar so em CPU.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
 volumes:
   neo4j_data:
