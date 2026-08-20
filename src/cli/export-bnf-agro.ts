@@ -76,7 +76,7 @@ export async function exportAgroBnf(
 
 const isMain = process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]));
 if (isMain) {
-    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'lavoura.agro');
+    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'agro', 'lavoura.agro');
     const outPath =
         process.argv[3] ?? path.join('src', 'python_engine', 'grammar', 'agro_drone.bnf');
 

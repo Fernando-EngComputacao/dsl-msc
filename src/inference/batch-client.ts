@@ -115,8 +115,8 @@ export async function rodarLote(entrada: string, modelPath: string): Promise<voi
 }
 
 async function main(): Promise<void> {
-    const entrada = process.argv[2] ?? path.join('src', 'examples', 'cenarios.jsonl');
-    const modelPath = process.argv[3] ?? path.join('src', 'examples', 'uti.dsl');
+    const entrada = process.argv[2] ?? path.join('src', 'examples', 'med', 'cenarios.jsonl');
+    const modelPath = process.argv[3] ?? path.join('src', 'examples', 'med', 'uti.dsl');
     await rodarLote(entrada, modelPath);
 }
 

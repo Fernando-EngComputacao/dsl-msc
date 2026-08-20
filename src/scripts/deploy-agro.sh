@@ -21,19 +21,19 @@ npx tsc
 
 # 3. Deriva a BNF do modelo agrícola — mesma máquina de extração do domínio clínico
 echo "[3/5] 📐 Derivando a BNF do modelo agrícola..."
-npx --yes tsx src/cli/export-bnf-agro.ts src/examples/lavoura.agro \
+npx --yes tsx src/cli/export-bnf-agro.ts src/examples/agro/lavoura.agro \
     src/python_engine/grammar/agro_drone.bnf > /dev/null
 echo "   ✅ src/python_engine/grammar/agro_drone.bnf"
 
 # 4. Aciona o mapeamento do modelo para o Neo4j
 echo "[4/5] 🕸️  Ancorando modelo no Neo4j..."
-npx --yes tsx src/database/neo4j-agro.ts src/examples/lavoura.agro
+npx --yes tsx src/database/neo4j-agro.ts src/examples/agro/lavoura.agro
 
 # 5. Executa a inferência em lote gerenciando o motor Python
 echo "[5/5] 🧠 Inspecionando prompts do operador com Grammar Prompting..."
 subir_motor agro
 
-npx --yes tsx src/inference/agro-client.ts src/examples/prompt-agro.txt
+npx --yes tsx src/inference/agro-client.ts src/examples/agro/cenarios-agro.jsonl
 
 echo "===================================================="
 echo "✅ Deploy e Inferência Restrita Finalizados (agrícola)!"

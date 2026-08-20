@@ -158,7 +158,7 @@ const CONTEXTO: ClinicalContext = {
 };
 
 async function main(): Promise<void> {
-    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'uti.dsl');
+    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'med', 'uti.dsl');
     const model = await loadModel(modelPath);
     const constraints = retrieveConstraints(model, CONTEXTO);
     const poda = pruningPayload(constraints);

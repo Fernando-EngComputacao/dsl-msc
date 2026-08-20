@@ -166,7 +166,7 @@ Hoje `src/cli/export-bnf.ts` **deriva** a BNF de duas fontes locais já validada
 | Fonte | O que fornece |
 |---|---|
 | `src/language/dsl.langium` | a **estrutura** da saída (regra `PlanCommand` e o que ela alcança) e os vocabulários fechados (`Decision`, `Route`, `AlertLevel`, `Unit`) |
-| `src/examples/uti.dsl` | as **instâncias** permitidas (nomes de fármacos, condutas, protocolos) e a restrição declarada no `esquema_dados` |
+| `src/examples/med/uti.dsl` | as **instâncias** permitidas (nomes de fármacos, condutas, protocolos) e a restrição declarada no `esquema_dados` |
 
 Resultado (`src/python_engine/grammar/advanced_icu.bnf`, gerado):
 
@@ -564,7 +564,7 @@ Sobre o **grammar prompting** propriamente dito (Wang et al., 2023): cada exempl
 
 ### Adicionar um fármaco
 
-Edite `src/examples/uti.dsl` e rode:
+Edite `src/examples/med/uti.dsl` e rode:
 
 ```bash
 npm run validate && npm run bnf:export

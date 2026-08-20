@@ -70,7 +70,7 @@ function summarize(report: ValidationReport): number {
 
 const isMain = process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]));
 if (isMain) {
-    const target = process.argv[2] ?? path.join('src', 'examples', 'uti.dsl');
+    const target = process.argv[2] ?? path.join('src', 'examples', 'med', 'uti.dsl');
     validateFile(target)
         .then(report => process.exit(summarize(report) === 0 ? 0 : 1))
         .catch(err => {

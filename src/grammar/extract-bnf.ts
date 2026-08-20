@@ -15,7 +15,7 @@
  *      as regras que ela alcanca) e os VOCABULARIOS FECHADOS (Decision, Route,
  *      AlertLevel, Unit), lidos da AST da gramatica Langium.
  *
- *   2. `src/examples/uti.dsl`      -> as INSTANCIAS permitidas (nomes de farmacos,
+ *   2. `src/examples/med/uti.dsl`  -> as INSTANCIAS permitidas (nomes de farmacos,
  *      condutas, protocolos), lidas do modelo do especialista. Um farmaco que nao
  *      existe no modelo nao existe na gramatica: citar `Dopamina` deixa de ser um
  *      erro semantico a ser detectado depois e passa a ser sintaticamente

@@ -35,7 +35,7 @@ import { parseBnf, EarleyRecognizer } from '../grammar/earley.js';
 import { retrieveConstraints, type ClinicalContext } from '../knowledge/graphrag.js';
 
 // ---------------------------------------------------------------------------
-// Cenario de leito: o caso do arquivo src/examples/prompt.txt.
+// Cenario de leito: o caso do arquivo src/examples/med/prompt.txt.
 // ---------------------------------------------------------------------------
 
 const CONTEXTO: ClinicalContext = {
@@ -104,7 +104,7 @@ function titulo(n: number, texto: string): void {
 }
 
 async function main(): Promise<number> {
-    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'uti.dsl');
+    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'med', 'uti.dsl');
 
     // ---------------------------------------------------------------- 1. DSL
     titulo(1, 'DSL LOCAL — Esquema de Controle + Esquema de Dados');

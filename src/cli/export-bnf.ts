@@ -76,7 +76,7 @@ export async function exportBnf(
 
 const isMain = process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]));
 if (isMain) {
-    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'uti.dsl');
+    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'med', 'uti.dsl');
     const outPath =
         process.argv[3] ?? path.join('src', 'python_engine', 'grammar', 'advanced_icu.bnf');
 

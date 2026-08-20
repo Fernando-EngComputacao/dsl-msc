@@ -47,8 +47,7 @@ import {
 import {
     montarPromptSemanticoAgro,
     gerarMissaoRestrita,
-    rodarLote as rodarLoteAgro,
-    TELEMETRIA_PADRAO as TELEMETRIA_AGRO
+    rodarLote as rodarLoteAgro
 } from './agro-client.js';
 
 const ENDPOINT = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
@@ -206,16 +205,48 @@ async function loopDigitarUti(
     }
 }
 
+interface PerfilTalhao {
+    talhao: string;
+    areas: string[];
+    produtosEmUso: string[];
+}
+
+interface AmostraSensor {
+    telemetria: Record<string, number>;
+}
+
+/**
+ * Sorteia talhao e leitura de sensores de DOIS pools independentes (400 linhas
+ * cada), espelhando `sortearContextoUti`: a fala digitada no terminal nao vem
+ * com sensor de campo atras dela, e "qual e o talhao" e "o que o sensor mede
+ * agora" sao independentes entre si.
+ */
+function sortearContextoAgro(talhoesPath: string, sensoresPath: string): Omit<AgroContext, 'intencao'> {
+    const talhao = linhaAleatoria<PerfilTalhao>(talhoesPath);
+    const { telemetria } = linhaAleatoria<AmostraSensor>(sensoresPath);
+    return { ...talhao, telemetria };
+}
+
 async function loopDigitarAgro(
     rl: readline.Interface,
     model: Awaited<ReturnType<typeof loadAgroModel>>,
-    session: Session
+    session: Session,
+    talhoesPath: string,
+    sensoresPath: string
 ): Promise<void> {
     while (true) {
         const texto = await digitarComandoValido(rl);
         if (texto === null) return;
 
-        const contexto: AgroContext = { ...TELEMETRIA_AGRO, intencao: texto };
+        const sorteio = sortearContextoAgro(talhoesPath, sensoresPath);
+        const contexto: AgroContext = { ...sorteio, intencao: texto };
+        console.log(
+            `\nTalhao sorteado: ${contexto.talhao ?? 's/ id'} — ` +
+                Object.entries(contexto.telemetria)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join('  ')
+        );
+
         let constraints = retrieveAgroConstraints(model, contexto);
 
         try {
@@ -265,24 +296,40 @@ async function main(): Promise<void> {
             'Agricola (pulverizacao por drone)',
             'Clinico (UTI)'
         ]);
-        const fonte = await perguntar(rl, 'Fonte:', [
-            'Rodar os cenarios prontos do arquivo',
-            'Digitar um comando novo'
-        ]);
 
         if (dominio === 1) {
-            const modelPath = path.join('src', 'examples', 'lavoura.agro');
+            const fonte = await perguntar(rl, 'Fonte:', [
+                'Rodar os cenarios prontos do arquivo (5 casos curados)',
+                'Rodar a bateria de 500 casos',
+                'Digitar um comando novo'
+            ]);
+            const modelPath = path.join('src', 'examples', 'agro', 'lavoura.agro');
             if (fonte === 1) {
-                await rodarLoteAgro(path.join('src', 'examples', 'prompt-agro.txt'), modelPath);
+                await rodarLoteAgro(path.join('src', 'examples', 'agro', 'cenarios-agro.jsonl'), modelPath);
+            } else if (fonte === 2) {
+                await rodarLoteAgro(path.join('src', 'examples', 'agro', 'cenarios-agro-500.jsonl'), modelPath);
             } else {
                 const model = await loadAgroModel(modelPath);
                 driver = abrirDriverNeo4j();
-                await loopDigitarAgro(rl, model, driver.session());
+                await loopDigitarAgro(
+                    rl,
+                    model,
+                    driver.session(),
+                    path.join('src', 'examples', 'agro', 'talhoes.jsonl'),
+                    path.join('src', 'examples', 'agro', 'sensores.jsonl')
+                );
             }
         } else {
-            const modelPath = path.join('src', 'examples', 'uti.dsl');
+            const fonte = await perguntar(rl, 'Fonte:', [
+                'Rodar os cenarios prontos do arquivo (5 casos curados)',
+                'Rodar a bateria de 500 casos',
+                'Digitar um comando novo'
+            ]);
+            const modelPath = path.join('src', 'examples', 'med', 'uti.dsl');
             if (fonte === 1) {
-                await rodarLoteUti(path.join('src', 'examples', 'cenarios.jsonl'), modelPath);
+                await rodarLoteUti(path.join('src', 'examples', 'med', 'cenarios.jsonl'), modelPath);
+            } else if (fonte === 2) {
+                await rodarLoteUti(path.join('src', 'examples', 'med', 'cenarios-500.jsonl'), modelPath);
             } else {
                 const model = await loadModel(modelPath);
                 driver = abrirDriverNeo4j();
@@ -290,8 +337,8 @@ async function main(): Promise<void> {
                     rl,
                     model,
                     driver.session(),
-                    path.join('src', 'examples', 'pacientes.jsonl'),
-                    path.join('src', 'examples', 'telemetrias.jsonl')
+                    path.join('src', 'examples', 'med', 'pacientes.jsonl'),
+                    path.join('src', 'examples', 'med', 'telemetrias.jsonl')
                 );
             }
         }

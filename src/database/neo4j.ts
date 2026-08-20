@@ -461,7 +461,7 @@ export async function syncModel(session: Session, model: MedicalModel): Promise<
 }
 
 async function main(): Promise<void> {
-    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'uti.dsl');
+    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'med', 'uti.dsl');
     const model = await loadModel(modelPath);
 
     const driver: Driver = neo4j.driver(

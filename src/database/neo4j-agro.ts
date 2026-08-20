@@ -389,7 +389,7 @@ export async function syncAgroModel(
 }
 
 async function main(): Promise<void> {
-    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'lavoura.agro');
+    const modelPath = process.argv[2] ?? path.join('src', 'examples', 'agro', 'lavoura.agro');
     const model = await loadAgroModel(modelPath);
 
     const driver: Driver = neo4j.driver(

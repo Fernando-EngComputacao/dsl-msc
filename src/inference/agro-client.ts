@@ -231,8 +231,8 @@ export async function rodarLote(entrada: string, modelPath: string): Promise<voi
 }
 
 async function main(): Promise<void> {
-    const entrada = process.argv[2] ?? path.join('src', 'examples', 'prompt-agro.txt');
-    const modelPath = process.argv[3] ?? path.join('src', 'examples', 'lavoura.agro');
+    const entrada = process.argv[2] ?? path.join('src', 'examples', 'agro', 'cenarios-agro.jsonl');
+    const modelPath = process.argv[3] ?? path.join('src', 'examples', 'agro', 'lavoura.agro');
     await rodarLote(entrada, modelPath);
 }
 
