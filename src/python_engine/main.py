@@ -76,6 +76,13 @@ GGUF_FILE = os.environ.get("SPC_CML_GGUF_FILE", "Qwen2.5-7B-Instruct-Q4_K_M.gguf
 # (rodando so em CPU) o parametro e ignorado silenciosamente — nao quebra nada,
 # so nao acelera. Ver README para a instalacao da wheel com suporte a CUDA.
 N_GPU_LAYERS = int(os.environ.get("SPC_CML_N_GPU_LAYERS", "-1"))
+# Modelo de embedding para a recuperacao por similaridade no Neo4j (indice
+# vetorial). Multilingue, roda em CPU de proposito: a VRAM fica inteira para o
+# modelo de geracao, e um encoder de ~570M e barato o bastante em CPU para os
+# poucos nos (farmacos/protocolos ou produtos/culturas) embutidos por sincronizacao.
+EMBED_GGUF_REPO = os.environ.get("SPC_CML_EMBED_GGUF_REPO", "ggml-org/bge-m3-Q8_0-GGUF")
+EMBED_GGUF_FILE = os.environ.get("SPC_CML_EMBED_GGUF_FILE", "bge-m3-q8_0.gguf")
+EMBED_N_CTX = int(os.environ.get("SPC_CML_EMBED_N_CTX", "2048"))
 # O Prompt Semantico completo (protocolos, bloqueios, vetos, ajustes, interacoes,
 # invariantes) mais os 3 exemplares com suas G[y] dao ~3800 tokens; com 1024 de
 # saida, 4096 estourava e o llama.cpp aborta o PROCESSO (GGML_ASSERT em decode),
@@ -107,6 +114,7 @@ EXEMPLOS = carregar_exemplos(EXAMPLES_PATH, RULES, PARSER)
 #    /health, /grammar e /verify funcionem sem GPU.
 _MODEL = None   # backend outlines (transformers)
 _LLAMA = None   # backend llama.cpp (GGUF)
+_EMBED = None   # modelo de embedding (CPU)
 
 
 def get_model():
@@ -131,6 +139,32 @@ def get_llama():
             verbose=False,
         )
     return _LLAMA
+
+
+def get_embedder():
+    global _EMBED
+    if _EMBED is None:
+        # O llama.cpp inicializa um contexto CUDA (com overhead de VRAM) mesmo
+        # para n_gpu_layers=0 — o backend e compilado com suporte a GPU e sonda o
+        # dispositivo ao carregar qualquer modelo, use-o ou nao. Carregar o
+        # embedder primeiro reservaria esse overhead antes do modelo principal
+        # pedir os ~4.7 GB dos pesos, e o cudaMalloc falha por pouco. Garantir
+        # que o modelo principal carrega primeiro elimina a dependencia de
+        # ordem: depois dele, o overhead do embedder cabe folgado no restante.
+        if BACKEND == "llamacpp":
+            get_llama()
+
+        from huggingface_hub import hf_hub_download
+        from llama_cpp import Llama
+
+        _EMBED = Llama(
+            model_path=hf_hub_download(EMBED_GGUF_REPO, EMBED_GGUF_FILE),
+            embedding=True,
+            n_ctx=EMBED_N_CTX,
+            n_gpu_layers=0,
+            verbose=False,
+        )
+    return _EMBED
 
 
 def _modelo_carregado() -> bool:
@@ -235,6 +269,10 @@ class ValidarRequest(BaseModel):
     comando_humano: str = Field(..., description="Texto digitado pelo usuario, a validar antes de entrar no fluxo")
 
 
+class EmbedRequest(BaseModel):
+    texto: str = Field(..., description="Texto a converter em vetor para busca por similaridade no Neo4j")
+
+
 class ICURequest(BaseModel):
     comando_humano: str = Field(..., description="Fala do profissional, em linguagem natural")
     contexto_neo4j: str = Field("", description="Prompt Semantico: regras recuperadas do grafo")
@@ -283,6 +321,8 @@ def health():
         "backend": BACKEND,
         "modelo": MODEL_ID if BACKEND == "outlines" else f"{GGUF_REPO}/{GGUF_FILE}",
         "modelo_carregado": _modelo_carregado(),
+        "embedder": f"{EMBED_GGUF_REPO}/{EMBED_GGUF_FILE}",
+        "embedder_carregado": _EMBED is not None,
     }
 
 
@@ -319,6 +359,18 @@ def validar_comando(req: ValidarRequest):
     """
     compreensivel, motivo = _validar_comando(req.comando_humano)
     return {"compreensivel": compreensivel, "motivo": motivo}
+
+
+@app.post("/embed")
+def embed(req: EmbedRequest):
+    """
+    Vetor de similaridade para a recuperacao por embedding no Neo4j: usado tanto
+    na sincronizacao (embute cada Farmaco/Protocolo ou Produto/Cultura) quanto na
+    consulta (embute a intencao digitada para achar os nos mais proximos no
+    indice vetorial). Mesmo modelo dos dois lados — vetores comparaveis.
+    """
+    vetor = get_embedder().create_embedding(req.texto)["data"][0]["embedding"]
+    return {"vetor": vetor, "dimensoes": len(vetor)}
 
 
 @app.post("/generate-constrained")

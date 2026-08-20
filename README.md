@@ -460,9 +460,17 @@ cenários prontos do arquivo (mesmo comportamento de `npm run batch` /
 Um comando digitado passa primeiro por `POST /validar-comando`: o próprio LLM
 local julga — sob a mesma decodificação restrita do resto da arquitetura, nunca
 texto livre — se o comando está contraditório, ambíguo ou incompleto demais. Se
-estiver, pede para digitar de novo; se estiver claro, o comando segue o fluxo
-normal (recuperação no grafo → Prompt Semântico → geração sob mascaramento de
-logits), igual a um cenário do arquivo.
+estiver, pede para digitar de novo.
+
+Aceito o comando, a recuperação no grafo passa por um filtro de foco: a intenção
+digitada é convertida em vetor (`POST /embed`, modelo `bge-m3`) e comparada por
+similaridade de cosseno contra o índice vetorial nativo do Neo4j
+(`farmaco_embedding`/`protocolo_embedding`, ou `produto_embedding`/`cultura_embedding`
+no domínio agrícola — populados a cada `graph:sync`). O foco encontrado só decide
+**quais** farmacos/protocolos entram no Prompt Semântico; a avaliação de bloqueio
+em si continua inteiramente determinística — o embedding nunca decide o que é
+permitido, só o que é mostrado. Sem Neo4j/embedder disponíveis, cai de volta no
+grafo completo (mesmo comportamento de antes) com um aviso.
 
 ---
 

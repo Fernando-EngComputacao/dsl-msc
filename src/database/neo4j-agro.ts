@@ -18,6 +18,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { createAgroServices } from '../language/agro-module.js';
+import { embedOpcional, EMBED_DIMENSOES } from '../knowledge/embeddings.js';
 import {
     isAgroBlockRule,
     isAgroForbidAttr,
@@ -105,6 +106,15 @@ export async function syncAgroModel(
         );
         stats.produtos++;
 
+        // Vetor para a recuperacao por similaridade (ver graphrag-agro.ts::retrieverFocoAgro).
+        const vetorProduto = await embedOpcional(`${product.name}, classe ${product.productClass ?? ''}`.trim());
+        if (vetorProduto) {
+            await q(`MATCH (p:Produto { nome: $nome }) SET p.embedding = $vetor`, {
+                nome: product.name,
+                vetor: vetorProduto
+            });
+        }
+
         for (const attr of product.attributes) {
             if (isDoseAttr(attr)) {
                 await q(
@@ -173,6 +183,14 @@ export async function syncAgroModel(
             ciclo: culture.cycle
         });
         stats.culturas++;
+
+        const vetorCultura = await embedOpcional(`${culture.name}, ciclo ${culture.cycle ?? ''}`.trim());
+        if (vetorCultura) {
+            await q(`MATCH (c:Cultura { nome: $nome }) SET c.embedding = $vetor`, {
+                nome: culture.name,
+                vetor: vetorCultura
+            });
+        }
 
         for (const attr of culture.attributes) {
             if (isAgroRecommendAttr(attr)) {
@@ -347,6 +365,24 @@ export async function syncAgroModel(
             stats.condutas++;
             stats.relacoes++;
         }
+    }
+
+    // Indice vetorial para a recuperacao por embedding (ver graphrag-agro.ts::retrieverFocoAgro).
+    try {
+        await q(
+            `CREATE VECTOR INDEX produto_embedding IF NOT EXISTS
+             FOR (p:Produto) ON (p.embedding)
+             OPTIONS { indexConfig: { \`vector.dimensions\`: ${EMBED_DIMENSOES}, \`vector.similarity_function\`: 'cosine' } }`,
+            {}
+        );
+        await q(
+            `CREATE VECTOR INDEX cultura_embedding IF NOT EXISTS
+             FOR (c:Cultura) ON (c.embedding)
+             OPTIONS { indexConfig: { \`vector.dimensions\`: ${EMBED_DIMENSOES}, \`vector.similarity_function\`: 'cosine' } }`,
+            {}
+        );
+    } catch (error) {
+        console.warn(`   (indice vetorial nao pode ser criado: ${(error as Error).message})`);
     }
 
     return stats;

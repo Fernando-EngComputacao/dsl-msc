@@ -7,9 +7,13 @@
  *
  * Um comando digitado passa primeiro por `/validar-comando`: o proprio LLM local
  * julga, sob decodificacao restrita (nunca texto livre — ver VALIDACAO_GBNF em
- * main.py), se o comando e contraditorio, ambiguo ou incompleto demais. Só depois
- * de aceito ele entra no fluxo normal: recuperacao no grafo -> Prompt Semantico ->
- * geracao sob mascaramento de logits.
+ * main.py), se o comando e contraditorio, ambiguo ou incompleto demais. So depois
+ * de aceito ele entra na recuperacao: um embedding da intencao busca por
+ * similaridade no indice vetorial do Neo4j (ver retrieverFoco/retrieverFocoAgro)
+ * para achar SO os farmacos/protocolos (ou produtos/culturas) pertinentes ao que
+ * foi pedido — o embedding nunca decide bloqueio, so escopo; a avaliacao de cada
+ * entidade continua 100% deterministica. O Prompt Semantico final sai desse
+ * subconjunto, e so entao vai para a geracao sob mascaramento de logits.
  *
  * Uso:
  *   npx tsx src/inference/cli.ts
@@ -18,14 +22,27 @@
 import * as path from 'node:path';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import neo4j, { type Driver, type Session } from 'neo4j-driver';
 
 import { loadModel } from '../database/neo4j.js';
-import { retrieveConstraints, pruningPayload, type ClinicalContext } from '../knowledge/graphrag.js';
+import {
+    retrieveConstraints,
+    pruningPayload,
+    retrieverFoco,
+    filtrarPorFoco,
+    type ClinicalContext
+} from '../knowledge/graphrag.js';
 import { montarPromptSemantico, gerarPlanoRestrito } from './llm-client.js';
 import { rodarLote as rodarLoteUti, TELEMETRIA_PADRAO as TELEMETRIA_UTI } from './batch-client.js';
 
 import { loadAgroModel } from '../database/neo4j-agro.js';
-import { retrieveAgroConstraints, agroPruningPayload, type AgroContext } from '../knowledge/graphrag-agro.js';
+import {
+    retrieveAgroConstraints,
+    agroPruningPayload,
+    retrieverFocoAgro,
+    filtrarPorFocoAgro,
+    type AgroContext
+} from '../knowledge/graphrag-agro.js';
 import {
     montarPromptSemanticoAgro,
     gerarMissaoRestrita,
@@ -102,14 +119,29 @@ async function digitarComandoValido(rl: readline.Interface): Promise<string | nu
 
 async function loopDigitarUti(
     rl: readline.Interface,
-    model: Awaited<ReturnType<typeof loadModel>>
+    model: Awaited<ReturnType<typeof loadModel>>,
+    session: Session
 ): Promise<void> {
     while (true) {
         const texto = await digitarComandoValido(rl);
         if (texto === null) return;
 
         const contexto: ClinicalContext = { ...TELEMETRIA_UTI, intencao: texto };
-        const constraints = retrieveConstraints(model, contexto);
+        let constraints = retrieveConstraints(model, contexto);
+
+        try {
+            const foco = await retrieverFoco(session, texto);
+            constraints = filtrarPorFoco(constraints, foco);
+            console.log(
+                `\nFoco recuperado por embedding: farmacos [${[...foco.farmacos].join(', ')}], ` +
+                    `protocolos [${[...foco.protocolos].join(', ')}]`
+            );
+        } catch (error) {
+            console.log(
+                `\n(recuperacao por embedding indisponivel — usando o grafo completo: ${(error as Error).message})`
+            );
+        }
+
         const poda = pruningPayload(constraints);
 
         console.log('\n=== PROMPT SEMANTICO (recuperado do grafo) ===');
@@ -131,14 +163,29 @@ async function loopDigitarUti(
 
 async function loopDigitarAgro(
     rl: readline.Interface,
-    model: Awaited<ReturnType<typeof loadAgroModel>>
+    model: Awaited<ReturnType<typeof loadAgroModel>>,
+    session: Session
 ): Promise<void> {
     while (true) {
         const texto = await digitarComandoValido(rl);
         if (texto === null) return;
 
         const contexto: AgroContext = { ...TELEMETRIA_AGRO, intencao: texto };
-        const constraints = retrieveAgroConstraints(model, contexto);
+        let constraints = retrieveAgroConstraints(model, contexto);
+
+        try {
+            const foco = await retrieverFocoAgro(session, texto);
+            constraints = filtrarPorFocoAgro(constraints, foco);
+            console.log(
+                `\nFoco recuperado por embedding: produtos [${[...foco.produtos].join(', ')}], ` +
+                    `culturas [${[...foco.culturas].join(', ')}]`
+            );
+        } catch (error) {
+            console.log(
+                `\n(recuperacao por embedding indisponivel — usando o grafo completo: ${(error as Error).message})`
+            );
+        }
+
         const poda = agroPruningPayload(constraints);
 
         console.log('\n=== PROMPT SEMANTICO (recuperado do grafo) ===');
@@ -158,8 +205,16 @@ async function loopDigitarAgro(
     }
 }
 
+function abrirDriverNeo4j(): Driver {
+    return neo4j.driver(
+        process.env.NEO4J_URI ?? 'bolt://localhost:7687',
+        neo4j.auth.basic(process.env.NEO4J_USER ?? 'neo4j', process.env.NEO4J_PASSWORD ?? '#UFG2026')
+    );
+}
+
 async function main(): Promise<void> {
     const rl = readline.createInterface({ input, output });
+    let driver: Driver | undefined;
     try {
         const dominio = await perguntar(rl, 'Dominio:', [
             'Agricola (pulverizacao por drone)',
@@ -176,7 +231,8 @@ async function main(): Promise<void> {
                 await rodarLoteAgro(path.join('src', 'examples', 'prompt-agro.txt'), modelPath);
             } else {
                 const model = await loadAgroModel(modelPath);
-                await loopDigitarAgro(rl, model);
+                driver = abrirDriverNeo4j();
+                await loopDigitarAgro(rl, model, driver.session());
             }
         } else {
             const modelPath = path.join('src', 'examples', 'uti.dsl');
@@ -184,11 +240,13 @@ async function main(): Promise<void> {
                 await rodarLoteUti(path.join('src', 'examples', 'prompt.txt'), modelPath);
             } else {
                 const model = await loadModel(modelPath);
-                await loopDigitarUti(rl, model);
+                driver = abrirDriverNeo4j();
+                await loopDigitarUti(rl, model, driver.session());
             }
         }
     } finally {
         rl.close();
+        if (driver) await driver.close();
     }
 }
 

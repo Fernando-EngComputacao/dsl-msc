@@ -13,6 +13,8 @@
  *     e passa a ser uma cadeia que a gramatica nao gera.
  */
 
+import neo4j, { type Session } from 'neo4j-driver';
+
 import {
     isAgroBlockRule,
     isAgroForbidAttr,
@@ -33,6 +35,7 @@ import {
     type Operator,
     type ProductDef
 } from '../generated/ast.js';
+import { embedTexto } from './embeddings.js';
 
 export interface AgroContext {
     /** Telemetria corrente dos sensores: parametro -> valor observado. */
@@ -308,5 +311,78 @@ export function agroPruningPayload(constraints: RetrievedAgroConstraints): {
         acoes_permitidas: [...acoes],
         farmacos_liberados: produtos,
         vias_disponiveis: [...modos]
+    };
+}
+
+/**
+ * Recuperacao por embedding no Neo4j — espelha `graphrag.ts::retrieverFoco` no
+ * dominio agricola. So decide QUAIS produtos/culturas entram no Prompt
+ * Semantico; a avaliacao de bloqueio continua 100% deterministica em
+ * `retrieveAgroConstraints`.
+ */
+export interface AgroFoco {
+    produtos: Set<string>;
+    culturas: Set<string>;
+}
+
+const FOCO_TOP_K = 5;
+const FOCO_LIMIAR_SIMILARIDADE = 0.35;
+
+async function topKPorVetor(
+    session: Session,
+    indice: string,
+    vetor: number[],
+    topK: number
+): Promise<{ nome: string; score: number }[]> {
+    const resultado = await session.run(
+        `CALL db.index.vector.queryNodes($indice, $topK, $vetor) YIELD node, score
+         RETURN node.nome AS nome, score`,
+        { indice, topK: neo4j.int(topK), vetor }
+    );
+    return resultado.records.map(r => ({ nome: r.get('nome') as string, score: r.get('score') as number }));
+}
+
+function acimaDoLimiar(itens: { nome: string; score: number }[]): Set<string> {
+    const relevantes = itens.filter(i => i.score >= FOCO_LIMIAR_SIMILARIDADE);
+    return new Set((relevantes.length > 0 ? relevantes : itens.slice(0, 1)).map(i => i.nome));
+}
+
+export async function retrieverFocoAgro(
+    session: Session,
+    intencao: string,
+    topK = FOCO_TOP_K
+): Promise<AgroFoco> {
+    const vetor = await embedTexto(intencao);
+    // Sequencial, nao Promise.all: uma Session do driver nao roda duas queries
+    // concorrentes ("Queries cannot be run directly on a session with an open
+    // transaction").
+    const produtos = await topKPorVetor(session, 'produto_embedding', vetor, topK);
+    const culturas = await topKPorVetor(session, 'cultura_embedding', vetor, topK);
+    return { produtos: acimaDoLimiar(produtos), culturas: acimaDoLimiar(culturas) };
+}
+
+/**
+ * Restringe as restricoes ja recuperadas ao foco semantico. Invariantes globais
+ * ficam sempre de fora do filtro — valem independente do que foi pedido.
+ */
+export function filtrarPorFocoAgro(
+    constraints: RetrievedAgroConstraints,
+    foco: AgroFoco
+): RetrievedAgroConstraints {
+    const noFoco = (produto: string) => foco.produtos.has(produto);
+    const culturaNoFoco = (cultura: string) => foco.culturas.has(cultura);
+    const incompatNoFoco = (entre: string) => entre.split(' + ').some(noFoco);
+
+    return {
+        culturasAtivas: constraints.culturasAtivas.filter(c => culturaNoFoco(c.nome)),
+        bloqueios: constraints.bloqueios.filter(b => noFoco(b.produto)),
+        ajustes: constraints.ajustes.filter(a => noFoco(a.produto)),
+        recomendados: constraints.recomendados.filter(r => noFoco(r.produto) || culturaNoFoco(r.cultura)),
+        vetados: constraints.vetados.filter(v => noFoco(v.produto)),
+        escalonamentos: constraints.escalonamentos.filter(e => culturaNoFoco(e.cultura)),
+        incompatibilidades: constraints.incompatibilidades.filter(i => incompatNoFoco(i.entre)),
+        proibicoes: constraints.proibicoes.filter(p => noFoco(p.produto)),
+        regrasGlobais: constraints.regrasGlobais,
+        politicas: new Map([...constraints.politicas].filter(([produto]) => noFoco(produto)))
     };
 }

@@ -19,6 +19,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { createDSLServices } from '../language/dsl-module.js';
+import { embedOpcional, EMBED_DIMENSOES } from '../knowledge/embeddings.js';
 import {
     isBlockRule,
     isContraindicationAttr,
@@ -108,6 +109,17 @@ export async function syncModel(session: Session, model: MedicalModel): Promise<
             }
         );
         stats.farmacos++;
+
+        // Vetor para a recuperacao por similaridade (ver graphrag.ts::retrieverFoco).
+        // Classe entra no texto de proposito: "aumenta a sedacao" deve aproximar de
+        // um farmaco classe Sedativo mesmo sem citar o nome dele.
+        const vetorFarmaco = await embedOpcional(`${drug.name}, classe ${drug.drugClass ?? ''}`.trim());
+        if (vetorFarmaco) {
+            await q(`MATCH (f:Farmaco { nome: $nome }) SET f.embedding = $vetor`, {
+                nome: drug.name,
+                vetor: vetorFarmaco
+            });
+        }
 
         for (const attr of drug.attributes) {
             if (isDoseLimitAttr(attr)) {
@@ -241,6 +253,14 @@ export async function syncModel(session: Session, model: MedicalModel): Promise<
             cid: protocol.icd
         });
         stats.protocolos++;
+
+        const vetorProtocolo = await embedOpcional(`${protocol.name}, CID ${protocol.icd ?? ''}`.trim());
+        if (vetorProtocolo) {
+            await q(`MATCH (p:Protocolo { nome: $nome }) SET p.embedding = $vetor`, {
+                nome: protocol.name,
+                vetor: vetorProtocolo
+            });
+        }
 
         for (const attr of protocol.attributes) {
             if (isRecommendAttr(attr)) {
@@ -414,6 +434,27 @@ export async function syncModel(session: Session, model: MedicalModel): Promise<
                 stats.relacoes++;
             }
         }
+    }
+
+    // Indice vetorial para a recuperacao por embedding (ver graphrag.ts::retrieverFoco).
+    // Idempotente e independente de ter havido vetor gravado nesta rodada — se o
+    // motor estava fora do ar, o indice fica pronto para quando a proxima
+    // sincronizacao gravar os vetores.
+    try {
+        await q(
+            `CREATE VECTOR INDEX farmaco_embedding IF NOT EXISTS
+             FOR (f:Farmaco) ON (f.embedding)
+             OPTIONS { indexConfig: { \`vector.dimensions\`: ${EMBED_DIMENSOES}, \`vector.similarity_function\`: 'cosine' } }`,
+            {}
+        );
+        await q(
+            `CREATE VECTOR INDEX protocolo_embedding IF NOT EXISTS
+             FOR (p:Protocolo) ON (p.embedding)
+             OPTIONS { indexConfig: { \`vector.dimensions\`: ${EMBED_DIMENSOES}, \`vector.similarity_function\`: 'cosine' } }`,
+            {}
+        );
+    } catch (error) {
+        console.warn(`   (indice vetorial nao pode ser criado: ${(error as Error).message})`);
     }
 
     return stats;

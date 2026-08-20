@@ -14,6 +14,8 @@
  *     e passa a ser uma cadeia que a gramatica nao gera.
  */
 
+import neo4j, { type Session } from 'neo4j-driver';
+
 import {
     isBlockRule,
     isDataSchemaDef,
@@ -37,6 +39,7 @@ import {
     type MedicalModel,
     type Operator
 } from '../generated/ast.js';
+import { embedTexto } from './embeddings.js';
 
 export interface ClinicalContext {
     /** Telemetria corrente: parametro clinico -> valor observado. */
@@ -326,5 +329,77 @@ export function pruningPayload(constraints: RetrievedConstraints): {
         acoes_permitidas: [...acoes],
         farmacos_liberados: farmacos,
         vias_disponiveis: [...vias]
+    };
+}
+
+/**
+ * Recuperacao por embedding no Neo4j — etapa OPCIONAL antes de `retrieveConstraints`,
+ * usada quando o comando vem digitado em vez de vir de um cenario pronto (ver
+ * `src/inference/cli.ts`). So decide QUAIS farmacos/protocolos entram no Prompt
+ * Semantico; a avaliacao de bloqueio em si continua inteiramente deterministica
+ * em `retrieveConstraints` — o embedding nunca decide o que e permitido, so o que
+ * e mostrado.
+ */
+export interface Foco {
+    farmacos: Set<string>;
+    protocolos: Set<string>;
+}
+
+const FOCO_TOP_K = 5;
+// Calibrado com bge-m3: pares claramente relacionados marcaram ~0.6, pares sem
+// relacao nenhuma ~0.28 (ver testes ad-hoc do modelo). 0.35 fica no meio.
+const FOCO_LIMIAR_SIMILARIDADE = 0.35;
+
+async function topKPorVetor(
+    session: Session,
+    indice: string,
+    vetor: number[],
+    topK: number
+): Promise<{ nome: string; score: number }[]> {
+    const resultado = await session.run(
+        `CALL db.index.vector.queryNodes($indice, $topK, $vetor) YIELD node, score
+         RETURN node.nome AS nome, score`,
+        { indice, topK: neo4j.int(topK), vetor }
+    );
+    return resultado.records.map(r => ({ nome: r.get('nome') as string, score: r.get('score') as number }));
+}
+
+/** Mantem so quem passa do limiar; sem nenhum acima, mantem o mais proximo mesmo assim
+ *  — um foco impreciso e melhor que um Prompt Semantico vazio. */
+function acimaDoLimiar(itens: { nome: string; score: number }[]): Set<string> {
+    const relevantes = itens.filter(i => i.score >= FOCO_LIMIAR_SIMILARIDADE);
+    return new Set((relevantes.length > 0 ? relevantes : itens.slice(0, 1)).map(i => i.nome));
+}
+
+export async function retrieverFoco(session: Session, intencao: string, topK = FOCO_TOP_K): Promise<Foco> {
+    const vetor = await embedTexto(intencao);
+    // Sequencial, nao Promise.all: uma Session do driver nao roda duas queries
+    // concorrentes ("Queries cannot be run directly on a session with an open
+    // transaction").
+    const farmacos = await topKPorVetor(session, 'farmaco_embedding', vetor, topK);
+    const protocolos = await topKPorVetor(session, 'protocolo_embedding', vetor, topK);
+    return { farmacos: acimaDoLimiar(farmacos), protocolos: acimaDoLimiar(protocolos) };
+}
+
+/**
+ * Restringe as restricoes ja recuperadas ao foco semantico. Invariantes globais
+ * ficam sempre de fora do filtro — sao regras que valem independente do que foi
+ * pedido, nao "sobre" um farmaco ou protocolo especifico.
+ */
+export function filtrarPorFoco(constraints: RetrievedConstraints, foco: Foco): RetrievedConstraints {
+    const noFoco = (farmaco: string) => foco.farmacos.has(farmaco);
+    const protocoloNoFoco = (protocolo: string) => foco.protocolos.has(protocolo);
+    const interacaoNoFoco = (entre: string) => entre.split(' + ').some(noFoco);
+
+    return {
+        protocolosAtivos: constraints.protocolosAtivos.filter(p => protocoloNoFoco(p.nome)),
+        bloqueios: constraints.bloqueios.filter(b => noFoco(b.farmaco)),
+        ajustes: constraints.ajustes.filter(a => noFoco(a.farmaco)),
+        recomendados: constraints.recomendados.filter(r => noFoco(r.farmaco) || protocoloNoFoco(r.protocolo)),
+        vetados: constraints.vetados.filter(v => noFoco(v.farmaco)),
+        escalonamentos: constraints.escalonamentos.filter(e => protocoloNoFoco(e.protocolo)),
+        interacoes: constraints.interacoes.filter(i => interacaoNoFoco(i.entre)),
+        regrasGlobais: constraints.regrasGlobais,
+        politicas: new Map([...constraints.politicas].filter(([farmaco]) => noFoco(farmaco)))
     };
 }
