@@ -51,9 +51,6 @@ const ENGINE = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
 // ("a poda eliminou o simbolo inicial") em vez de gerar contra a gramatica errada.
 const ENGINE_AGRO = process.env.SPC_CML_ENDPOINT_AGRO ?? ENGINE;
 
-function motorDoDominio(dominio: 'med' | 'agro'): string {
-    return dominio === 'agro' ? ENGINE_AGRO : ENGINE;
-}
 const TIMEOUT_MS = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600_000);
 const PORT = Number(process.env.SPC_CML_WEB_PORT ?? 4000);
 const ORIGEM_PERMITIDA = process.env.SPC_CML_WEB_ORIGIN ?? '*';
@@ -67,11 +64,7 @@ interface ValidacaoResposta {
     motivo: string;
 }
 
-<<<<<<< HEAD
-async function validarComando(comando: string, contextoNeo4j: string): Promise<ValidacaoResposta> {
-=======
-async function validarComando(comando: string, motor: string): Promise<ValidacaoResposta> {
->>>>>>> 04aa28557cc9ca2ebfd5b5b3e06a10d9567b2dbd
+async function validarComando(comando: string, contextoNeo4j: string, motor: string): Promise<ValidacaoResposta> {
     let response: Response;
     try {
         response = await fetch(`${motor}/validar-comando`, {
@@ -190,7 +183,7 @@ async function processarMed(texto: string, estagio: EmitirEstagio): Promise<Resp
     let motivoValidacao: string | undefined;
     if (VALIDACAO_ATIVA) {
         await estagio('Validando comando com o modelo local (usando o grafo recuperado)…');
-        const validacao = await validarComando(texto, promptSemantico);
+        const validacao = await validarComando(texto, promptSemantico, ENGINE);
         motivoValidacao = validacao.motivo;
         if (!validacao.compreensivel) {
             return { aceito: false, motivoValidacao, sorteio, foco, focoIndisponivel, promptSemantico };
@@ -253,7 +246,7 @@ async function processarAgro(texto: string, estagio: EmitirEstagio): Promise<Res
     let motivoValidacao: string | undefined;
     if (VALIDACAO_ATIVA) {
         await estagio('Validando comando com o modelo local (usando o grafo recuperado)…');
-        const validacao = await validarComando(texto, promptSemantico);
+        const validacao = await validarComando(texto, promptSemantico, ENGINE_AGRO);
         motivoValidacao = validacao.motivo;
         if (!validacao.compreensivel) {
             return { aceito: false, motivoValidacao, sorteio, foco, focoIndisponivel, promptSemantico };
@@ -352,18 +345,6 @@ const servidor = http.createServer(async (req, res) => {
             };
 
             try {
-<<<<<<< HEAD
-=======
-                estagio('Validando comando com o modelo local…');
-                const validacao = await validarComando(texto, motorDoDominio(dominio));
-
-                if (!validacao.compreensivel) {
-                    emitir('final', { aceito: false, motivoValidacao: validacao.motivo });
-                    res.end();
-                    return;
-                }
-
->>>>>>> 04aa28557cc9ca2ebfd5b5b3e06a10d9567b2dbd
                 const resultado =
                     dominio === 'med' ? await processarMed(texto, estagio) : await processarAgro(texto, estagio);
                 emitir('final', resultado);

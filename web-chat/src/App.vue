@@ -107,6 +107,16 @@ async function enviar(textoForcado?: string): Promise<void> {
     }
 }
 
+/** Botao de enviar vira "parar" enquanto uma geracao esta em andamento. */
+function pararGeracao(): void {
+    const emAndamento = mensagens.value.find(m => m.autor === 'assistente' && m.carregando);
+    if (emAndamento) {
+        emAndamento.carregando = false;
+        emAndamento.erro = 'Interrompido pelo usuário.';
+    }
+    controladorAtual.value?.abort();
+}
+
 function aoTeclar(evento: KeyboardEvent): void {
     if (evento.key === 'Enter' && !evento.shiftKey) {
         evento.preventDefault();
@@ -246,16 +256,20 @@ function cancelarTrocaDominio(): void {
                 <button
                     type="button"
                     class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition-colors disabled:bg-neutral-300 disabled:text-neutral-500 dark:disabled:bg-neutral-700 dark:disabled:text-neutral-400"
-                    :disabled="!textoInput.trim() || enviando"
-                    @click="enviar()"
+                    :disabled="!enviando && !textoInput.trim()"
+                    :title="enviando ? 'Parar' : 'Enviar'"
+                    @click="enviando ? pararGeracao() : enviar()"
                 >
-                    <svg width="19" height="19" viewBox="0 0 24 24">
+                    <svg v-if="enviando" width="14" height="14" viewBox="0 0 24 24">
+                        <rect x="5" y="5" width="14" height="14" rx="2.5" fill="currentColor" />
+                    </svg>
+                    <svg v-else width="19" height="19" viewBox="0 0 24 24">
                         <path d="M4 12h16m0 0l-6-6m6 6l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                 </button>
             </div>
             <p class="mx-auto mt-2.5 max-w-3xl text-center text-xs text-neutral-400 dark:text-neutral-500">
-                Os modelos "Agrícula e Clínico" foram criados para testagem da arquitetura SPC-CML, aplicado a bateria de experimentos.
+                Os modelos "Agrícula e Clínico" foram criados para testagem da arquitetura SPC-CML, destinado à bateria de experimentos.
             <!-- Os modelos de linguagem são ferramentas de apoio e não substituem o julgamento profissional. Sempre verifique as informações antes de tomar decisões críticas. -->
             </p>
         </footer>
