@@ -1,7 +1,21 @@
+import type { Mensagem } from './types';
+
 export interface Dominio {
     id: 'med' | 'agro';
     nome: string;
     descricao: string;
+}
+
+export interface ChatResumo {
+    id: string;
+    titulo: string;
+    dominio: 'med' | 'agro';
+    criadoEm: string;
+    atualizadoEm: string;
+}
+
+export interface ChatCompleto extends ChatResumo {
+    mensagens: Mensagem[];
 }
 
 export interface RespostaComando {
@@ -24,6 +38,38 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 export async function buscarDominios(): Promise<Dominio[]> {
     const resp = await fetch(`${BASE_URL}/api/dominios`);
     if (!resp.ok) throw new Error(`falha ao listar dominios: ${resp.status}`);
+    return resp.json();
+}
+
+export async function listarChats(): Promise<ChatResumo[]> {
+    const resp = await fetch(`${BASE_URL}/api/chats`);
+    if (!resp.ok) throw new Error(`falha ao listar chats: ${resp.status}`);
+    return resp.json();
+}
+
+export async function buscarChat(id: string): Promise<ChatCompleto> {
+    const resp = await fetch(`${BASE_URL}/api/chats/${id}`);
+    if (!resp.ok) throw new Error(`falha ao carregar chat: ${resp.status}`);
+    return resp.json();
+}
+
+export async function criarChat(dominio: 'med' | 'agro', mensagens: Mensagem[]): Promise<ChatCompleto> {
+    const resp = await fetch(`${BASE_URL}/api/chats`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dominio, mensagens })
+    });
+    if (!resp.ok) throw new Error(`falha ao salvar chat: ${resp.status}`);
+    return resp.json();
+}
+
+export async function atualizarChat(id: string, dominio: 'med' | 'agro', mensagens: Mensagem[]): Promise<ChatCompleto> {
+    const resp = await fetch(`${BASE_URL}/api/chats/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dominio, mensagens })
+    });
+    if (!resp.ok) throw new Error(`falha ao salvar chat: ${resp.status}`);
     return resp.json();
 }
 

@@ -6,7 +6,8 @@ import ChatMessage from './components/ChatMessage.vue';
 import ModelSwitchDivider from './components/ModelSwitchDivider.vue';
 import BatchProgress from './components/BatchProgress.vue';
 import ConfirmModal from './components/ConfirmModal.vue';
-import { buscarDominios, enviarComandoStream, type Dominio } from './api';
+import ChatSidebar from './components/ChatSidebar.vue';
+import { buscarDominios, enviarComandoStream, listarChats, buscarChat, criarChat, atualizarChat, type Dominio, type ChatResumo } from './api';
 import type { Mensagem, ItemResultadoLote } from './types';
 import { parseArquivoLote, type CenarioLote } from './lote';
 import { escuro, iniciarTema, alternarTema } from './theme';
@@ -25,6 +26,10 @@ let proximoId = 1;
 const controladorAtual = ref<AbortController | null>(null);
 const modalTrocaAberto = ref(false);
 const dominioPendente = ref<'med' | 'agro' | null>(null);
+
+const chats = ref<ChatResumo[]>([]);
+const chatIdAtual = ref<string | null>(null);
+const sidebarAberta = ref(typeof window !== 'undefined' ? window.innerWidth >= 768 : true);
 
 const inputArquivoLote = ref<HTMLInputElement | null>(null);
 const loteAtivo = ref(false);
@@ -60,7 +65,77 @@ onMounted(async () => {
     } catch (error) {
         erroCarregamento.value = (error as Error).message;
     }
+    try {
+        chats.value = await listarChats();
+    } catch {
+        // Historico indisponivel nao deve travar o chat em si.
+    }
 });
+
+/** Cria o chat na primeira mensagem e atualiza o mesmo arquivo dali em diante.
+ *  Chamadas (no envio, na resposta, no lote, na troca de dominio...) disparam
+ *  sem await em paralelo — encadeadas numa fila, senão duas chamadas correndo
+ *  antes da primeira preencher chatIdAtual criam dois chats em vez de um so
+ *  sendo atualizado. Falha ao persistir localmente nao deve travar o chat em
+ *  memoria. */
+let filaSalvarChat: Promise<void> = Promise.resolve();
+function salvarChatAtual(): void {
+    if (mensagens.value.length === 0) return;
+    filaSalvarChat = filaSalvarChat.then(async () => {
+        try {
+            const chat = chatIdAtual.value
+                ? await atualizarChat(chatIdAtual.value, dominioAtual.value, mensagens.value)
+                : await criarChat(dominioAtual.value, mensagens.value);
+            chatIdAtual.value = chat.id;
+
+            const resumo: ChatResumo = { id: chat.id, titulo: chat.titulo, dominio: chat.dominio, criadoEm: chat.criadoEm, atualizadoEm: chat.atualizadoEm };
+            const indice = chats.value.findIndex(c => c.id === chat.id);
+            if (indice !== -1) chats.value.splice(indice, 1);
+            chats.value.unshift(resumo);
+        } catch {
+            // idem
+        }
+    });
+}
+
+function novoChat(): void {
+    if (enviando.value) pararGeracao();
+    if (loteAtivo.value) loteControlador.value?.abort();
+    mensagens.value = [];
+    chatIdAtual.value = null;
+    textoInput.value = '';
+    if (window.innerWidth < 768) sidebarAberta.value = false;
+}
+
+async function abrirChat(id: string): Promise<void> {
+    if (id === chatIdAtual.value) {
+        if (window.innerWidth < 768) sidebarAberta.value = false;
+        return;
+    }
+    if (enviando.value) pararGeracao();
+    if (loteAtivo.value) loteControlador.value?.abort();
+
+    try {
+        const chat = await buscarChat(id);
+        // Uma resposta em "carregando" so existe enquanto a aba que a gerou
+        // segue aberta; se o chat foi salvo assim (aba fechada/atualizada no
+        // meio do streaming), ela nunca mais vai terminar sozinha.
+        for (const m of chat.mensagens) {
+            if (m.carregando) {
+                m.carregando = false;
+                m.erro = 'Resposta interrompida: a conversa foi fechada antes de terminar.';
+            }
+        }
+        mensagens.value = chat.mensagens;
+        dominioAtual.value = chat.dominio;
+        chatIdAtual.value = chat.id;
+        proximoId = chat.mensagens.reduce((max, m) => Math.max(max, m.id), 0) + 1;
+        rolarParaFinal();
+    } catch (error) {
+        erroCarregamento.value = (error as Error).message;
+    }
+    if (window.innerWidth < 768) sidebarAberta.value = false;
+}
 
 async function rolarParaFinal(): Promise<void> {
     await nextTick();
@@ -82,6 +157,7 @@ async function enviar(textoForcado?: string): Promise<void> {
     const idResposta = proximoId++;
     mensagens.value.push({ id: idResposta, autor: 'assistente', dominio: dominioAtual.value, carregando: true });
     rolarParaFinal();
+    salvarChatAtual();
 
     try {
         const resposta = await enviarComandoStream(
@@ -114,6 +190,7 @@ async function enviar(textoForcado?: string): Promise<void> {
         enviando.value = false;
         controladorAtual.value = null;
         rolarParaFinal();
+        salvarChatAtual();
     }
 }
 
@@ -140,6 +217,7 @@ function trocarDominio(novo: 'med' | 'agro'): void {
     if (mensagens.value.length > 0) {
         mensagens.value.push({ id: proximoId++, autor: 'sistema', dominio: novo, dominioNome: nomeDominio(novo) });
         rolarParaFinal();
+        salvarChatAtual();
     }
 }
 
@@ -236,6 +314,7 @@ async function aoSelecionarArquivo(evento: Event): Promise<void> {
         }
     });
     rolarParaFinal();
+    salvarChatAtual();
     await rodarLote(cenarios, idLote, dominio);
 }
 
@@ -289,6 +368,7 @@ async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med'
     msg.lote.estagioAtual = undefined;
     loteAtivo.value = false;
     loteControlador.value = null;
+    salvarChatAtual();
 }
 
 function pedirPararLote(): void {
@@ -330,7 +410,17 @@ function baixarResultadosLote(msg: Mensagem): void {
 </script>
 
 <template>
-    <div class="relative flex h-screen flex-col overflow-hidden bg-white/10 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <div class="flex h-screen overflow-hidden bg-white/10 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+        <ChatSidebar
+            :aberta="sidebarAberta"
+            :chats="chats"
+            :chat-atual-id="chatIdAtual"
+            @novo-chat="novoChat"
+            @abrir-chat="abrirChat"
+            @fechar="sidebarAberta = false"
+        />
+
+        <div class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <!-- Manchas de cor desfocadas: sem elas o backdrop-blur dos paineis "de vidro"
              abaixo nao tem nada para desfocar, e o efeito some. So no escuro.
              SEM z-index negativo: dentro de um container flex, header/main/footer
@@ -349,7 +439,19 @@ function baixarResultadosLote(msg: Mensagem): void {
         <header
             class="sticky top-0 z-10 grid grid-cols-3 items-center border-b border-neutral-200 px-6 py-3 dark:border-white/10 dark:bg-neutral-900/40 dark:shadow-lg dark:shadow-black/20 dark:backdrop-blur-xl"
         >
-            <span class="justify-self-start text-sm font-medium text-neutral-500 dark:text-neutral-400">SPC-CML</span>
+            <div class="flex items-center gap-2 justify-self-start">
+                <button
+                    type="button"
+                    class="flex h-8 w-8 items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-white/10"
+                    @click="sidebarAberta = !sidebarAberta"
+                    :title="sidebarAberta ? 'Ocultar histórico' : 'Mostrar histórico'"
+                >
+                    <svg width="18" height="18" viewBox="0 0 24 24">
+                        <path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                </button>
+                <span class="text-sm font-medium text-neutral-500 dark:text-neutral-400">SPC-CML</span>
+            </div>
 
             <!-- Logo da instituição -->
             <div class="flex items-center justify-self-center gap-4">
@@ -499,6 +601,7 @@ function baixarResultadosLote(msg: Mensagem): void {
             <!-- Os modelos de linguagem são ferramentas de apoio e não substituem o julgamento profissional. Sempre verifique as informações antes de tomar decisões críticas. -->
             </p>
         </footer>
+        </div>
 
         <ConfirmModal
             :aberto="modalTrocaAberto"

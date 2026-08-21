@@ -20,3 +20,6 @@ src/python_engine/uvicorn.pid
 
 # Arvore npm propria do front de chat.
 /web-chat/node_modules
+
+# Historico de chats persistido localmente pelo backend (src/web/server.ts).
+/data/chats

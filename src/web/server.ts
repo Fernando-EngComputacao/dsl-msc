@@ -308,6 +308,65 @@ async function processarAgro(
     };
 }
 
+// Historico de chats: cada conversa vira um arquivo JSON nomeado pelo timestamp
+// de criacao em `data/chats/`. Como o docker-compose monta `.:/app`, isso
+// persiste igual tanto local quanto no container.
+const CHATS_DIR = path.join('data', 'chats');
+fs.mkdirSync(CHATS_DIR, { recursive: true });
+
+const ID_CHAT_REGEX = /^[0-9]{8}-[0-9]{6}(-[0-9]+)?$/;
+
+interface ChatSalvo {
+    id: string;
+    titulo: string;
+    dominio: 'med' | 'agro';
+    criadoEm: string;
+    atualizadoEm: string;
+    mensagens: unknown[];
+}
+
+function caminhoChat(id: string): string {
+    return path.join(CHATS_DIR, `${id}.json`);
+}
+
+/** Timestamp legivel (AAAAMMDD-HHMMSS); sufixo numerico so no raro caso de
+ *  dois chats nascerem no mesmo segundo. */
+function gerarIdChat(): string {
+    const agora = new Date();
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    const base = `${agora.getFullYear()}${pad(agora.getMonth() + 1)}${pad(agora.getDate())}-${pad(agora.getHours())}${pad(agora.getMinutes())}${pad(agora.getSeconds())}`;
+    let id = base;
+    let sufixo = 1;
+    while (fs.existsSync(caminhoChat(id))) {
+        id = `${base}-${sufixo++}`;
+    }
+    return id;
+}
+
+function tituloDoChat(mensagens: unknown[]): string {
+    const primeira = mensagens.find(
+        (m): m is { texto: string } =>
+            !!m &&
+            typeof m === 'object' &&
+            (m as { autor?: unknown }).autor === 'usuario' &&
+            typeof (m as { texto?: unknown }).texto === 'string' &&
+            (m as { texto: string }).texto.trim().length > 0
+    );
+    if (!primeira) return 'Nova conversa';
+    const texto = primeira.texto.trim();
+    return texto.length > 60 ? `${texto.slice(0, 60)}…` : texto;
+}
+
+function listarChatsSalvos(): Array<Omit<ChatSalvo, 'mensagens'>> {
+    const arquivos = fs.readdirSync(CHATS_DIR).filter(f => f.endsWith('.json'));
+    const chats = arquivos.map(arquivo => {
+        const { mensagens, ...resumo } = JSON.parse(fs.readFileSync(path.join(CHATS_DIR, arquivo), 'utf-8')) as ChatSalvo;
+        return resumo;
+    });
+    chats.sort((a, b) => b.atualizadoEm.localeCompare(a.atualizadoEm));
+    return chats;
+}
+
 function lerCorpo(req: http.IncomingMessage): Promise<string> {
     return new Promise((resolve, reject) => {
         let corpo = '';
@@ -322,7 +381,7 @@ function jsonResponse(res: http.ServerResponse, status: number, body: unknown): 
     res.writeHead(status, {
         'Content-Type': 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': ORIGEM_PERMITIDA,
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type'
     });
     res.end(texto);
@@ -398,6 +457,67 @@ const servidor = http.createServer(async (req, res) => {
             return;
         }
 
+        if (req.method === 'GET' && req.url === '/api/chats') {
+            jsonResponse(res, 200, listarChatsSalvos());
+            return;
+        }
+
+        if (req.method === 'POST' && req.url === '/api/chats') {
+            const corpo = JSON.parse((await lerCorpo(req)) || '{}') as { dominio?: string; mensagens?: unknown[] };
+            if (corpo.dominio !== 'med' && corpo.dominio !== 'agro') {
+                jsonResponse(res, 400, { erro: "dominio deve ser 'med' ou 'agro'" });
+                return;
+            }
+            const mensagens = Array.isArray(corpo.mensagens) ? corpo.mensagens : [];
+            const agora = new Date().toISOString();
+            const chat: ChatSalvo = {
+                id: gerarIdChat(),
+                titulo: tituloDoChat(mensagens),
+                dominio: corpo.dominio,
+                criadoEm: agora,
+                atualizadoEm: agora,
+                mensagens
+            };
+            fs.writeFileSync(caminhoChat(chat.id), JSON.stringify(chat, null, 2));
+            jsonResponse(res, 201, chat);
+            return;
+        }
+
+        if (req.method === 'GET' && req.url?.startsWith('/api/chats/')) {
+            const id = req.url.slice('/api/chats/'.length);
+            if (!ID_CHAT_REGEX.test(id) || !fs.existsSync(caminhoChat(id))) {
+                jsonResponse(res, 404, { erro: 'chat nao encontrado' });
+                return;
+            }
+            jsonResponse(res, 200, JSON.parse(fs.readFileSync(caminhoChat(id), 'utf-8')));
+            return;
+        }
+
+        if (req.method === 'PUT' && req.url?.startsWith('/api/chats/')) {
+            const id = req.url.slice('/api/chats/'.length);
+            if (!ID_CHAT_REGEX.test(id) || !fs.existsSync(caminhoChat(id))) {
+                jsonResponse(res, 404, { erro: 'chat nao encontrado' });
+                return;
+            }
+            const corpo = JSON.parse((await lerCorpo(req)) || '{}') as { dominio?: string; mensagens?: unknown[] };
+            if (corpo.dominio !== 'med' && corpo.dominio !== 'agro') {
+                jsonResponse(res, 400, { erro: "dominio deve ser 'med' ou 'agro'" });
+                return;
+            }
+            const anterior = JSON.parse(fs.readFileSync(caminhoChat(id), 'utf-8')) as ChatSalvo;
+            const mensagens = Array.isArray(corpo.mensagens) ? corpo.mensagens : [];
+            const chat: ChatSalvo = {
+                ...anterior,
+                dominio: corpo.dominio,
+                titulo: tituloDoChat(mensagens),
+                atualizadoEm: new Date().toISOString(),
+                mensagens
+            };
+            fs.writeFileSync(caminhoChat(chat.id), JSON.stringify(chat, null, 2));
+            jsonResponse(res, 200, chat);
+            return;
+        }
+
         jsonResponse(res, 404, { erro: 'rota nao encontrada' });
     } catch (error) {
         jsonResponse(res, 500, { erro: (error as Error).message });
@@ -408,6 +528,10 @@ servidor.listen(PORT, () => {
     console.log(`API do SPC-CML no ar em http://localhost:${PORT}`);
     console.log(`  GET  /api/dominios`);
     console.log(`  POST /api/comando   { dominio: 'med'|'agro', texto: string }  (SSE: event "estagio"*, "final"|"erro")`);
+    console.log(`  GET  /api/chats`);
+    console.log(`  POST /api/chats     { dominio: 'med'|'agro', mensagens: [] }`);
+    console.log(`  GET  /api/chats/:id`);
+    console.log(`  PUT  /api/chats/:id { dominio: 'med'|'agro', mensagens: [] }`);
 });
 
 process.on('SIGINT', async () => {
