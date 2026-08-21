@@ -29,13 +29,13 @@ function formatarData(iso: string): string {
     </Transition>
 
     <aside
-        class="fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col overflow-hidden border-r border-neutral-200 bg-neutral-50 transition-[width,transform,opacity] duration-300 ease-in-out md:static md:z-auto md:min-w-0 dark:border-white/10 dark:bg-neutral-900/60 dark:backdrop-blur-xl"
+        class="fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col overflow-hidden border-r border-neutral-200/70 bg-white/70 shadow-xl shadow-black/5 backdrop-blur-xl transition-[width,transform,opacity] duration-300 ease-in-out md:static md:z-auto md:min-w-0 dark:border-white/10 dark:bg-neutral-900/50 dark:shadow-2xl dark:shadow-black/30 dark:backdrop-blur-xl"
         :class="aberta ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-100 md:w-0 md:translate-x-0 md:border-transparent md:opacity-0'"
     >
         <div class="p-3">
             <button
                 type="button"
-                class="flex w-full items-center gap-2.5 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/5 dark:text-neutral-100 dark:hover:bg-white/10"
+                class="flex w-full items-center gap-2.5 rounded-full border border-neutral-200/70 bg-white/50 px-4 py-2.5 text-sm font-medium text-neutral-800 backdrop-blur-md transition-colors hover:bg-white/80 dark:border-white/10 dark:bg-white/10 dark:text-neutral-100 dark:hover:bg-white/20"
                 @click="emit('novo-chat')"
             >
                 <svg width="16" height="16" viewBox="0 0 24 24" class="shrink-0">
@@ -64,7 +64,7 @@ function formatarData(iso: string): string {
             </button>
         </div>
 
-        <div class="flex items-center gap-2.5 border-t border-neutral-200 px-4 py-3 dark:border-white/10">
+        <div class="flex items-center gap-2.5 border-t border-neutral-200/70 px-4 py-3 dark:border-white/10">
             <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white">FF</div>
             <span class="truncate text-sm font-medium text-neutral-700 dark:text-neutral-200">Fernando Furtado</span>
         </div>

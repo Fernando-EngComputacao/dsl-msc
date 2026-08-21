@@ -410,7 +410,23 @@ function baixarResultadosLote(msg: Mensagem): void {
 </script>
 
 <template>
-    <div class="flex h-screen overflow-hidden bg-white/10 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <div class="relative flex h-screen overflow-hidden bg-white/10 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+        <!-- Manchas de cor desfocadas: sem elas o backdrop-blur dos paineis "de vidro"
+             (sidebar incluida) nao tem nada para desfocar, e o efeito some. So no
+             escuro. SEM z-index negativo: dentro de um container flex, os filhos
+             diretos (sidebar/conteudo) pintam com z-index 0 implicito por
+             especificacao, o que os coloca ACIMA de qualquer -z-10 do pai — teria
+             que forcar z tao alto que cobriria tudo. Em vez disso, essa camada fica
+             primeiro no DOM (logo atras dos demais na ordem de pintura) e cada um e
+             transparente o bastante (bg com opacidade) para deixá-la aparecer por
+             baixo. -->
+        <div class="pointer-events-none absolute inset-0 overflow-hidden">
+            <div class="animate-blob absolute -top-40 -left-32 h-120 w-120 rounded-full bg-blue-500 opacity-8 blur-3xl [animation-delay:-2s] dark:opacity-25"></div>
+            <div class="animate-blob absolute top-1/4 -right-32 h-112 w-112 rounded-full bg-fuchsia-500 opacity-6 blur-3xl [animation-delay:-8s] dark:opacity-20"></div>
+            <div class="animate-blob absolute -bottom-40 left-1/4 h-112 w-112 rounded-full bg-rose-500 opacity-6 blur-3xl [animation-delay:-14s] dark:opacity-20"></div>
+            <div class="animate-blob absolute bottom-1/4 right-1/4 h-72 w-72 rounded-full bg-cyan-400 opacity-5 blur-3xl [animation-delay:-19s] dark:opacity-15"></div>
+        </div>
+
         <ChatSidebar
             :aberta="sidebarAberta"
             :chats="chats"
@@ -420,21 +436,7 @@ function baixarResultadosLote(msg: Mensagem): void {
             @fechar="sidebarAberta = false"
         />
 
-        <div class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <!-- Manchas de cor desfocadas: sem elas o backdrop-blur dos paineis "de vidro"
-             abaixo nao tem nada para desfocar, e o efeito some. So no escuro.
-             SEM z-index negativo: dentro de um container flex, header/main/footer
-             (itens flex) pintam com z-index 0 implicito por especificacao, o que os
-             coloca ACIMA de qualquer -z-10 do pai — teria que forcar z tao alto que
-             cobriria tudo. Em vez disso, essa camada fica primeiro no DOM (logo
-             atras dos itens flex na ordem de pintura) e cada item flex e transparente
-             o bastante (bg com opacidade) para deixá-la aparecer por baixo. -->
-        <div class="pointer-events-none absolute inset-0 overflow-hidden">
-            <div class="animate-blob absolute -top-40 -left-32 h-120 w-120 rounded-full bg-blue-500 opacity-8 blur-3xl [animation-delay:-2s] dark:opacity-25"></div>
-            <div class="animate-blob absolute top-1/4 -right-32 h-112 w-112 rounded-full bg-fuchsia-500 opacity-6 blur-3xl [animation-delay:-8s] dark:opacity-20"></div>
-            <div class="animate-blob absolute -bottom-40 left-1/4 h-112 w-112 rounded-full bg-rose-500 opacity-6 blur-3xl [animation-delay:-14s] dark:opacity-20"></div>
-            <div class="animate-blob absolute bottom-1/4 right-1/4 h-72 w-72 rounded-full bg-cyan-400 opacity-5 blur-3xl [animation-delay:-19s] dark:opacity-15"></div>
-        </div>
+        <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
 
         <header
             class="sticky top-0 z-10 grid grid-cols-3 items-center border-b border-neutral-200 px-6 py-3 dark:border-white/10 dark:bg-neutral-900/40 dark:shadow-lg dark:shadow-black/20 dark:backdrop-blur-xl"
