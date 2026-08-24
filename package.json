@@ -31,8 +31,9 @@
 
     "test:model": "tsx src/test/test.ts",
     "test:earley": "tsx src/test/earley.test.ts",
+    "test:avaliar": "tsx src/test/avaliar.test.ts",
     "test:grammar": "cd src/python_engine && python test_grammar.py",
-    "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:grammar"
+    "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:grammar"
   },
   "keywords": [
     "dsl",

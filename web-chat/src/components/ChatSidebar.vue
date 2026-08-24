@@ -15,7 +15,7 @@ const emit = defineEmits<{
     </Transition>
 
     <aside
-        class="fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col overflow-hidden border-r border-neutral-200/70 bg-white/70 shadow-xl shadow-black/5 backdrop-blur-xl transition-[width,transform,opacity] duration-300 ease-in-out md:static md:z-auto md:min-w-0 dark:border-white/10 dark:bg-neutral-900/50 dark:shadow-2xl dark:shadow-black/30 dark:backdrop-blur-xl"
+        class="fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col overflow-hidden border-r border-neutral-200/70 bg-white/30 shadow-xl shadow-black/5 backdrop-blur-xl transition-[width,transform,opacity] duration-300 ease-in-out md:static md:z-auto md:min-w-0 dark:border-white/10 dark:bg-neutral-900/50 dark:shadow-2xl dark:shadow-black/30 dark:backdrop-blur-xl"
         :class="aberta ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-100 md:w-0 md:translate-x-0 md:border-transparent md:opacity-0'"
     >
         <div class="p-3">

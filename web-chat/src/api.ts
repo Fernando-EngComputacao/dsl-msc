@@ -18,6 +18,40 @@ export interface ChatCompleto extends ChatResumo {
     mensagens: Mensagem[];
 }
 
+export interface MetricasAvaliacao {
+    total: number;
+    semanticaCorreta: number;
+    sintaxeCorreta: number;
+    violacoes: number;
+}
+
+export interface DetalheLado {
+    plano: string;
+    sintaxeOk: boolean;
+    semanticaOk: boolean;
+    violacao: boolean;
+}
+
+export interface DetalheLinha {
+    linha: number;
+    intencao: string;
+    groundTruth: { plano: string; description: string };
+    arquitetura?: DetalheLado;
+    baseline?: DetalheLado;
+    temDivergencia: boolean;
+}
+
+export interface RespostaAvaliacao {
+    arquitetura?: MetricasAvaliacao;
+    baseline?: MetricasAvaliacao;
+    /** Registros enviados que não casaram com nenhum cenário do ground truth. */
+    naoPareados: number;
+    /** Registros cujo paciente/talhão existe no ground truth mas com telemetria
+     *  diferente — mesmo código, outro quadro clínico. */
+    telemetriaDivergente: number;
+    linhas: DetalheLinha[];
+}
+
 export interface RespostaComando {
     aceito: boolean;
     motivoValidacao?: string;
@@ -50,6 +84,23 @@ export async function listarChats(): Promise<ChatResumo[]> {
 export async function buscarChat(id: string): Promise<ChatCompleto> {
     const resp = await fetch(`${BASE_URL}/api/chats/${id}`);
     if (!resp.ok) throw new Error(`falha ao carregar chat: ${resp.status}`);
+    return resp.json();
+}
+
+export async function avaliarResultados(
+    dominio: 'med' | 'agro',
+    arquiteturaJsonl?: string,
+    baselineJsonl?: string
+): Promise<RespostaAvaliacao> {
+    const resp = await fetch(`${BASE_URL}/api/avaliar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dominio, arquiteturaJsonl, baselineJsonl })
+    });
+    if (!resp.ok) {
+        const corpo = await resp.json().catch(() => ({}) as { erro?: string });
+        throw new Error((corpo as { erro?: string }).erro ?? `o servidor respondeu ${resp.status}`);
+    }
     return resp.json();
 }
 

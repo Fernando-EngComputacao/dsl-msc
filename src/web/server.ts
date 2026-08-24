@@ -43,6 +43,7 @@ import {
     type AgroContext
 } from '../knowledge/graphrag-agro.js';
 import { montarPromptSemanticoAgro, gerarMissaoRestrita } from '../inference/agro-client.js';
+import { compararDetalhado, type RegistroGroundTruth, type RegistroAvaliar } from '../inference/avaliar.js';
 
 const ENGINE = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
 // Um motor por dominio: main.py fixa a gramatica na subida, e o chat oferece med e
@@ -367,6 +368,32 @@ function listarChatsSalvos(): Array<Omit<ChatSalvo, 'mensagens'>> {
     return chats;
 }
 
+// Avaliacao contra ground truth (ver src/inference/avaliar.ts e
+// src/scripts/gerar-ground-truth-*.ts). O ground truth do agro ainda nao foi
+// gerado — ate la, essa rota responde 404 pra esse dominio.
+function carregarGroundTruth(dominio: 'med' | 'agro'): RegistroGroundTruth[] {
+    const caminho = path.join('src', 'examples', dominio, `ground_truth_${dominio}.jsonl`);
+    if (!fs.existsSync(caminho)) {
+        throw new Error(`ground truth ainda nao foi gerado para o dominio '${dominio}' (esperado em ${caminho})`);
+    }
+    return fs
+        .readFileSync(caminho, 'utf-8')
+        .split('\n')
+        .filter(l => l.trim().length > 0)
+        .map(l => JSON.parse(l) as RegistroGroundTruth);
+}
+
+/** Filtra linhas que nao sao registros de resultado (ex.: a linha final
+ *  `{duracaoSegundos}` que o download em lote do web-chat acrescenta). */
+function parseRegistrosAvaliar(jsonlTexto: string): RegistroAvaliar[] {
+    return jsonlTexto
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0)
+        .map(l => JSON.parse(l) as RegistroAvaliar)
+        .filter(r => typeof r.plano === 'string' || typeof r.resultado === 'string');
+}
+
 function lerCorpo(req: http.IncomingMessage): Promise<string> {
     return new Promise((resolve, reject) => {
         let corpo = '';
@@ -518,6 +545,45 @@ const servidor = http.createServer(async (req, res) => {
             return;
         }
 
+        if (req.method === 'POST' && req.url === '/api/avaliar') {
+            const corpo = JSON.parse((await lerCorpo(req)) || '{}') as {
+                dominio?: string;
+                arquiteturaJsonl?: string;
+                baselineJsonl?: string;
+            };
+            if (corpo.dominio !== 'med' && corpo.dominio !== 'agro') {
+                jsonResponse(res, 400, { erro: "dominio deve ser 'med' ou 'agro'" });
+                return;
+            }
+            if (!corpo.arquiteturaJsonl && !corpo.baselineJsonl) {
+                jsonResponse(res, 400, { erro: 'envie ao menos um arquivo (arquitetura e/ou baseline)' });
+                return;
+            }
+
+            let groundTruth: RegistroGroundTruth[];
+            try {
+                groundTruth = carregarGroundTruth(corpo.dominio);
+            } catch (error) {
+                jsonResponse(res, 404, { erro: (error as Error).message });
+                return;
+            }
+
+            try {
+                jsonResponse(
+                    res,
+                    200,
+                    compararDetalhado(
+                        groundTruth,
+                        corpo.arquiteturaJsonl ? parseRegistrosAvaliar(corpo.arquiteturaJsonl) : undefined,
+                        corpo.baselineJsonl ? parseRegistrosAvaliar(corpo.baselineJsonl) : undefined
+                    )
+                );
+            } catch (error) {
+                jsonResponse(res, 400, { erro: `falha ao interpretar o arquivo enviado: ${(error as Error).message}` });
+            }
+            return;
+        }
+
         jsonResponse(res, 404, { erro: 'rota nao encontrada' });
     } catch (error) {
         jsonResponse(res, 500, { erro: (error as Error).message });
@@ -532,6 +598,7 @@ servidor.listen(PORT, () => {
     console.log(`  POST /api/chats     { dominio: 'med'|'agro', mensagens: [] }`);
     console.log(`  GET  /api/chats/:id`);
     console.log(`  PUT  /api/chats/:id { dominio: 'med'|'agro', mensagens: [] }`);
+    console.log(`  POST /api/avaliar   { dominio: 'med'|'agro', arquiteturaJsonl?: string, baselineJsonl?: string }`);
 });
 
 process.on('SIGINT', async () => {

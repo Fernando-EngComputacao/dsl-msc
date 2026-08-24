@@ -8,6 +8,20 @@
     --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
     --animate-spin-slow: spin 2.4s linear infinite;
     --animate-blob: blob-float 24s ease-in-out infinite;
+    --animate-fade-in-up: fade-in-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Entrada suave para cartões/linhas que aparecem depois de uma ação do usuário
+   (ex.: resultados da avaliação) — ver AvaliarResultados.vue e MetricasCard.vue. */
+@keyframes fade-in-up {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 /* Deriva suave e organica das manchas de cor do fundo — cada instancia usa um
