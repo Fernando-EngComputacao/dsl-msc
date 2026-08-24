@@ -7,7 +7,7 @@ import ModelSwitchDivider from './components/ModelSwitchDivider.vue';
 import BatchProgress from './components/BatchProgress.vue';
 import ConfirmModal from './components/ConfirmModal.vue';
 import ChatSidebar from './components/ChatSidebar.vue';
-import { buscarDominios, enviarComandoStream, listarChats, buscarChat, criarChat, atualizarChat, type Dominio, type ChatResumo } from './api';
+import { buscarDominios, enviarComandoStream, criarChat, atualizarChat, type Dominio } from './api';
 import type { Mensagem, ItemResultadoLote } from './types';
 import { parseArquivoLote, type CenarioLote } from './lote';
 import { escuro, iniciarTema, alternarTema } from './theme';
@@ -27,7 +27,6 @@ const controladorAtual = ref<AbortController | null>(null);
 const modalTrocaAberto = ref(false);
 const dominioPendente = ref<'med' | 'agro' | null>(null);
 
-const chats = ref<ChatResumo[]>([]);
 const chatIdAtual = ref<string | null>(null);
 const sidebarAberta = ref(typeof window !== 'undefined' ? window.innerWidth >= 768 : true);
 
@@ -65,14 +64,10 @@ onMounted(async () => {
     } catch (error) {
         erroCarregamento.value = (error as Error).message;
     }
-    try {
-        chats.value = await listarChats();
-    } catch {
-        // Historico indisponivel nao deve travar o chat em si.
-    }
 });
 
-/** Cria o chat na primeira mensagem e atualiza o mesmo arquivo dali em diante.
+/** Cria o chat na primeira mensagem e atualiza o mesmo arquivo dali em diante —
+ *  fica so como registro local do experimento, sem navegacao no sidebar.
  *  Chamadas (no envio, na resposta, no lote, na troca de dominio...) disparam
  *  sem await em paralelo — encadeadas numa fila, senão duas chamadas correndo
  *  antes da primeira preencher chatIdAtual criam dois chats em vez de um so
@@ -87,11 +82,6 @@ function salvarChatAtual(): void {
                 ? await atualizarChat(chatIdAtual.value, dominioAtual.value, mensagens.value)
                 : await criarChat(dominioAtual.value, mensagens.value);
             chatIdAtual.value = chat.id;
-
-            const resumo: ChatResumo = { id: chat.id, titulo: chat.titulo, dominio: chat.dominio, criadoEm: chat.criadoEm, atualizadoEm: chat.atualizadoEm };
-            const indice = chats.value.findIndex(c => c.id === chat.id);
-            if (indice !== -1) chats.value.splice(indice, 1);
-            chats.value.unshift(resumo);
         } catch {
             // idem
         }
@@ -104,36 +94,6 @@ function novoChat(): void {
     mensagens.value = [];
     chatIdAtual.value = null;
     textoInput.value = '';
-    if (window.innerWidth < 768) sidebarAberta.value = false;
-}
-
-async function abrirChat(id: string): Promise<void> {
-    if (id === chatIdAtual.value) {
-        if (window.innerWidth < 768) sidebarAberta.value = false;
-        return;
-    }
-    if (enviando.value) pararGeracao();
-    if (loteAtivo.value) loteControlador.value?.abort();
-
-    try {
-        const chat = await buscarChat(id);
-        // Uma resposta em "carregando" so existe enquanto a aba que a gerou
-        // segue aberta; se o chat foi salvo assim (aba fechada/atualizada no
-        // meio do streaming), ela nunca mais vai terminar sozinha.
-        for (const m of chat.mensagens) {
-            if (m.carregando) {
-                m.carregando = false;
-                m.erro = 'Resposta interrompida: a conversa foi fechada antes de terminar.';
-            }
-        }
-        mensagens.value = chat.mensagens;
-        dominioAtual.value = chat.dominio;
-        chatIdAtual.value = chat.id;
-        proximoId = chat.mensagens.reduce((max, m) => Math.max(max, m.id), 0) + 1;
-        rolarParaFinal();
-    } catch (error) {
-        erroCarregamento.value = (error as Error).message;
-    }
     if (window.innerWidth < 768) sidebarAberta.value = false;
 }
 
@@ -310,7 +270,8 @@ async function aoSelecionarArquivo(evento: Event): Promise<void> {
             concluidos: 0,
             cancelado: false,
             finalizado: false,
-            resultados: []
+            resultados: [],
+            iniciadoEm: Date.now()
         }
     });
     rolarParaFinal();
@@ -366,6 +327,7 @@ async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med'
 
     msg.lote.finalizado = true;
     msg.lote.estagioAtual = undefined;
+    msg.lote.duracaoSegundos = Number(((Date.now() - msg.lote.iniciadoEm) / 1000).toFixed(1));
     loteAtivo.value = false;
     loteControlador.value = null;
     salvarChatAtual();
@@ -396,7 +358,9 @@ function baixarResultadosLote(msg: Mensagem): void {
     const l = msg.lote;
     if (!l) return;
 
-    const conteudo = l.resultados.map(r => JSON.stringify(r)).join('\n');
+    const linhas = l.resultados.map(r => JSON.stringify(r));
+    linhas.push(JSON.stringify({ duracaoSegundos: l.duracaoSegundos ?? Number(((Date.now() - l.iniciadoEm) / 1000).toFixed(1)) }));
+    const conteudo = linhas.join('\n');
     const blob = new Blob([conteudo], { type: 'application/x-ndjson;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -427,14 +391,7 @@ function baixarResultadosLote(msg: Mensagem): void {
             <div class="animate-blob absolute bottom-1/4 right-1/4 h-72 w-72 rounded-full bg-cyan-400 opacity-5 blur-3xl [animation-delay:-19s] dark:opacity-15"></div>
         </div>
 
-        <ChatSidebar
-            :aberta="sidebarAberta"
-            :chats="chats"
-            :chat-atual-id="chatIdAtual"
-            @novo-chat="novoChat"
-            @abrir-chat="abrirChat"
-            @fechar="sidebarAberta = false"
-        />
+        <ChatSidebar :aberta="sidebarAberta" @novo-chat="novoChat" @fechar="sidebarAberta = false" />
 
         <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
 

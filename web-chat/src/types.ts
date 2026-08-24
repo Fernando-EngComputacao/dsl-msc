@@ -22,6 +22,10 @@ export interface LoteEstado {
     finalizado: boolean;
     estagioAtual?: string;
     resultados: ItemResultadoLote[];
+    /** Timestamp (ms) de quando o lote começou a rodar — usado pra calcular duracaoSegundos. */
+    iniciadoEm: number;
+    /** Só preenchido quando finalizado: tempo total do lote, do início ao fim. */
+    duracaoSegundos?: number;
 }
 
 export interface Mensagem {
