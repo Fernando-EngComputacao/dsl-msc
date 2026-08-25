@@ -63,7 +63,7 @@ export interface RegistroAvaliar {
     /** Bloco `sorteio` que o lote grava: traz o identificador do cenário
      *  (paciente no med, talhao no agro) — é a chave de pareamento mais
      *  confiável, ver `parear`. */
-    telemetria?: { paciente?: string; talhao?: string };
+    telemetria?: { paciente?: string; talhao?: string; partida?: string };
 }
 
 export interface Metricas {
@@ -147,6 +147,7 @@ const DECISOES_DE_INCREMENTO = new Set(['INICIAR_INFUSAO', 'AUMENTAR_VAZAO', 'AJ
 interface BlocoContexto {
     paciente?: unknown;
     talhao?: unknown;
+    partida?: unknown;
     telemetria?: Record<string, unknown>;
 }
 
@@ -154,10 +155,10 @@ function contextoDe(reg: { telemetria?: unknown }): BlocoContexto | undefined {
     return reg.telemetria as BlocoContexto | undefined;
 }
 
-/** Identificador do cenário: `paciente` (med) ou `talhao` (agro). */
+/** Identificador do cenário: `paciente` (med), `talhao` (agro) ou `partida` (fut). */
 function identificador(reg: { telemetria?: unknown }): string | null {
     const c = contextoDe(reg);
-    const id = c?.paciente ?? c?.talhao;
+    const id = c?.paciente ?? c?.talhao ?? c?.partida;
     return typeof id === 'string' && id.trim() ? id.trim() : null;
 }
 
@@ -279,11 +280,14 @@ export function parear(groundTruth: RegistroGroundTruth[], resultados: RegistroA
     return { pares, naoPareados: pendentes.length, telemetriaDivergente: divergentes.length };
 }
 
-/** Extrai pares (fármaco, decisão) de um texto de plano livre — tolerante à
- *  forma sem fármaco (`ordem decisao ESCALAR_EQUIPE ...`, ações de equipe). */
+/** Extrai pares (fármaco, decisão) de um texto de plano/missão/arbitragem
+ *  livre — tolerante à forma sem fármaco (`ordem decisao ESCALAR_EQUIPE ...`,
+ *  ações de equipe). A palavra-chave do "item" varia por domínio: `ordem`
+ *  (med), `aplicacao` (agro), `marcacao` (fut) — todas compartilham a forma
+ *  `<palavra-chave> [alvo] decisao <CODIGO>`. */
 export function parseOrdensTexto(texto: string): OrdemEsperada[] {
     const ordens: OrdemEsperada[] = [];
-    const regex = /ordem\s+(?:(\w+)\s+)?decisao\s+(\w+)/g;
+    const regex = /(?:ordem|aplicacao|marcacao)\s+(?:(\w+)\s+)?decisao\s+(\w+)/g;
     let m: RegExpExecArray | null;
     while ((m = regex.exec(texto)) !== null) {
         ordens.push({ farmaco: m[1] ?? '', decisao: m[2] });
@@ -301,7 +305,7 @@ function textoGerado(registro: RegistroAvaliar): string {
  *  possível para saídas de baseline que nunca passaram pela decodificação
  *  restrita. */
 function sintaxeEstruturalmenteOk(texto: string): boolean {
-    if (!texto.includes('plano')) return false;
+    if (!texto.includes('plano') && !texto.includes('missao') && !texto.includes('arbitragem')) return false;
     const abre = (texto.match(/{/g) ?? []).length;
     const fecha = (texto.match(/}/g) ?? []).length;
     if (abre === 0 || abre !== fecha) return false;
