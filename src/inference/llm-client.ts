@@ -56,9 +56,16 @@ export function montarPromptSemantico(constraints: RetrievedConstraints): string
     const bloco: string[] = [];
 
     if (constraints.protocolosAtivos.length > 0) {
-        bloco.push('[PROTOCOLOS ATIVADOS]');
+        // Um protocolo pode entrar aqui por gatilho disparado OU por ter sido
+        // identificado no pedido (ver filtrarPorFoco). Os dois casos sao fatos
+        // distintos e o prompt precisa distingui-los: sem gatilho, o que vale
+        // sao as restricoes estruturais do protocolo, nao um evento.
+        bloco.push('[PROTOCOLOS EM FOCO]');
         for (const p of constraints.protocolosAtivos) {
             bloco.push(`- ${p.nome} (CID ${p.cid})`);
+            if (p.gatilhos.length === 0) {
+                bloco.push('    (sem gatilho ativo na telemetria — protocolo identificado no pedido)');
+            }
             for (const g of p.gatilhos) bloco.push(`    gatilho: ${g}`);
         }
     }

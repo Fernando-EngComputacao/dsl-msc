@@ -222,6 +222,17 @@ interface RespostaComando {
 
 type EmitirEstagio = (texto: string) => Promise<void>;
 
+/**
+ * Lista o foco anotando de onde cada no veio — lexical (o usuario escreveu o
+ * nome), vetorial (similaridade no indice) ou grafo (entrou junto pela aresta).
+ * E o que permite auditar, na propria interface, se o subgrafo ativado
+ * corresponde ao que foi pedido.
+ */
+function descreverFoco(nomes: Set<string>, origem: Map<string, string>): string {
+    if (nomes.size === 0) return '—';
+    return [...nomes].map(n => `${n} (${origem.get(n) ?? 'grafo'})`).join(', ');
+}
+
 /** Etapas locais (sorteio/grafo/embedding) terminam em milissegundos — sem uma
  *  pausa minima, o usuario nunca chega a ver a maioria delas piscar na tela. */
 const PAUSA_ESTAGIO_MS = 450;
@@ -264,10 +275,13 @@ async function processarMed(
     await estagio('Calculando foco por embedding no subgrafo…');
     const session = driver.session();
     try {
-        const f = await retrieverFoco(session, texto);
-        constraints = filtrarPorFoco(constraints, f);
+        const f = await retrieverFoco(session, texto, modeloMed);
+        constraints = filtrarPorFoco(constraints, f, modeloMed, contexto);
         foco = { farmacos: [...f.farmacos], protocolos: [...f.protocolos] };
-        await estagio(`Foco recuperado: farmacos [${foco.farmacos?.join(', ') || '—'}], protocolos [${foco.protocolos?.join(', ') || '—'}]`);
+        await estagio(
+            `Foco recuperado: farmacos [${descreverFoco(f.farmacos, f.origem)}], ` +
+                `protocolos [${descreverFoco(f.protocolos, f.origem)}]`
+        );
     } catch (error) {
         focoIndisponivel = (error as Error).message;
         await estagio('Foco por embedding indisponível — seguindo com o grafo completo');
@@ -345,10 +359,13 @@ async function processarAgro(
     await estagio('Calculando foco por embedding no subgrafo…');
     const session = driver.session();
     try {
-        const f = await retrieverFocoAgro(session, texto);
-        constraints = filtrarPorFocoAgro(constraints, f);
+        const f = await retrieverFocoAgro(session, texto, modeloAgro);
+        constraints = filtrarPorFocoAgro(constraints, f, modeloAgro, contexto);
         foco = { produtos: [...f.produtos], culturas: [...f.culturas] };
-        await estagio(`Foco recuperado: produtos [${foco.produtos?.join(', ') || '—'}], culturas [${foco.culturas?.join(', ') || '—'}]`);
+        await estagio(
+            `Foco recuperado: produtos [${descreverFoco(f.produtos, f.origem)}], ` +
+                `culturas [${descreverFoco(f.culturas, f.origem)}]`
+        );
     } catch (error) {
         focoIndisponivel = (error as Error).message;
         await estagio('Foco por embedding indisponível — seguindo com o grafo completo');
@@ -426,10 +443,13 @@ async function processarFut(
     await estagio('Calculando foco por embedding no subgrafo…');
     const session = driver.session();
     try {
-        const f = await retrieverFocoFut(session, texto);
-        constraints = filtrarPorFocoFut(constraints, f);
+        const f = await retrieverFocoFut(session, texto, modeloFut);
+        constraints = filtrarPorFocoFut(constraints, f, modeloFut, contexto);
         foco = { infracoes: [...f.infracoes], lances: [...f.lances] };
-        await estagio(`Foco recuperado: infracoes [${foco.infracoes?.join(', ') || '—'}], lances [${foco.lances?.join(', ') || '—'}]`);
+        await estagio(
+            `Foco recuperado: infracoes [${descreverFoco(f.infracoes, f.origem)}], ` +
+                `lances [${descreverFoco(f.lances, f.origem)}]`
+        );
     } catch (error) {
         focoIndisponivel = (error as Error).message;
         await estagio('Foco por embedding indisponível — seguindo com o grafo completo');

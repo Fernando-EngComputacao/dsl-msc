@@ -14,7 +14,7 @@
  *     e passa a ser uma cadeia que a gramatica nao gera.
  */
 
-import neo4j, { type Session } from 'neo4j-driver';
+import { type Session } from 'neo4j-driver';
 
 import {
     isBlockRule,
@@ -37,9 +37,19 @@ import {
     isTriggerAttr,
     type DrugDef,
     type MedicalModel,
-    type Operator
+    type Operator,
+    type ProtocolDef
 } from '../generated/ast.js';
+import { nomesMed } from './documentos.js';
 import { embedTexto } from './embeddings.js';
+import {
+    casamentoLexical,
+    ladoMaisDecidido,
+    dedup,
+    selecionarPorSimilaridade,
+    topKParaGrafo,
+    topKPorVetor
+} from './foco.js';
 
 export interface ClinicalContext {
     /** Telemetria corrente: parametro clinico -> valor observado. */
@@ -70,7 +80,8 @@ export interface RetrievedConstraints {
     bloqueios: { farmaco: string; regra: string; razao: string }[];
     ajustes: { farmaco: string; acao: string; detalhe: string; origem: string }[];
     recomendados: { farmaco: string; indicacao: string; protocolo: string }[];
-    vetados: { farmaco: string; motivo: string; origem: string }[];
+    /** `protocolo` presente quando o veto vem de um protocolo; ausente quando vem de uma populacao. */
+    vetados: { farmaco: string; motivo: string; origem: string; protocolo?: string }[];
     escalonamentos: { destino: string; detalhe: string; protocolo: string }[];
     interacoes: { entre: string; gravidade: string; mecanismo: string; conduta: string }[];
     regrasGlobais: { descricao: string; severidade: string }[];
@@ -190,7 +201,8 @@ export function retrieveConstraints(
                 result.vetados.push({
                     farmaco: attr.drug.$refText,
                     motivo: attr.reason,
-                    origem: `protocolo ${protocol.name}`
+                    origem: `protocolo ${protocol.name}`,
+                    protocolo: protocol.name
                 });
             } else if (isEscalationAttr(attr)) {
                 const observado = telemetria[attr.parameter];
@@ -331,75 +343,346 @@ export function pruningPayload(constraints: RetrievedConstraints): {
         vias_disponiveis: [...vias]
     };
 }
-
 /**
- * Recuperacao por embedding no Neo4j — etapa OPCIONAL antes de `retrieveConstraints`,
+ * Recuperacao do subgrafo em foco — etapa OPCIONAL antes de `retrieveConstraints`,
  * usada quando o comando vem digitado em vez de vir de um cenario pronto (ver
  * `src/inference/cli.ts`). So decide QUAIS farmacos/protocolos entram no Prompt
  * Semantico; a avaliacao de bloqueio em si continua inteiramente deterministica
  * em `retrieveConstraints` — o embedding nunca decide o que e permitido, so o que
  * e mostrado.
+ *
+ * Combina os tres sinais descritos em `knowledge/foco.ts`: o nome escrito na
+ * fala (lexical), a proximidade no indice vetorial (vetorial) e as arestas do
+ * grafo a partir do que os dois primeiros acharam (estrutural).
  */
 export interface Foco {
     farmacos: Set<string>;
     protocolos: Set<string>;
+    /** Como cada no entrou no foco — para o log da interface e para auditoria. */
+    origem: Map<string, OrigemFoco>;
 }
 
-const FOCO_TOP_K = 5;
-// Calibrado com bge-m3: pares claramente relacionados marcaram ~0.6, pares sem
-// relacao nenhuma ~0.28 (ver testes ad-hoc do modelo). 0.35 fica no meio.
-const FOCO_LIMIAR_SIMILARIDADE = 0.35;
+export type OrigemFoco = 'lexical' | 'vetorial' | 'grafo';
 
-async function topKPorVetor(
+function registrar(origem: Map<string, OrigemFoco>, nomes: Iterable<string>, tipo: OrigemFoco): void {
+    for (const nome of nomes) {
+        // Primeira origem vence: lexical e mais informativo que "veio junto".
+        if (!origem.has(nome)) origem.set(nome, tipo);
+    }
+}
+
+/**
+ * Expansao estrutural, sentido item -> contexto, seguindo apenas `recomenda`.
+ *
+ * Sem isto, "aumenta a nora" traria o farmaco e nenhuma das restricoes do protocolo em que ele e usado.
+ * Seguir tambem `veta` seria errado aqui: seguir `veta` traria de volta protocolos que nao tem a ver com o pedido, so porque proibem aquele farmaco.
+ */
+function expandirFarmacosParaProtocolos(
+    model: MedicalModel,
+    farmacos: Set<string>,
+    protocolos: Set<string>,
+    origem: Map<string, OrigemFoco>
+): void {
+    for (const protocol of model.elements.filter(isProtocolDef)) {
+        if (protocolos.has(protocol.name)) continue;
+        for (const attr of protocol.attributes) {
+            if (isRecommendAttr(attr) && farmacos.has(attr.drug.$refText)) {
+                protocolos.add(protocol.name);
+                registrar(origem, [protocol.name], 'grafo');
+                break;
+            }
+        }
+    }
+}
+
+/**
+ * Expansao estrutural, sentido contexto -> item, seguindo `recomenda` E `veta`:
+ * com o protocolo em foco, o que ele proibe e tao pertinente quanto o que indica.
+ */
+function expandirProtocolosParaFarmacos(
+    model: MedicalModel,
+    farmacos: Set<string>,
+    protocolos: Set<string>,
+    origem: Map<string, OrigemFoco>
+): void {
+    for (const protocol of model.elements.filter(isProtocolDef)) {
+        if (!protocolos.has(protocol.name)) continue;
+        for (const attr of protocol.attributes) {
+            const vizinho = isRecommendAttr(attr) || isForbidAttr(attr) ? attr.drug.$refText : undefined;
+            if (vizinho && !farmacos.has(vizinho)) {
+                farmacos.add(vizinho);
+                registrar(origem, [vizinho], 'grafo');
+            }
+        }
+    }
+}
+
+export async function retrieverFoco(
     session: Session,
-    indice: string,
-    vetor: number[],
-    topK: number
-): Promise<{ nome: string; score: number }[]> {
-    const resultado = await session.run(
-        `CALL db.index.vector.queryNodes($indice, $topK, $vetor) YIELD node, score
-         RETURN node.nome AS nome, score`,
-        { indice, topK: neo4j.int(topK), vetor }
-    );
-    return resultado.records.map(r => ({ nome: r.get('nome') as string, score: r.get('score') as number }));
-}
+    intencao: string,
+    model: MedicalModel
+): Promise<Foco> {
+    const nomes = nomesMed(model);
+    const origem = new Map<string, OrigemFoco>();
 
-/** Mantem so quem passa do limiar; sem nenhum acima, mantem o mais proximo mesmo assim
- *  — um foco impreciso e melhor que um Prompt Semantico vazio. */
-function acimaDoLimiar(itens: { nome: string; score: number }[]): Set<string> {
-    const relevantes = itens.filter(i => i.score >= FOCO_LIMIAR_SIMILARIDADE);
-    return new Set((relevantes.length > 0 ? relevantes : itens.slice(0, 1)).map(i => i.nome));
-}
+    const lexFarmacos = casamentoLexical(intencao, nomes.farmacos);
+    const lexProtocolos = casamentoLexical(intencao, nomes.protocolos);
+    registrar(origem, lexFarmacos, 'lexical');
+    registrar(origem, lexProtocolos, 'lexical');
 
-export async function retrieverFoco(session: Session, intencao: string, topK = FOCO_TOP_K): Promise<Foco> {
     const vetor = await embedTexto(intencao);
     // Sequencial, nao Promise.all: uma Session do driver nao roda duas queries
     // concorrentes ("Queries cannot be run directly on a session with an open
     // transaction").
-    const farmacos = await topKPorVetor(session, 'farmaco_embedding', vetor, topK);
-    const protocolos = await topKPorVetor(session, 'protocolo_embedding', vetor, topK);
-    return { farmacos: acimaDoLimiar(farmacos), protocolos: acimaDoLimiar(protocolos) };
+    const vetFarmacos = selecionarPorSimilaridade(
+        await topKPorVetor(session, 'farmaco_embedding', vetor, topKParaGrafo(nomes.farmacos.length))
+    );
+    const vetProtocolos = selecionarPorSimilaridade(
+        await topKPorVetor(session, 'protocolo_embedding', vetor, topKParaGrafo(nomes.protocolos.length))
+    );
+
+    const farmacos = new Set(lexFarmacos);
+    const protocolos = new Set(lexProtocolos);
+    // Ancorado pelo nome escrito, ou semeado pelo indice logo adiante.
+    let contextoDeliberado = protocolos.size > 0;
+
+    // Sem nome escrito no pedido, o vetor semeia UM lado so — aquele em que ele
+    // se compromete mais (ver `ladoMaisDecidido`). O outro vem das arestas.
+    if (farmacos.size === 0 && protocolos.size === 0) {
+        if (ladoMaisDecidido(vetFarmacos, vetProtocolos) === 'contexto') {
+            // So o primeiro colocado: um contexto ja arrasta o subgrafo inteiro
+            // dele, e semear dois duplica o Prompt Semantico.
+            if (vetProtocolos.melhor) {
+                protocolos.add(vetProtocolos.melhor);
+                contextoDeliberado = true;
+            }
+        } else {
+            for (const nome of vetFarmacos.nomes) farmacos.add(nome);
+        }
+    }
+
+    // Registrado so agora: o lexical ja esta na tabela e vence pelo criterio de
+    // primeira origem, entao o que recebe 'vetorial' aqui veio mesmo do indice.
+    registrar(origem, farmacos, 'vetorial');
+    registrar(origem, protocolos, 'vetorial');
+
+    expandirFarmacosParaProtocolos(model, farmacos, protocolos, origem);
+    // O indice so escolhe contexto quando nenhuma aresta o alcancou.
+    if (protocolos.size === 0) {
+        if (vetProtocolos.melhor) {
+            registrar(origem, [vetProtocolos.melhor], 'vetorial');
+            protocolos.add(vetProtocolos.melhor);
+            contextoDeliberado = true;
+        }
+    }
+    // Contexto ancorado ou semeado foi escolha deliberada e expande sempre.
+    // Contexto apenas DERIVADO de um item so expande se for unico: varios
+    // contextos derivados significam pedido ambiguo, e devolver o catalogo de
+    // cada um reconstroi o grafo inteiro dentro do Prompt Semantico.
+    if (contextoDeliberado || protocolos.size === 1) {
+        expandirProtocolosParaFarmacos(model, farmacos, protocolos, origem);
+    }
+
+    return { farmacos, protocolos, origem };
 }
 
 /**
- * Restringe as restricoes ja recuperadas ao foco semantico. Invariantes globais
- * ficam sempre de fora do filtro — sao regras que valem independente do que foi
- * pedido, nao "sobre" um farmaco ou protocolo especifico.
+ * Restricoes que um protocolo impoe independentemente de gatilho numerico.
+ *
+ * `retrieveConstraints` so coleta `recomenda`/`veta`/`escalonar` de protocolos
+ * cujo gatilho disparou — o que descreve bem o INSTANTE, mas elimina o protocolo
+ * que o profissional acabou de nomear quando nenhum parametro dele cruzou o
+ * limiar. O Prompt Semantico entao se enche do protocolo errado.
+ *
+ * Com o protocolo em foco, essas arestas voltam. O escalonamento continua
+ * avaliado contra a telemetria — ele descreve um evento, nao uma propriedade do
+ * protocolo.
  */
-export function filtrarPorFoco(constraints: RetrievedConstraints, foco: Foco): RetrievedConstraints {
+function arestasDoProtocolo(
+    protocol: ProtocolDef,
+    telemetria: Record<string, number>
+): {
+    recomendados: RetrievedConstraints['recomendados'];
+    vetados: RetrievedConstraints['vetados'];
+    escalonamentos: RetrievedConstraints['escalonamentos'];
+} {
+    const recomendados: RetrievedConstraints['recomendados'] = [];
+    const vetados: RetrievedConstraints['vetados'] = [];
+    const escalonamentos: RetrievedConstraints['escalonamentos'] = [];
+
+    for (const attr of protocol.attributes) {
+        if (isRecommendAttr(attr)) {
+            recomendados.push({
+                farmaco: attr.drug.$refText,
+                indicacao: attr.indication ?? '',
+                protocolo: protocol.name
+            });
+        } else if (isForbidAttr(attr)) {
+            vetados.push({
+                farmaco: attr.drug.$refText,
+                motivo: attr.reason,
+                origem: `protocolo ${protocol.name}`,
+                protocolo: protocol.name
+            });
+        } else if (isEscalationAttr(attr)) {
+            const observado = telemetria[attr.parameter];
+            if (observado !== undefined && compare(observado, attr.operator, attr.value.value)) {
+                escalonamentos.push({
+                    destino: attr.target,
+                    detalhe: attr.detail,
+                    protocolo: protocol.name
+                });
+            }
+        }
+    }
+
+    return { recomendados, vetados, escalonamentos };
+}
+
+/**
+ * Restringe as restricoes ja recuperadas ao foco semantico, e traz as arestas
+ * dos protocolos em foco que `retrieveConstraints` deixou de fora por falta de
+ * gatilho ativo (ver `arestasDoProtocolo`).
+ *
+ * INVARIANTE DE SEGURANCA: o foco so pode TIRAR decisoes admissiveis, nunca
+ * acrescentar. Os vetos trazidos aqui estreitam a politica do farmaco; nenhum
+ * caminho neste arquivo devolve a um farmaco uma decisao que a avaliacao
+ * deterministica havia retirado.
+ *
+ * Invariantes globais ficam sempre fora do filtro — sao regras que valem
+ * independente do que foi pedido, nao "sobre" um farmaco ou protocolo especifico.
+ */
+export function filtrarPorFoco(
+    constraints: RetrievedConstraints,
+    foco: Foco,
+    model: MedicalModel,
+    context: ClinicalContext
+): RetrievedConstraints {
     const noFoco = (farmaco: string) => foco.farmacos.has(farmaco);
     const protocoloNoFoco = (protocolo: string) => foco.protocolos.has(protocolo);
     const interacaoNoFoco = (entre: string) => entre.split(' + ').some(noFoco);
 
+    const protocolosAtivos = [...constraints.protocolosAtivos.filter(p => protocoloNoFoco(p.nome))];
+    const recomendados = [...constraints.recomendados];
+    const vetados = [...constraints.vetados];
+    const escalonamentos = [...constraints.escalonamentos];
+
+    const jaListado = new Set(protocolosAtivos.map(p => p.nome));
+    for (const protocol of model.elements.filter(isProtocolDef)) {
+        if (!protocoloNoFoco(protocol.name) || jaListado.has(protocol.name)) continue;
+
+        // gatilhos vazio marca "em foco, mas sem gatilho ativo" — o Prompt
+        // Semantico distingue os dois casos ao renderizar.
+        protocolosAtivos.push({ nome: protocol.name, cid: protocol.icd, gatilhos: [] });
+
+        const arestas = arestasDoProtocolo(protocol, context.telemetria);
+        recomendados.push(...arestas.recomendados);
+        escalonamentos.push(...arestas.escalonamentos);
+
+        // A politica nao e estreitada aqui: `recomputarPoliticasMed` a reconstroi
+        // ao final, a partir da lista de vetos que de fato sobreviveu ao filtro.
+        vetados.push(...arestas.vetados);
+    }
+
+    const bloqueiosNoFoco = constraints.bloqueios.filter(b => noFoco(b.farmaco));
+    const ajustesNoFoco = constraints.ajustes.filter(a => noFoco(a.farmaco));
+    // Uma recomendacao e uma ARESTA: so pertence ao foco se as duas pontas
+    // pertencerem. Aceitar so pelo protocolo reintroduz o protocolo errado pela
+    // porta dos fundos; aceitar so pelo farmaco faz o prompt indicar o que a
+    // gramatica nao gera.
+    const recomendadosNoFoco = dedup(
+        recomendados.filter(r => noFoco(r.farmaco) && protocoloNoFoco(r.protocolo)),
+        r => `${r.farmaco}|${r.protocolo}`
+    );
+    // Vetos de populacao valem pelo paciente, independem do foco; vetos de
+    // protocolo so valem se o protocolo estiver em foco.
+    const vetadosNoFoco = dedup(
+        vetados.filter(v => noFoco(v.farmaco) && (!v.protocolo || protocoloNoFoco(v.protocolo))),
+        v => `${v.farmaco}|${v.origem}`
+    );
+
     return {
-        protocolosAtivos: constraints.protocolosAtivos.filter(p => protocoloNoFoco(p.nome)),
-        bloqueios: constraints.bloqueios.filter(b => noFoco(b.farmaco)),
-        ajustes: constraints.ajustes.filter(a => noFoco(a.farmaco)),
-        recomendados: constraints.recomendados.filter(r => noFoco(r.farmaco) || protocoloNoFoco(r.protocolo)),
-        vetados: constraints.vetados.filter(v => noFoco(v.farmaco)),
-        escalonamentos: constraints.escalonamentos.filter(e => protocoloNoFoco(e.protocolo)),
+        protocolosAtivos,
+        bloqueios: bloqueiosNoFoco,
+        ajustes: ajustesNoFoco,
+        recomendados: recomendadosNoFoco,
+        vetados: vetadosNoFoco,
+        escalonamentos: dedup(
+            escalonamentos.filter(e => protocoloNoFoco(e.protocolo)),
+            e => `${e.destino}|${e.protocolo}|${e.detalhe}`
+        ),
         interacoes: constraints.interacoes.filter(i => interacaoNoFoco(i.entre)),
         regrasGlobais: constraints.regrasGlobais,
-        politicas: new Map([...constraints.politicas].filter(([farmaco]) => noFoco(farmaco)))
+        politicas: recomputarPoliticasMed(
+            model,
+            constraints.politicas,
+            foco,
+            bloqueiosNoFoco,
+            vetadosNoFoco,
+            ajustesNoFoco
+        )
     };
+}
+
+/**
+ * Reconstroi a politica de cada farmaco em foco a partir das restricoes que
+ * sobreviveram ao filtro — e nao das que `retrieveConstraints` tinha aplicado
+ * sobre o grafo inteiro.
+ *
+ * Sem isto, um veto descartado do Prompt Semantico (porque vinha de um protocolo
+ * fora do foco) continuava estreitando a gramatica: o modelo recebia uma
+ * proibicao sem nenhuma linha no prompt que a justificasse. Aqui o que a
+ * gramatica proibe volta a ser exatamente o que o prompt explica.
+ */
+function recomputarPoliticasMed(
+    model: MedicalModel,
+    politicasOriginais: Map<string, DrugPolicy>,
+    foco: Foco,
+    bloqueios: RetrievedConstraints['bloqueios'],
+    vetados: RetrievedConstraints['vetados'],
+    ajustes: RetrievedConstraints['ajustes']
+): Map<string, DrugPolicy> {
+    const schema = model.elements.filter(isDataSchemaDef)[0];
+    const politicas = new Map<string, DrugPolicy>();
+
+    for (const [farmaco, original] of politicasOriginais) {
+        if (!foco.farmacos.has(farmaco)) continue;
+        politicas.set(farmaco, {
+            farmaco,
+            decisoes: [...schema.decisions],
+            // vias e unidades vem da bula do farmaco: nao dependem de contexto.
+            vias: original.vias,
+            unidades: original.unidades,
+            motivos: [],
+            bloqueado: false
+        });
+    }
+
+    for (const bloqueio of bloqueios) {
+        const policy = politicas.get(bloqueio.farmaco);
+        if (!policy) continue;
+        policy.decisoes = policy.decisoes.filter(d => !DECISOES_DE_INCREMENTO.has(d));
+        policy.bloqueado = true;
+        policy.motivos.push(`incremento bloqueado (${bloqueio.regra}): ${bloqueio.razao}`);
+    }
+
+    // Ajuste renal que manda suspender ou bloquear tambem retira o incremento.
+    for (const ajuste of ajustes) {
+        if (ajuste.acao !== 'suspender' && ajuste.acao !== 'bloquear') continue;
+        const policy = politicas.get(ajuste.farmaco);
+        if (!policy) continue;
+        policy.decisoes = policy.decisoes.filter(d => !DECISOES_DE_INCREMENTO.has(d));
+        policy.bloqueado = true;
+        policy.motivos.push(`ajuste renal: ${ajuste.detalhe}`);
+    }
+
+    for (const veto of vetados) {
+        const policy = politicas.get(veto.farmaco);
+        if (!policy) continue;
+        policy.decisoes = policy.decisoes.filter(d => DECISOES_DE_RETIRADA.includes(d));
+        policy.bloqueado = true;
+        policy.motivos.push(`vetado por ${veto.origem}: ${veto.motivo}`);
+    }
+
+    return politicas;
 }

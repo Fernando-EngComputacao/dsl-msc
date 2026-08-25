@@ -17,7 +17,7 @@
  *     amarela registrada.
  */
 
-import neo4j, { type Session } from 'neo4j-driver';
+import { type Session } from 'neo4j-driver';
 
 import {
     isAgravanteAttr,
@@ -38,9 +38,19 @@ import {
     isTriggerAttr,
     type FutModel,
     type InfractionDef,
-    type Operator
+    type Operator,
+    type SituationDef
 } from '../generated/ast.js';
+import { nomesFut } from './documentos.js';
 import { embedTexto } from './embeddings.js';
+import {
+    casamentoLexical,
+    ladoMaisDecidido,
+    dedup,
+    selecionarPorSimilaridade,
+    topKParaGrafo,
+    topKPorVetor
+} from './foco.js';
 
 export interface FutContext {
     /** Leitura corrente da partida: parametro -> valor observado. */
@@ -70,7 +80,8 @@ export interface RetrievedFutConstraints {
     bloqueios: { infracao: string; regra: string; razao: string }[];
     ajustes: { infracao: string; acao: string; detalhe: string; origem: string }[];
     recomendados: { infracao: string; indicacao: string; lance: string }[];
-    vetados: { infracao: string; motivo: string; origem: string }[];
+    /** `lance` presente quando o veto vem de um lance; ausente quando vem de um contexto de partida. */
+    vetados: { infracao: string; motivo: string; origem: string; lance?: string }[];
     escalonamentos: { destino: string; detalhe: string; lance: string }[];
     agravantes: { entre: string; gravidade: string; mecanismo: string; conduta: string }[];
     isencoes: { infracao: string; condicao: string; excecao: string }[];
@@ -180,7 +191,8 @@ export function retrieveFutConstraints(
                 result.vetados.push({
                     infracao: attr.infraction.$refText,
                     motivo: attr.reason,
-                    origem: `lance ${situation.name}`
+                    origem: `lance ${situation.name}`,
+                    lance: situation.name
                 });
             } else if (isEscalationAttr(attr)) {
                 const observado = telemetria[attr.parameter];
@@ -315,76 +327,326 @@ export function futPruningPayload(constraints: RetrievedFutConstraints): {
         vias_disponiveis: [...reinicios]
     };
 }
-
 /**
- * Recuperacao por embedding no Neo4j — espelha `graphrag.ts::retrieverFoco` e
+ * Recuperacao do subgrafo em foco — espelha `graphrag.ts::retrieverFoco` e
  * `graphrag-agro.ts::retrieverFocoAgro` no dominio da arbitragem. So decide
  * QUAIS infracoes/lances entram no Prompt Semantico; a avaliacao de bloqueio
  * continua 100% deterministica em `retrieveFutConstraints`.
+ *
+ * Combina os tres sinais descritos em `knowledge/foco.ts`: o nome escrito na
+ * fala (lexical), a proximidade no indice vetorial (vetorial) e as arestas do
+ * grafo a partir do que os dois primeiros acharam (estrutural).
  */
 export interface FutFoco {
     infracoes: Set<string>;
     lances: Set<string>;
+    /** Como cada no entrou no foco — para o log da interface e para auditoria. */
+    origem: Map<string, OrigemFoco>;
 }
 
-const FOCO_TOP_K = 5;
-const FOCO_LIMIAR_SIMILARIDADE = 0.35;
+export type OrigemFoco = 'lexical' | 'vetorial' | 'grafo';
 
-async function topKPorVetor(
-    session: Session,
-    indice: string,
-    vetor: number[],
-    topK: number
-): Promise<{ nome: string; score: number }[]> {
-    const resultado = await session.run(
-        `CALL db.index.vector.queryNodes($indice, $topK, $vetor) YIELD node, score
-         RETURN node.nome AS nome, score`,
-        { indice, topK: neo4j.int(topK), vetor }
-    );
-    return resultado.records.map(r => ({ nome: r.get('nome') as string, score: r.get('score') as number }));
+function registrar(origem: Map<string, OrigemFoco>, nomes: Iterable<string>, tipo: OrigemFoco): void {
+    for (const nome of nomes) {
+        // Primeira origem vence: lexical e mais informativo que "veio junto".
+        if (!origem.has(nome)) origem.set(nome, tipo);
+    }
 }
 
-function acimaDoLimiar(itens: { nome: string; score: number }[]): Set<string> {
-    const relevantes = itens.filter(i => i.score >= FOCO_LIMIAR_SIMILARIDADE);
-    return new Set((relevantes.length > 0 ? relevantes : itens.slice(0, 1)).map(i => i.nome));
+/**
+ * Expansao estrutural, sentido item -> contexto, seguindo apenas `recomenda`.
+ *
+ * Sem isto, "foi mao dele" traria a infracao e nenhuma das restricoes do lance em que ela e julgada.
+ * Seguir tambem `veta` seria errado aqui: seguir `veta` traria de volta lances que nao tem a ver com a chamada, so porque descartam aquela infracao.
+ */
+function expandirInfracoesParaLances(
+    model: FutModel,
+    infracoes: Set<string>,
+    lances: Set<string>,
+    origem: Map<string, OrigemFoco>
+): void {
+    for (const situation of model.elements.filter(isSituationDef)) {
+        if (lances.has(situation.name)) continue;
+        for (const attr of situation.attributes) {
+            if (isFutRecommendAttr(attr) && infracoes.has(attr.infraction.$refText)) {
+                lances.add(situation.name);
+                registrar(origem, [situation.name], 'grafo');
+                break;
+            }
+        }
+    }
+}
+
+/**
+ * Expansao estrutural, sentido contexto -> item, seguindo `recomenda` E `veta`:
+ * com o lance em foco, o que ele proibe e tao pertinente quanto o que indica.
+ */
+function expandirLancesParaInfracoes(
+    model: FutModel,
+    infracoes: Set<string>,
+    lances: Set<string>,
+    origem: Map<string, OrigemFoco>
+): void {
+    for (const situation of model.elements.filter(isSituationDef)) {
+        if (!lances.has(situation.name)) continue;
+        for (const attr of situation.attributes) {
+            const vizinho = isFutRecommendAttr(attr) || isFutForbidAttr(attr) ? attr.infraction.$refText : undefined;
+            if (vizinho && !infracoes.has(vizinho)) {
+                infracoes.add(vizinho);
+                registrar(origem, [vizinho], 'grafo');
+            }
+        }
+    }
 }
 
 export async function retrieverFocoFut(
     session: Session,
     intencao: string,
-    topK = FOCO_TOP_K
+    model: FutModel
 ): Promise<FutFoco> {
+    const nomes = nomesFut(model);
+    const origem = new Map<string, OrigemFoco>();
+
+    const lexInfracoes = casamentoLexical(intencao, nomes.infracoes);
+    const lexLances = casamentoLexical(intencao, nomes.lances);
+    registrar(origem, lexInfracoes, 'lexical');
+    registrar(origem, lexLances, 'lexical');
+
     const vetor = await embedTexto(intencao);
     // Sequencial, nao Promise.all: uma Session do driver nao roda duas queries
     // concorrentes ("Queries cannot be run directly on a session with an open
     // transaction").
-    const infracoes = await topKPorVetor(session, 'infracao_embedding', vetor, topK);
-    const lances = await topKPorVetor(session, 'lance_embedding', vetor, topK);
-    return { infracoes: acimaDoLimiar(infracoes), lances: acimaDoLimiar(lances) };
+    const vetInfracoes = selecionarPorSimilaridade(
+        await topKPorVetor(session, 'infracao_embedding', vetor, topKParaGrafo(nomes.infracoes.length))
+    );
+    const vetLances = selecionarPorSimilaridade(
+        await topKPorVetor(session, 'lance_embedding', vetor, topKParaGrafo(nomes.lances.length))
+    );
+
+    const infracoes = new Set(lexInfracoes);
+    const lances = new Set(lexLances);
+    // Ancorado pelo nome escrito, ou semeado pelo indice logo adiante.
+    let contextoDeliberado = lances.size > 0;
+
+    // Sem nome escrito no pedido, o vetor semeia UM lado so — aquele em que ele
+    // se compromete mais (ver `ladoMaisDecidido`). O outro vem das arestas.
+    if (infracoes.size === 0 && lances.size === 0) {
+        if (ladoMaisDecidido(vetInfracoes, vetLances) === 'contexto') {
+            // So o primeiro colocado: um contexto ja arrasta o subgrafo inteiro
+            // dele, e semear dois duplica o Prompt Semantico.
+            if (vetLances.melhor) {
+                lances.add(vetLances.melhor);
+                contextoDeliberado = true;
+            }
+        } else {
+            for (const nome of vetInfracoes.nomes) infracoes.add(nome);
+        }
+    }
+
+    // Registrado so agora: o lexical ja esta na tabela e vence pelo criterio de
+    // primeira origem, entao o que recebe 'vetorial' aqui veio mesmo do indice.
+    registrar(origem, infracoes, 'vetorial');
+    registrar(origem, lances, 'vetorial');
+
+    expandirInfracoesParaLances(model, infracoes, lances, origem);
+    // O indice so escolhe contexto quando nenhuma aresta o alcancou.
+    if (lances.size === 0) {
+        if (vetLances.melhor) {
+            registrar(origem, [vetLances.melhor], 'vetorial');
+            lances.add(vetLances.melhor);
+            contextoDeliberado = true;
+        }
+    }
+    // Contexto ancorado ou semeado foi escolha deliberada e expande sempre.
+    // Contexto apenas DERIVADO de um item so expande se for unico: varios
+    // contextos derivados significam pedido ambiguo, e devolver o catalogo de
+    // cada um reconstroi o grafo inteiro dentro do Prompt Semantico.
+    if (contextoDeliberado || lances.size === 1) {
+        expandirLancesParaInfracoes(model, infracoes, lances, origem);
+    }
+
+    return { infracoes, lances, origem };
 }
 
 /**
- * Restringe as restricoes ja recuperadas ao foco semantico. Invariantes globais
- * ficam sempre de fora do filtro — valem independente do que foi pedido.
+ * Restricoes que um lance impoe independentemente de gatilho numerico.
+ *
+ * `retrieveFutConstraints` so coleta `recomenda`/`veta`/`escalonar` de lances
+ * cujo gatilho disparou — o que descreve bem o INSTANTE da partida, mas elimina
+ * o lance que o arbitro acabou de nomear quando nenhuma leitura cruzou o limiar.
+ * O Prompt Semantico entao se enche do lance errado.
+ *
+ * Com o lance em foco, essas arestas voltam. O escalonamento continua avaliado
+ * contra a leitura da partida — ele descreve um evento, nao uma propriedade do
+ * lance.
+ */
+function arestasDoLance(
+    situation: SituationDef,
+    telemetria: Record<string, number>
+): {
+    recomendados: RetrievedFutConstraints['recomendados'];
+    vetados: RetrievedFutConstraints['vetados'];
+    escalonamentos: RetrievedFutConstraints['escalonamentos'];
+} {
+    const recomendados: RetrievedFutConstraints['recomendados'] = [];
+    const vetados: RetrievedFutConstraints['vetados'] = [];
+    const escalonamentos: RetrievedFutConstraints['escalonamentos'] = [];
+
+    for (const attr of situation.attributes) {
+        if (isFutRecommendAttr(attr)) {
+            recomendados.push({
+                infracao: attr.infraction.$refText,
+                indicacao: attr.indication ?? '',
+                lance: situation.name
+            });
+        } else if (isFutForbidAttr(attr)) {
+            vetados.push({
+                infracao: attr.infraction.$refText,
+                motivo: attr.reason,
+                origem: `lance ${situation.name}`,
+                lance: situation.name
+            });
+        } else if (isEscalationAttr(attr)) {
+            const observado = telemetria[attr.parameter];
+            if (observado !== undefined && compare(observado, attr.operator, attr.value.value)) {
+                escalonamentos.push({
+                    destino: attr.target,
+                    detalhe: attr.detail,
+                    lance: situation.name
+                });
+            }
+        }
+    }
+
+    return { recomendados, vetados, escalonamentos };
+}
+
+/**
+ * Restringe as restricoes ja recuperadas ao foco semantico, e traz as arestas
+ * dos lances em foco que `retrieveFutConstraints` deixou de fora por falta de
+ * gatilho ativo (ver `arestasDoLance`).
+ *
+ * INVARIANTE DE SEGURANCA: o foco so pode TIRAR decisoes admissiveis, nunca
+ * acrescentar. Os vetos trazidos aqui estreitam a politica da infracao; nenhum
+ * caminho neste arquivo devolve a uma infracao uma decisao que a avaliacao
+ * deterministica havia retirado.
+ *
+ * Invariantes globais ficam sempre fora do filtro — valem independente do que
+ * foi pedido.
  */
 export function filtrarPorFocoFut(
     constraints: RetrievedFutConstraints,
-    foco: FutFoco
+    foco: FutFoco,
+    model: FutModel,
+    context: FutContext
 ): RetrievedFutConstraints {
     const noFoco = (infracao: string) => foco.infracoes.has(infracao);
     const lanceNoFoco = (lance: string) => foco.lances.has(lance);
     const agravanteNoFoco = (entre: string) => entre.split(' + ').some(noFoco);
 
+    const lancesAtivos = [...constraints.lancesAtivos.filter(l => lanceNoFoco(l.nome))];
+    const recomendados = [...constraints.recomendados];
+    const vetados = [...constraints.vetados];
+    const escalonamentos = [...constraints.escalonamentos];
+
+    const jaListado = new Set(lancesAtivos.map(l => l.nome));
+    for (const situation of model.elements.filter(isSituationDef)) {
+        if (!lanceNoFoco(situation.name) || jaListado.has(situation.name)) continue;
+
+        // gatilhos vazio marca "em foco, mas sem gatilho ativo" — o Prompt
+        // Semantico distingue os dois casos ao renderizar.
+        lancesAtivos.push({ nome: situation.name, lei: situation.lawRef, gatilhos: [] });
+
+        const arestas = arestasDoLance(situation, context.telemetria);
+        recomendados.push(...arestas.recomendados);
+        escalonamentos.push(...arestas.escalonamentos);
+
+        // A politica nao e estreitada aqui: `recomputarPoliticasFut` a reconstroi
+        // ao final, a partir da lista de vetos que de fato sobreviveu ao filtro.
+        vetados.push(...arestas.vetados);
+    }
+
+    const bloqueiosNoFoco = constraints.bloqueios.filter(b => noFoco(b.infracao));
+    // Uma recomendacao e uma ARESTA: so pertence ao foco se as duas pontas
+    // pertencerem. Aceitar so pelo lance reintroduz o lance errado pela porta
+    // dos fundos; aceitar so pela infracao faz o prompt indicar o que a
+    // gramatica nao gera.
+    const recomendadosNoFoco = dedup(
+        recomendados.filter(r => noFoco(r.infracao) && lanceNoFoco(r.lance)),
+        r => `${r.infracao}|${r.lance}`
+    );
+    // Vetos de contexto de partida valem pelo jogo, independem do foco; vetos de
+    // lance so valem se o lance estiver em foco.
+    const vetadosNoFoco = dedup(
+        vetados.filter(v => noFoco(v.infracao) && (!v.lance || lanceNoFoco(v.lance))),
+        v => `${v.infracao}|${v.origem}`
+    );
+
     return {
-        lancesAtivos: constraints.lancesAtivos.filter(l => lanceNoFoco(l.nome)),
-        bloqueios: constraints.bloqueios.filter(b => noFoco(b.infracao)),
+        lancesAtivos,
+        bloqueios: bloqueiosNoFoco,
         ajustes: constraints.ajustes.filter(a => noFoco(a.infracao)),
-        recomendados: constraints.recomendados.filter(r => noFoco(r.infracao) || lanceNoFoco(r.lance)),
-        vetados: constraints.vetados.filter(v => noFoco(v.infracao)),
-        escalonamentos: constraints.escalonamentos.filter(e => lanceNoFoco(e.lance)),
+        recomendados: recomendadosNoFoco,
+        vetados: vetadosNoFoco,
+        escalonamentos: dedup(
+            escalonamentos.filter(e => lanceNoFoco(e.lance)),
+            e => `${e.destino}|${e.lance}|${e.detalhe}`
+        ),
         agravantes: constraints.agravantes.filter(a => agravanteNoFoco(a.entre)),
         isencoes: constraints.isencoes.filter(i => noFoco(i.infracao)),
         regrasGlobais: constraints.regrasGlobais,
-        politicas: new Map([...constraints.politicas].filter(([infracao]) => noFoco(infracao)))
+        politicas: recomputarPoliticasFut(model, constraints.politicas, foco, bloqueiosNoFoco, vetadosNoFoco)
     };
+}
+
+/**
+ * Reconstroi a politica de cada infracao em foco a partir das restricoes que
+ * sobreviveram ao filtro — e nao das que `retrieveFutConstraints` tinha aplicado
+ * sobre o grafo inteiro.
+ *
+ * Sem isto, um veto descartado do Prompt Semantico (porque vinha de um lance fora
+ * do foco) continuava estreitando a gramatica: o modelo recebia uma proibicao sem
+ * nenhuma linha no prompt que a justificasse. Aqui o que a gramatica proibe volta
+ * a ser exatamente o que o prompt explica.
+ */
+function recomputarPoliticasFut(
+    model: FutModel,
+    politicasOriginais: Map<string, InfractionPolicy>,
+    foco: FutFoco,
+    bloqueios: RetrievedFutConstraints['bloqueios'],
+    vetados: RetrievedFutConstraints['vetados']
+): Map<string, InfractionPolicy> {
+    const schema = model.elements.filter(isFutSchemaDef)[0];
+    const politicas = new Map<string, InfractionPolicy>();
+
+    for (const [infracao, original] of politicasOriginais) {
+        if (!foco.infracoes.has(infracao)) continue;
+        politicas.set(infracao, {
+            infracao,
+            decisoes: [...schema.decisions],
+            // reinicios e unidades vem da propria infracao: nao dependem do contexto.
+            reinicios: original.reinicios,
+            unidades: original.unidades,
+            motivos: [],
+            bloqueado: false
+        });
+    }
+
+    for (const bloqueio of bloqueios) {
+        const policy = politicas.get(bloqueio.infracao);
+        if (!policy) continue;
+        policy.decisoes = policy.decisoes.filter(d => !DECISOES_DE_INCREMENTO.has(d));
+        policy.bloqueado = true;
+        policy.motivos.push(`decisao bloqueada (${bloqueio.regra}): ${bloqueio.razao}`);
+    }
+
+    for (const veto of vetados) {
+        const policy = politicas.get(veto.infracao);
+        if (!policy) continue;
+        policy.decisoes = policy.decisoes.filter(d => DECISOES_DE_RETIRADA.includes(d));
+        policy.bloqueado = true;
+        policy.motivos.push(`vetada por ${veto.origem}: ${veto.motivo}`);
+    }
+
+    return politicas;
 }

@@ -18,6 +18,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { createFutServices } from '../language/fut-module.js';
+import { documentoInfracao, documentoLance } from '../knowledge/documentos.js';
 import { embedOpcional, EMBED_DIMENSOES } from '../knowledge/embeddings.js';
 import {
     isAgravanteAttr,
@@ -108,9 +109,7 @@ export async function syncFutModel(session: Session, model: FutModel): Promise<F
         stats.infracoes++;
 
         // Vetor para a recuperacao por similaridade (ver graphrag-fut.ts::retrieverFocoFut).
-        const vetorInfracao = await embedOpcional(
-            `${infraction.name}, classe ${infraction.foulClass ?? ''}`.trim()
-        );
+        const vetorInfracao = await embedOpcional(documentoInfracao(infraction, model));
         if (vetorInfracao) {
             await q(`MATCH (i:Infracao { nome: $nome }) SET i.embedding = $vetor`, {
                 nome: infraction.name,
@@ -217,7 +216,7 @@ export async function syncFutModel(session: Session, model: FutModel): Promise<F
         });
         stats.lances++;
 
-        const vetorLance = await embedOpcional(`${situation.name}, lei ${situation.lawRef ?? ''}`.trim());
+        const vetorLance = await embedOpcional(documentoLance(situation, model));
         if (vetorLance) {
             await q(`MATCH (l:Lance { nome: $nome }) SET l.embedding = $vetor`, {
                 nome: situation.name,

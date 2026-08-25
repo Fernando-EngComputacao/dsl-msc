@@ -19,6 +19,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { createDSLServices } from '../language/dsl-module.js';
+import { documentoFarmaco, documentoProtocolo } from '../knowledge/documentos.js';
 import { embedOpcional, EMBED_DIMENSOES } from '../knowledge/embeddings.js';
 import {
     isBlockRule,
@@ -113,7 +114,7 @@ export async function syncModel(session: Session, model: MedicalModel): Promise<
         // Vetor para a recuperacao por similaridade (ver graphrag.ts::retrieverFoco).
         // Classe entra no texto de proposito: "aumenta a sedacao" deve aproximar de
         // um farmaco classe Sedativo mesmo sem citar o nome dele.
-        const vetorFarmaco = await embedOpcional(`${drug.name}, classe ${drug.drugClass ?? ''}`.trim());
+        const vetorFarmaco = await embedOpcional(documentoFarmaco(drug, model));
         if (vetorFarmaco) {
             await q(`MATCH (f:Farmaco { nome: $nome }) SET f.embedding = $vetor`, {
                 nome: drug.name,
@@ -254,7 +255,7 @@ export async function syncModel(session: Session, model: MedicalModel): Promise<
         });
         stats.protocolos++;
 
-        const vetorProtocolo = await embedOpcional(`${protocol.name}, CID ${protocol.icd ?? ''}`.trim());
+        const vetorProtocolo = await embedOpcional(documentoProtocolo(protocol, model));
         if (vetorProtocolo) {
             await q(`MATCH (p:Protocolo { nome: $nome }) SET p.embedding = $vetor`, {
                 nome: protocol.name,

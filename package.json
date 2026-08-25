@@ -1,70 +1,65 @@
 {
-  "name": "dsl-project",
-  "version": "2.0.0",
-  "description": "SPC-CML — Compilador Semantico de Prompts: DSL clinica, Grafo de Conhecimento e decodificacao restrita por gramatica",
-  "main": "index.js",
-  "type": "module",
-  "scripts": {
-    "langium:generate": "langium generate",
-    "build": "npm run langium:generate && tsc",
-    "typecheck": "tsc --noEmit",
-
-    "validate": "tsx src/cli/validate.ts",
-    "bnf:export": "tsx src/cli/export-bnf.ts",
-    "graph:sync": "tsx src/database/neo4j.ts",
-    "pipeline": "tsx src/cli/pipeline.ts",
-
-    "infer": "tsx src/inference/llm-client.ts",
-    "batch": "tsx src/inference/batch-client.ts",
-
-    "bnf:export:agro": "tsx src/cli/export-bnf-agro.ts",
-    "graph:sync:agro": "tsx src/database/neo4j-agro.ts",
-    "batch:agro": "tsx src/inference/agro-client.ts",
-
-    "bnf:export:fut": "tsx src/cli/export-bnf-fut.ts",
-    "graph:sync:fut": "tsx src/database/neo4j-fut.ts",
-    "batch:fut": "tsx src/inference/fut-client.ts",
-    "ground-truth:fut": "tsx src/scripts/gerar-ground-truth-fut.ts",
-
-    "start": "tsx src/inference/cli.ts",
-    "web:api": "tsx src/web/server.ts",
-
-    "deploy:med": "bash src/scripts/local/deploy-med.sh",
-    "deploy:agro": "bash src/scripts/local/deploy-agro.sh",
-    "deploy:fut": "bash src/scripts/local/deploy-fut.sh",
-    "deploy:docker:med": "bash src/scripts/docker/deploy-docker-med.sh",
-    "deploy:docker:agro": "bash src/scripts/docker/deploy-docker-agro.sh",
-    "deploy:docker:fut": "bash src/scripts/docker/deploy-docker-fut.sh",
-
-    "test:model": "tsx src/test/test.ts",
-    "test:earley": "tsx src/test/earley.test.ts",
-    "test:avaliar": "tsx src/test/avaliar.test.ts",
-    "test:grammar": "cd src/python_engine && python test_grammar.py",
-    "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:grammar"
-  },
-  "keywords": [
-    "dsl",
-    "langium",
-    "grammar-prompting",
-    "constrained-decoding",
-    "knowledge-graph",
-    "neo4j",
-    "clinical-decision-support"
-  ],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "langium": "^4.2.1",
-    "neo4j-driver": "^6.0.1",
-    "vscode-languageclient": "^9.0.1",
-    "vscode-languageserver": "^9.0.1"
-  },
-  "devDependencies": {
-    "@types/node": "^25.5.0",
-    "@types/vscode": "^1.110.0",
-    "langium-cli": "^4.2.0",
-    "ts-node": "^10.9.2",
-    "tsx": "^4.23.12",
-    "typescript": "^5.9.3"
-  }
+    "name": "dsl-project",
+    "version": "2.0.0",
+    "description": "SPC-CML — Compilador Semantico de Prompts: DSL clinica, Grafo de Conhecimento e decodificacao restrita por gramatica",
+    "main": "index.js",
+    "type": "module",
+    "scripts": {
+        "langium:generate": "langium generate",
+        "build": "npm run langium:generate && tsc",
+        "typecheck": "tsc --noEmit",
+        "validate": "tsx src/cli/validate.ts",
+        "bnf:export": "tsx src/cli/export-bnf.ts",
+        "graph:sync": "tsx src/database/neo4j.ts",
+        "pipeline": "tsx src/cli/pipeline.ts",
+        "infer": "tsx src/inference/llm-client.ts",
+        "batch": "tsx src/inference/batch-client.ts",
+        "bnf:export:agro": "tsx src/cli/export-bnf-agro.ts",
+        "graph:sync:agro": "tsx src/database/neo4j-agro.ts",
+        "batch:agro": "tsx src/inference/agro-client.ts",
+        "bnf:export:fut": "tsx src/cli/export-bnf-fut.ts",
+        "graph:sync:fut": "tsx src/database/neo4j-fut.ts",
+        "foco:inspecionar": "tsx src/cli/inspecionar-foco.ts",
+        "batch:fut": "tsx src/inference/fut-client.ts",
+        "ground-truth:fut": "tsx src/scripts/gerar-ground-truth-fut.ts",
+        "start": "tsx src/inference/cli.ts",
+        "web:api": "tsx src/web/server.ts",
+        "deploy:med": "bash src/scripts/local/deploy-med.sh",
+        "deploy:agro": "bash src/scripts/local/deploy-agro.sh",
+        "deploy:fut": "bash src/scripts/local/deploy-fut.sh",
+        "deploy:docker:med": "bash src/scripts/docker/deploy-docker-med.sh",
+        "deploy:docker:agro": "bash src/scripts/docker/deploy-docker-agro.sh",
+        "deploy:docker:fut": "bash src/scripts/docker/deploy-docker-fut.sh",
+        "test:model": "tsx src/test/test.ts",
+        "test:earley": "tsx src/test/earley.test.ts",
+        "test:avaliar": "tsx src/test/avaliar.test.ts",
+        "test:grammar": "cd src/python_engine && python test_grammar.py",
+        "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:foco && npm run test:grammar",
+        "test:foco": "tsx src/test/foco.test.ts"
+    },
+    "keywords": [
+        "dsl",
+        "langium",
+        "grammar-prompting",
+        "constrained-decoding",
+        "knowledge-graph",
+        "neo4j",
+        "clinical-decision-support"
+    ],
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "langium": "^4.2.1",
+        "neo4j-driver": "^6.0.1",
+        "vscode-languageclient": "^9.0.1",
+        "vscode-languageserver": "^9.0.1"
+    },
+    "devDependencies": {
+        "@types/node": "^25.5.0",
+        "@types/vscode": "^1.110.0",
+        "langium-cli": "^4.2.0",
+        "ts-node": "^10.9.2",
+        "tsx": "^4.23.12",
+        "typescript": "^5.9.3"
+    }
 }

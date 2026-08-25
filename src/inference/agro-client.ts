@@ -69,9 +69,16 @@ export function montarPromptSemanticoAgro(c: RetrievedAgroConstraints): string {
     const bloco: string[] = [];
 
     if (c.culturasAtivas.length > 0) {
-        bloco.push('[CULTURAS COM GATILHO ATIVO]');
+        // Uma cultura pode entrar aqui por gatilho disparado OU por ter sido
+        // identificada no pedido (ver filtrarPorFocoAgro). Os dois casos sao
+        // fatos distintos e o prompt precisa distingui-los: sem gatilho, o que
+        // vale sao as restricoes estruturais da cultura, nao um evento.
+        bloco.push('[CULTURAS EM FOCO]');
         for (const cult of c.culturasAtivas) {
             bloco.push(`- ${cult.nome} (${cult.ciclo})`);
+            if (cult.gatilhos.length === 0) {
+                bloco.push('    (sem gatilho ativo na leitura corrente — cultura identificada no pedido)');
+            }
             for (const g of cult.gatilhos) bloco.push(`    gatilho: ${g}`);
         }
     }

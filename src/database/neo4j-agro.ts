@@ -18,6 +18,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { createAgroServices } from '../language/agro-module.js';
+import { documentoCultura, documentoProduto } from '../knowledge/documentos.js';
 import { embedOpcional, EMBED_DIMENSOES } from '../knowledge/embeddings.js';
 import {
     isAgroBlockRule,
@@ -107,7 +108,7 @@ export async function syncAgroModel(
         stats.produtos++;
 
         // Vetor para a recuperacao por similaridade (ver graphrag-agro.ts::retrieverFocoAgro).
-        const vetorProduto = await embedOpcional(`${product.name}, classe ${product.productClass ?? ''}`.trim());
+        const vetorProduto = await embedOpcional(documentoProduto(product, model));
         if (vetorProduto) {
             await q(`MATCH (p:Produto { nome: $nome }) SET p.embedding = $vetor`, {
                 nome: product.name,
@@ -184,7 +185,7 @@ export async function syncAgroModel(
         });
         stats.culturas++;
 
-        const vetorCultura = await embedOpcional(`${culture.name}, ciclo ${culture.cycle ?? ''}`.trim());
+        const vetorCultura = await embedOpcional(documentoCultura(culture, model));
         if (vetorCultura) {
             await q(`MATCH (c:Cultura { nome: $nome }) SET c.embedding = $vetor`, {
                 nome: culture.name,

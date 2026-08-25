@@ -72,9 +72,17 @@ export function montarPromptSemanticoFut(c: RetrievedFutConstraints): string {
     const bloco: string[] = [];
 
     if (c.lancesAtivos.length > 0) {
-        bloco.push('[LANCES COM GATILHO ATIVO]');
+        // Um lance pode entrar aqui por gatilho disparado OU por ter sido
+        // identificado na chamada do arbitro (ver filtrarPorFocoFut). Os dois
+        // casos sao fatos distintos e o prompt precisa distingui-los: sem
+        // gatilho, o que vale sao as restricoes estruturais do lance, nao um
+        // evento da partida.
+        bloco.push('[LANCES EM FOCO]');
         for (const lance of c.lancesAtivos) {
             bloco.push(`- ${lance.nome} (${lance.lei})`);
+            if (lance.gatilhos.length === 0) {
+                bloco.push('    (sem gatilho ativo na leitura da partida — lance identificado no pedido)');
+            }
             for (const g of lance.gatilhos) bloco.push(`    gatilho: ${g}`);
         }
     }

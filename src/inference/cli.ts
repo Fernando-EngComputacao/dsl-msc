@@ -156,6 +156,17 @@ function linhaAleatoria<T>(caminho: string): T {
  * si — sortear os dois do mesmo pool acoplaria demografia a instante clinico
  * sem motivo.
  */
+/**
+ * Lista o foco anotando de onde cada no veio — lexical (o usuario escreveu o
+ * nome), vetorial (similaridade no indice) ou grafo (entrou junto pela aresta).
+ * E o que permite auditar, na propria sessao, se o subgrafo ativado corresponde
+ * ao que foi pedido.
+ */
+function descreverFoco(nomes: Set<string>, origem: Map<string, string>): string {
+    if (nomes.size === 0) return '—';
+    return [...nomes].map(n => `${n} (${origem.get(n) ?? 'grafo'})`).join(', ');
+}
+
 function sortearContextoUti(
     pacientesPath: string,
     telemetriasPath: string
@@ -188,11 +199,11 @@ async function loopDigitarUti(
         let constraints = retrieveConstraints(model, contexto);
 
         try {
-            const foco = await retrieverFoco(session, texto);
-            constraints = filtrarPorFoco(constraints, foco);
+            const foco = await retrieverFoco(session, texto, model);
+            constraints = filtrarPorFoco(constraints, foco, model, contexto);
             console.log(
-                `\nFoco recuperado por embedding: farmacos [${[...foco.farmacos].join(', ')}], ` +
-                    `protocolos [${[...foco.protocolos].join(', ')}]`
+                `\nSubgrafo em foco: farmacos [${descreverFoco(foco.farmacos, foco.origem)}], ` +
+                    `protocolos [${descreverFoco(foco.protocolos, foco.origem)}]`
             );
         } catch (error) {
             console.log(
@@ -264,11 +275,11 @@ async function loopDigitarAgro(
         let constraints = retrieveAgroConstraints(model, contexto);
 
         try {
-            const foco = await retrieverFocoAgro(session, texto);
-            constraints = filtrarPorFocoAgro(constraints, foco);
+            const foco = await retrieverFocoAgro(session, texto, model);
+            constraints = filtrarPorFocoAgro(constraints, foco, model, contexto);
             console.log(
-                `\nFoco recuperado por embedding: produtos [${[...foco.produtos].join(', ')}], ` +
-                    `culturas [${[...foco.culturas].join(', ')}]`
+                `\nSubgrafo em foco: produtos [${descreverFoco(foco.produtos, foco.origem)}], ` +
+                    `culturas [${descreverFoco(foco.culturas, foco.origem)}]`
             );
         } catch (error) {
             console.log(
@@ -340,11 +351,11 @@ async function loopDigitarFut(
         let constraints = retrieveFutConstraints(model, contexto);
 
         try {
-            const foco = await retrieverFocoFut(session, texto);
-            constraints = filtrarPorFocoFut(constraints, foco);
+            const foco = await retrieverFocoFut(session, texto, model);
+            constraints = filtrarPorFocoFut(constraints, foco, model, contexto);
             console.log(
-                `\nFoco recuperado por embedding: infracoes [${[...foco.infracoes].join(', ')}], ` +
-                    `lances [${[...foco.lances].join(', ')}]`
+                `\nSubgrafo em foco: infracoes [${descreverFoco(foco.infracoes, foco.origem)}], ` +
+                    `lances [${descreverFoco(foco.lances, foco.origem)}]`
             );
         } catch (error) {
             console.log(
