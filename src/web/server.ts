@@ -480,8 +480,9 @@ function listarChatsSalvos(): Array<Omit<ChatSalvo, 'mensagens'>> {
 }
 
 // Avaliacao contra ground truth (ver src/inference/avaliar.ts e
-// src/scripts/gerar-ground-truth-*.ts). O ground truth do agro e do fut ainda
-// nao foi gerado — ate la, essa rota responde 404 pra esses dominios.
+// src/scripts/gerar-ground-truth-*.ts). O ground truth do agro ainda nao foi
+// gerado — ate la, essa rota responde 404 pra esse dominio. O do fut existe
+// (25 cenarios curados, ver src/scripts/gerar-ground-truth-fut.ts).
 function carregarGroundTruth(dominio: 'med' | 'agro' | 'fut'): RegistroGroundTruth[] {
     const caminho = path.join('src', 'examples', dominio, `ground_truth_${dominio}.jsonl`);
     if (!fs.existsSync(caminho)) {

@@ -24,6 +24,7 @@
     "bnf:export:fut": "tsx src/cli/export-bnf-fut.ts",
     "graph:sync:fut": "tsx src/database/neo4j-fut.ts",
     "batch:fut": "tsx src/inference/fut-client.ts",
+    "ground-truth:fut": "tsx src/scripts/gerar-ground-truth-fut.ts",
 
     "start": "tsx src/inference/cli.ts",
     "web:api": "tsx src/web/server.ts",
