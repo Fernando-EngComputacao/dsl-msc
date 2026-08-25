@@ -8,7 +8,12 @@ const props = defineProps<{ mensagem: Mensagem }>();
 const idSorteio = computed(() => {
     const s = props.mensagem.resposta?.sorteio;
     if (!s) return null;
-    return (s.paciente as string | undefined) ?? (s.talhao as string | undefined) ?? null;
+    return (
+        (s.paciente as string | undefined) ??
+        (s.talhao as string | undefined) ??
+        (s.partida as string | undefined) ??
+        null
+    );
 });
 
 /** Bloco completo (comando + paciente/talhão + telemetria + populações/áreas +
@@ -23,6 +28,7 @@ const dadosTelemetriaTexto = computed(() => {
 
     if (s.paciente) linhas.push(`Paciente: ${s.paciente}`);
     else if (s.talhao) linhas.push(`Talhão: ${s.talhao}`);
+    else if (s.partida) linhas.push(`Partida: ${s.partida}`);
 
     const telemetria = s.telemetria as Record<string, number> | undefined;
     if (telemetria) {
@@ -34,11 +40,15 @@ const dadosTelemetriaTexto = computed(() => {
     if (populacoes?.length) linhas.push(`Populações: ${populacoes.join(', ')}`);
     const areas = s.areas as string[] | undefined;
     if (areas?.length) linhas.push(`Áreas: ${areas.join(', ')}`);
+    const contextos = s.contextos as string[] | undefined;
+    if (contextos?.length) linhas.push(`Contextos: ${contextos.join(', ')}`);
 
     const farmacosEmUso = s.farmacosEmUso as string[] | undefined;
     if (farmacosEmUso?.length) linhas.push(`Fármacos em uso: ${farmacosEmUso.join(', ')}`);
     const produtosEmUso = s.produtosEmUso as string[] | undefined;
     if (produtosEmUso?.length) linhas.push(`Produtos em uso: ${produtosEmUso.join(', ')}`);
+    const infracoesEmUso = s.infracoesEmUso as string[] | undefined;
+    if (infracoesEmUso?.length) linhas.push(`Infrações marcadas: ${infracoesEmUso.join(', ')}`);
 
     return linhas.join('\n');
 });
@@ -53,13 +63,16 @@ const focoTexto = computed(() => {
     if (f.protocolos) linhas.push(`protocolos: ${f.protocolos.join(', ') || '—'}`);
     if (f.produtos) linhas.push(`produtos: ${f.produtos.join(', ') || '—'}`);
     if (f.culturas) linhas.push(`culturas: ${f.culturas.join(', ') || '—'}`);
+    if (f.infracoes) linhas.push(`infrações: ${f.infracoes.join(', ') || '—'}`);
+    if (f.lances) linhas.push(`lances: ${f.lances.join(', ') || '—'}`);
     return linhas.join('\n');
 });
 
-// Campos de 1o nivel do plano/missao (ver PlanCommand/MissionCommand em
-// dsl.langium e agrodrone.langium) e os sub-campos de cada ordem/aplicacao/alerta.
-const CAMPOS_TOPO = ['esquema_referencia', 'paciente', 'talhao', 'sequencia', 'ordem', 'aplicacao', 'alerta', 'auditoria'];
-const CAMPOS_SUB = ['decisao', 'dose', 'vazao', 'via', 'modo', 'justificativa', 'regra'];
+// Campos de 1o nivel do plano/missao/arbitragem (ver PlanCommand/MissionCommand/
+// DecisionCommand em dsl.langium, agrodrone.langium e futebol.langium) e os
+// sub-campos de cada ordem/aplicacao/marcacao/alerta.
+const CAMPOS_TOPO = ['esquema_referencia', 'paciente', 'talhao', 'partida', 'sequencia', 'ordem', 'aplicacao', 'marcacao', 'alerta', 'auditoria'];
+const CAMPOS_SUB = ['decisao', 'dose', 'vazao', 'minuto', 'via', 'modo', 'reinicio', 'justificativa', 'regra'];
 
 /**
  * O motor devolve o plano/missao numa unica linha (a gramatica so garante a
@@ -90,12 +103,23 @@ function formatarPlano(bruto: string | undefined): string {
 
 const planoFormatado = computed(() => formatarPlano(props.mensagem.resposta?.resultado));
 
+const NOME_DOMINIO: Record<'med' | 'agro' | 'fut', string> = {
+    med: 'Clinico (UTI)',
+    agro: 'Agricola (drone)',
+    fut: 'Arbitragem (futebol)'
+};
+const NOME_SAIDA: Record<'med' | 'agro' | 'fut', string> = {
+    med: 'Plano gerado',
+    agro: 'Missão gerada',
+    fut: 'Decisão gerada'
+};
+
 function baixar(): void {
     const r = props.mensagem.resposta;
     if (!r) return;
 
     const linhas: string[] = [];
-    linhas.push(`Dominio: ${props.mensagem.dominio === 'med' ? 'Clinico (UTI)' : 'Agricola (drone)'}`);
+    linhas.push(`Dominio: ${NOME_DOMINIO[props.mensagem.dominio]}`);
     linhas.push('');
     if (dadosTelemetriaTexto.value) {
         linhas.push('=== DADOS TELEMETRICOS ===');
@@ -227,7 +251,7 @@ function baixar(): void {
                         </details>
 
                         <details
-                            v-if="foco && (foco.farmacos?.length || foco.protocolos?.length || foco.produtos?.length || foco.culturas?.length)"
+                            v-if="foco && (foco.farmacos?.length || foco.protocolos?.length || foco.produtos?.length || foco.culturas?.length || foco.infracoes?.length || foco.lances?.length)"
                             class="group mb-2.5 rounded-2xl border border-neutral-200 px-4 py-2.5 dark:border-white/10 dark:bg-white/5 dark:backdrop-blur-md"
                         >
                             <summary class="flex cursor-pointer items-center justify-between gap-2 text-sm font-medium text-neutral-500 dark:text-neutral-400">
@@ -243,10 +267,12 @@ function baixar(): void {
                             <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400" v-if="foco.protocolos">protocolos: {{ foco.protocolos.join(', ') || '—' }}</p>
                             <p class="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400" v-if="foco.produtos">produtos: {{ foco.produtos.join(', ') || '—' }}</p>
                             <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400" v-if="foco.culturas">culturas: {{ foco.culturas.join(', ') || '—' }}</p>
+                            <p class="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400" v-if="foco.infracoes">infrações: {{ foco.infracoes.join(', ') || '—' }}</p>
+                            <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400" v-if="foco.lances">lances: {{ foco.lances.join(', ') || '—' }}</p>
                         </details>
 
                         <div class="mt-2 mb-1 flex items-center justify-between">
-                            <span class="text-sm font-medium text-neutral-500 dark:text-neutral-400">{{ mensagem.dominio === 'med' ? 'Plano gerado' : 'Missão gerada' }}</span>
+                            <span class="text-sm font-medium text-neutral-500 dark:text-neutral-400">{{ NOME_SAIDA[mensagem.dominio] }}</span>
                             <CopyButton :texto="planoFormatado" />
                         </div>
                         <pre class="mb-2 overflow-x-auto whitespace-pre-wrap break-words rounded-2xl border border-neutral-200 bg-neutral-50 p-4 font-mono text-[13px] leading-relaxed text-neutral-800 dark:border-white/10 dark:bg-black/20 dark:text-neutral-200 dark:shadow-lg dark:shadow-black/10 dark:backdrop-blur-md">{{ planoFormatado }}</pre>

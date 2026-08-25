@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Dominio } from '../api';
+import DomainIcon from './DomainIcon.vue';
 
 defineProps<{
     aberto: boolean;
@@ -26,11 +27,16 @@ const emit = defineEmits<{
                 v-for="d in dominios"
                 :key="d.id"
                 type="button"
-                class="flex w-full flex-col items-start gap-0.5 rounded-xl px-3 py-2.5 text-left hover:bg-neutral-100 dark:hover:bg-white/10"
+                class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left hover:bg-neutral-100 dark:hover:bg-white/10"
                 @click="emit('selecionar', d.id)"
             >
-                <span class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ d.nome }}</span>
-                <span class="text-xs text-neutral-500 dark:text-neutral-400">{{ d.descricao }}</span>
+                <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-300">
+                    <DomainIcon :id="d.id" :size="15" />
+                </span>
+                <span class="flex min-w-0 flex-col items-start gap-0.5">
+                    <span class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ d.nome }}</span>
+                    <span class="text-xs text-neutral-500 dark:text-neutral-400">{{ d.descricao }}</span>
+                </span>
             </button>
         </div>
     </div>

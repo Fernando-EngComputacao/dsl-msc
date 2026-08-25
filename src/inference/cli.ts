@@ -50,6 +50,20 @@ import {
     rodarLote as rodarLoteAgro
 } from './agro-client.js';
 
+import { loadFutModel } from '../database/neo4j-fut.js';
+import {
+    retrieveFutConstraints,
+    futPruningPayload,
+    retrieverFocoFut,
+    filtrarPorFocoFut,
+    type FutContext
+} from '../knowledge/graphrag-fut.js';
+import {
+    montarPromptSemanticoFut,
+    gerarArbitragemRestrita,
+    rodarLote as rodarLoteFut
+} from './fut-client.js';
+
 const ENDPOINT = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
 const TIMEOUT_MS = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600_000);
 
@@ -281,6 +295,82 @@ async function loopDigitarAgro(
     }
 }
 
+interface PerfilPartida {
+    partida: string;
+    contextos: string[];
+    infracoesEmUso: string[];
+}
+
+interface AmostraLeituraPartida {
+    telemetria: Record<string, number>;
+}
+
+/**
+ * Sorteia partida e leitura de partida de DOIS pools independentes (400 linhas
+ * cada), espelhando `sortearContextoUti`/`sortearContextoAgro`: a fala digitada
+ * no terminal nao vem com uma leitura de partida atras dela, e "qual e a
+ * partida" e "o que o placar/relogio mostram agora" sao independentes entre si.
+ */
+function sortearContextoFut(partidasPath: string, telemetriaPath: string): Omit<FutContext, 'intencao'> {
+    const partida = linhaAleatoria<PerfilPartida>(partidasPath);
+    const { telemetria } = linhaAleatoria<AmostraLeituraPartida>(telemetriaPath);
+    return { ...partida, telemetria };
+}
+
+async function loopDigitarFut(
+    rl: readline.Interface,
+    model: Awaited<ReturnType<typeof loadFutModel>>,
+    session: Session,
+    partidasPath: string,
+    telemetriaPath: string
+): Promise<void> {
+    while (true) {
+        const texto = await digitarComandoValido(rl);
+        if (texto === null) return;
+
+        const sorteio = sortearContextoFut(partidasPath, telemetriaPath);
+        const contexto: FutContext = { ...sorteio, intencao: texto };
+        console.log(
+            `\nPartida sorteada: ${contexto.partida ?? 's/ id'} — ` +
+                Object.entries(contexto.telemetria)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join('  ')
+        );
+
+        let constraints = retrieveFutConstraints(model, contexto);
+
+        try {
+            const foco = await retrieverFocoFut(session, texto);
+            constraints = filtrarPorFocoFut(constraints, foco);
+            console.log(
+                `\nFoco recuperado por embedding: infracoes [${[...foco.infracoes].join(', ')}], ` +
+                    `lances [${[...foco.lances].join(', ')}]`
+            );
+        } catch (error) {
+            console.log(
+                `\n(recuperacao por embedding indisponivel — usando o grafo completo: ${(error as Error).message})`
+            );
+        }
+
+        const poda = futPruningPayload(constraints);
+
+        console.log('\n=== PROMPT SEMANTICO (recuperado do grafo) ===');
+        console.log(montarPromptSemanticoFut(constraints));
+        console.log(`\ndecisoes admissiveis apos a poda: ${poda.acoes_permitidas.join(', ')}`);
+
+        try {
+            const resposta = await gerarArbitragemRestrita(contexto, constraints);
+            console.log(
+                `\nDecisao gerada (valido: ${resposta.valido}, ${resposta.regras_em_g_hat} regras em G_hat):`
+            );
+            console.log(resposta.resultado);
+            if (resposta.erro) console.log(`Erro reportado: ${resposta.erro}`);
+        } catch (error) {
+            console.log(`\nMotor indisponivel: ${(error as Error).message}`);
+        }
+    }
+}
+
 function abrirDriverNeo4j(): Driver {
     return neo4j.driver(
         process.env.NEO4J_URI ?? 'bolt://localhost:7687',
@@ -294,7 +384,8 @@ async function main(): Promise<void> {
     try {
         const dominio = await perguntar(rl, 'Dominio:', [
             'Agricola (pulverizacao por drone)',
-            'Clinico (UTI)'
+            'Clinico (UTI)',
+            'Arbitragem (futebol)'
         ]);
 
         if (dominio === 1) {
@@ -319,7 +410,7 @@ async function main(): Promise<void> {
                     path.join('src', 'examples', 'agro', 'sensores.jsonl')
                 );
             }
-        } else {
+        } else if (dominio === 2) {
             const fonte = await perguntar(rl, 'Fonte:', [
                 'Rodar os cenarios prontos do arquivo (5 casos curados)',
                 'Rodar a bateria de 500 casos',
@@ -339,6 +430,25 @@ async function main(): Promise<void> {
                     driver.session(),
                     path.join('src', 'examples', 'med', 'pacientes.jsonl'),
                     path.join('src', 'examples', 'med', 'telemetrias.jsonl')
+                );
+            }
+        } else {
+            const fonte = await perguntar(rl, 'Fonte:', [
+                'Rodar os cenarios prontos do arquivo (5 casos curados)',
+                'Digitar um comando novo'
+            ]);
+            const modelPath = path.join('src', 'examples', 'fut', 'futebol.fut');
+            if (fonte === 1) {
+                await rodarLoteFut(path.join('src', 'examples', 'fut', 'cenarios-fut.jsonl'), modelPath);
+            } else {
+                const model = await loadFutModel(modelPath);
+                driver = abrirDriverNeo4j();
+                await loopDigitarFut(
+                    rl,
+                    model,
+                    driver.session(),
+                    path.join('src', 'examples', 'fut', 'partidas.jsonl'),
+                    path.join('src', 'examples', 'fut', 'telemetria.jsonl')
                 );
             }
         }

@@ -31,7 +31,7 @@ export interface LoteEstado {
 export interface Mensagem {
     id: number;
     autor: 'usuario' | 'assistente' | 'sistema' | 'lote';
-    dominio: 'med' | 'agro';
+    dominio: 'med' | 'agro' | 'fut';
     texto?: string;
     carregando?: boolean;
     estagio?: string;

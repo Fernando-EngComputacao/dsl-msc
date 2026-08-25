@@ -3,16 +3,31 @@ Monta o prompt de grammar prompting: (x_i, G[y_i], y_i) para cada exemplo + x de
 No SPC-CML, o Prompt Semantico vindo do GraphRAG entra como bloco de contexto factual.
 """
 import json
+import os
 
 # No grammar prompting original (Wang et al., 2023) o LLM primeiro PREDIZ G[y] e
 # so entao gera y. No SPC-CML essa etapa nao cabe ao modelo: G_hat vem da poda no
 # Grafo de Conhecimento — e essa substituicao e a contribuicao da arquitetura.
-# Pedir as regras aqui contradiz a mascara, que so admite um plano (root ::= plano):
-# o modelo tentava escrever o separador "plano baseado nas regras BNF:" e a
-# gramatica o espremia dentro do identificador. As regras sao dadas, nao pedidas.
-INSTRUCAO = """Voce e um sistema medico especializado na UTI.
+# Pedir as regras aqui contradiz a mascara, que so admite uma saida (root ::=
+# plano/missao/arbitragem): o modelo tentava escrever o separador "plano baseado
+# nas regras BNF:" e a gramatica o espremia dentro do identificador. As regras
+# sao dadas, nao pedidas.
+#
+# A persona muda por dominio (SPC_CML_DOMINIO, ver main.py): sem isso, o modelo
+# de arbitragem seria instruido como se fosse um sistema medico, o que degrada a
+# qualidade da geracao mesmo sob mascaramento de logits.
+_INSTRUCOES = {
+    "medico": """Voce e um sistema medico especializado na UTI.
 As regras BNF aplicaveis ja foram recuperadas do grafo e sao dadas a seguir.
-Escreva apenas o plano que obedece exatamente a essas regras. Nao escreva mais nada."""
+Escreva apenas o plano que obedece exatamente a essas regras. Nao escreva mais nada.""",
+    "agro": """Voce e um sistema agronomico especializado em pulverizacao aerea por drone.
+As regras BNF aplicaveis ja foram recuperadas do grafo e sao dadas a seguir.
+Escreva apenas a missao que obedece exatamente a essas regras. Nao escreva mais nada.""",
+    "fut": """Voce e um sistema de apoio a arbitragem de futebol.
+As regras BNF aplicaveis ja foram recuperadas do grafo e sao dadas a seguir.
+Escreva apenas a arbitragem que obedece exatamente a essas regras. Nao escreva mais nada.""",
+}
+INSTRUCAO = _INSTRUCOES.get(os.environ.get("SPC_CML_DOMINIO", "medico"), _INSTRUCOES["medico"])
 
 
 def bloco_exemplo(x: str, gy: str, y: str, contexto: str | None = None) -> str:

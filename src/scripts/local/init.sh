@@ -11,20 +11,21 @@
 #   Neo4j (apenas verifica)     bolt://localhost:7687
 #   motor Python  medico        http://127.0.0.1:8000
 #   motor Python  agro          http://127.0.0.1:8001
+#   motor Python  fut           http://127.0.0.1:8002
 #   API web (node:http)         http://localhost:4000
 #   chat Vue (vite)             http://localhost:5173
 #
-# Sao DOIS motores porque main.py fixa a gramatica na importacao do modulo
-# (SPC_CML_DOMINIO): os dois dominios que o chat oferece lado a lado nao cabem
+# Sao TRES motores porque main.py fixa a gramatica na importacao do modulo
+# (SPC_CML_DOMINIO): os tres dominios que o chat oferece lado a lado nao cabem
 # num processo so. server.ts escolhe o endpoint por dominio via
-# SPC_CML_ENDPOINT_AGRO. Os pesos sao os mesmos arquivos GGUF nos dois
-# processos, e o llama.cpp os mapeia com mmap — as paginas do modelo sao
-# compartilhadas pelo cache do SO, entao o custo de RAM nao dobra.
+# SPC_CML_ENDPOINT_AGRO / SPC_CML_ENDPOINT_FUT. Os pesos sao os mesmos arquivos
+# GGUF nos tres processos, e o llama.cpp os mapeia com mmap — as paginas do
+# modelo sao compartilhadas pelo cache do SO, entao o custo de RAM nao triplica.
 #
 # Ficam ativos ao final tambem para servir de base aos deploys em lote: depois
-# deste script, "bash src/scripts/local/deploy-med.sh" ou "deploy-agro.sh"
-# encontram o motor do dominio certo ja no ar (subir_motor detecta e nao
-# reinicia) e vao direto para a inferencia em lote.
+# deste script, "bash src/scripts/local/deploy-med.sh", "deploy-agro.sh" ou
+# "deploy-fut.sh" encontram o motor do dominio certo ja no ar (subir_motor
+# detecta e nao reinicia) e vao direto para a inferencia em lote.
 #
 # Uso (a partir de qualquer diretorio):
 #   bash src/scripts/local/init.sh                sobe tudo e deixa os modelos quentes
@@ -43,11 +44,13 @@ PY="venv/Scripts/python.exe"
 
 PORTA_MED=8000
 PORTA_AGRO=8001
+PORTA_FUT=8002
 PORTA_API="${SPC_CML_WEB_PORT:-4000}"
 PORTA_CHAT=5173
 
 URL_MED="http://127.0.0.1:$PORTA_MED"
 URL_AGRO="http://127.0.0.1:$PORTA_AGRO"
+URL_FUT="http://127.0.0.1:$PORTA_FUT"
 
 sincronizar=1
 subir_chat=1
@@ -172,7 +175,9 @@ npx --yes tsx src/cli/export-bnf.ts src/examples/med/uti.dsl \
     src/python_engine/grammar/advanced_icu.bnf > /dev/null
 npx --yes tsx src/cli/export-bnf-agro.ts src/examples/agro/lavoura.agro \
     src/python_engine/grammar/agro_drone.bnf > /dev/null
-echo "   ✅ advanced_icu.bnf e agro_drone.bnf"
+npx --yes tsx src/cli/export-bnf-fut.ts src/examples/fut/futebol.fut \
+    src/python_engine/grammar/futebol.bnf > /dev/null
+echo "   ✅ advanced_icu.bnf, agro_drone.bnf e futebol.bnf"
 
 # ---------------------------------------------------------------- 4. motores
 subir_motor_local() {
@@ -220,6 +225,7 @@ subir_motor_local() {
 echo "[4/7] 🐍 Subindo os motores Python..."
 subir_motor_local medico "$PORTA_MED" "$URL_MED"
 subir_motor_local agro "$PORTA_AGRO" "$URL_AGRO"
+subir_motor_local fut "$PORTA_FUT" "$URL_FUT"
 
 # ---------------------------------------------------------------- 5. aquecimento
 # Uma unica chamada a /embed materializa os DOIS modelos: get_embedder carrega o
@@ -240,6 +246,7 @@ aquecer() {
 echo "[5/7] 🧠 Aquecendo os modelos (1a carga: pode levar minutos)..."
 aquecer "$URL_MED" "medico"
 aquecer "$URL_AGRO" "agro"
+aquecer "$URL_FUT" "fut"
 
 # ---------------------------------------------------------------- 6. grafos
 # Depois do aquecimento, e nao antes: a sincronizacao embute cada no chamando
@@ -248,6 +255,7 @@ if [ "$sincronizar" -eq 1 ]; then
     echo "[6/7] 🕸️  Sincronizando os grafos no Neo4j (com vetores)..."
     npx --yes tsx src/database/neo4j.ts src/examples/med/uti.dsl
     npx --yes tsx src/database/neo4j-agro.ts src/examples/agro/lavoura.agro
+    npx --yes tsx src/database/neo4j-fut.ts src/examples/fut/futebol.fut
 else
     echo "[6/7] ⏭️  Sincronizacao do grafo pulada (--sem-sync)"
 fi
@@ -260,6 +268,7 @@ if http_ok "http://127.0.0.1:$PORTA_API/api/health"; then
 else
     SPC_CML_ENDPOINT="$URL_MED" \
     SPC_CML_ENDPOINT_AGRO="$URL_AGRO" \
+    SPC_CML_ENDPOINT_FUT="$URL_FUT" \
     SPC_CML_WEB_PORT="$PORTA_API" \
         npx --yes tsx src/web/server.ts > "$EXEC_DIR/web-api.log" 2>&1 &
     echo $! > "$EXEC_DIR/web-api.pid"
@@ -311,9 +320,10 @@ echo "   Chat            http://localhost:$PORTA_CHAT"
 echo "   API             http://localhost:$PORTA_API/api/health"
 echo "   Motor medico    $URL_MED/health"
 echo "   Motor agro      $URL_AGRO/health"
+echo "   Motor fut       $URL_FUT/health"
 echo "   Neo4j Browser   http://localhost:7474"
 echo
 echo "   Logs            $EXEC_DIR/*.log"
-echo "   Deploy em lote   bash src/scripts/local/deploy-med.sh  |  deploy-agro.sh"
+echo "   Deploy em lote   bash src/scripts/local/deploy-med.sh  |  deploy-agro.sh  |  deploy-fut.sh"
 echo "   Derrubar tudo    bash src/scripts/local/init.sh --parar"
 echo "===================================================="

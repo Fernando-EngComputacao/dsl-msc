@@ -16,6 +16,14 @@
       "textMate": {
         "out": "syntaxes/agro.tmLanguage.json"
       }
+    },
+    {
+      "id": "fut",
+      "grammar": "src/language/futebol.langium",
+      "fileExtensions": [".fut"],
+      "textMate": {
+        "out": "syntaxes/fut.tmLanguage.json"
+      }
     }
   ],
   "out": "src/generated"

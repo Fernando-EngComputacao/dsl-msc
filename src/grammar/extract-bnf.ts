@@ -40,10 +40,10 @@ import { GrammarAST, type Grammar } from 'langium';
 /**
  * Regras de parser da DSL -> nao-terminais da BNF de saida.
  *
- * As duas DSLs (clinica e agricola) compartilham este extrator: os nomes comuns
- * — AlertStmt, Quantity, Decision, AlertLevel, Unit — sao deliberadamente iguais
- * nas duas gramaticas, e os especificos nao colidem porque cada dominio e
- * extraido a partir do seu proprio objeto Grammar.
+ * As tres DSLs (clinica, agricola e de arbitragem) compartilham este extrator:
+ * os nomes comuns — AlertStmt, Quantity, Decision, AlertLevel, Unit — sao
+ * deliberadamente iguais nas tres gramaticas, e os especificos nao colidem
+ * porque cada dominio e extraido a partir do seu proprio objeto Grammar.
  */
 const RULE_ALIAS: Record<string, string> = {
     // dominio clinico
@@ -54,7 +54,11 @@ const RULE_ALIAS: Record<string, string> = {
     MissionCommand: 'missao',
     ApplicationStmt: 'aplicacao',
     SprayMode: 'modo',
-    // comuns aos dois
+    // dominio de arbitragem
+    DecisionCommand: 'arbitragem',
+    MarkingStmt: 'marcacao',
+    Restart: 'reinicio',
+    // comuns aos tres
     AlertStmt: 'alerta',
     Quantity: 'quantidade',
     Decision: 'decisao',
@@ -72,7 +76,12 @@ const XREF_ALIAS: Record<string, string> = {
     CultureDef: 'cultura',
     AgroConductDef: 'conduta',
     AgroSchemaDef: 'esquema',
-    // comuns aos dois
+    // dominio de arbitragem
+    InfractionDef: 'infracao',
+    SituationDef: 'lance',
+    FutSchemaDef: 'esquema',
+    FutConductDef: 'conduta',
+    // comuns aos tres
     ConductDef: 'conduta',
     DataSchemaDef: 'esquema'
 };

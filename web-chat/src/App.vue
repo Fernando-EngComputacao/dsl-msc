@@ -21,7 +21,7 @@ import { escuro, iniciarTema, alternarTema } from "./theme";
 import logoUfg from "./assets/imgs/logo_ufg.png";
 
 const dominios = ref<Dominio[]>([]);
-const dominioAtual = ref<"med" | "agro">("med");
+const dominioAtual = ref<"med" | "agro" | "fut">("med");
 const erroCarregamento = ref<string | null>(null);
 
 const mensagens = ref<Mensagem[]>([]);
@@ -32,7 +32,7 @@ let proximoId = 1;
 
 const controladorAtual = ref<AbortController | null>(null);
 const modalTrocaAberto = ref(false);
-const dominioPendente = ref<"med" | "agro" | null>(null);
+const dominioPendente = ref<"med" | "agro" | "fut" | null>(null);
 
 const chatIdAtual = ref<string | null>(null);
 const sidebarAberta = ref(
@@ -45,13 +45,13 @@ const loteAtivo = ref(false);
 const loteControlador = ref<AbortController | null>(null);
 const modalPararLoteAberto = ref(false);
 const modalEscolherModeloLoteAberto = ref(false);
-const dominioLoteSelecionado = ref<"med" | "agro" | null>(null);
+const dominioLoteSelecionado = ref<"med" | "agro" | "fut" | null>(null);
 
-function nomeDominio(id: "med" | "agro"): string {
+function nomeDominio(id: "med" | "agro" | "fut"): string {
   return dominios.value.find((d) => d.id === id)?.nome ?? id;
 }
 
-const SUGESTOES: Record<"med" | "agro", string[]> = {
+const SUGESTOES: Record<"med" | "agro" | "fut", string[]> = {
   med: [
     "A pressão caiu, PAM 52. Sobe a noradrenalina.",
     "Paciente agitado no ventilador, aumenta a sedação.",
@@ -61,6 +61,11 @@ const SUGESTOES: Record<"med" | "agro", string[]> = {
     "Vento forte mas a janela fecha hoje, manda o glifosato na soja.",
     "NDVI despencou e o talhão fica perto do córrego. Aplica atrazina?",
     "A cana tá com a folha fervendo, começa o imidacloprido.",
+  ],
+  fut: [
+    "O zagueiro chegou atrasado e bateu na canela do atacante dentro da área, marca o pênalti!",
+    "O jogador já tem amarelo e entrou forte de novo, dá a segunda amarela.",
+    "O atacante saiu na cara do gol mas tava impedido antes do passe, anula o gol.",
   ],
 };
 
@@ -198,7 +203,7 @@ function aoTeclar(evento: KeyboardEvent): void {
 }
 
 /** Aplica a troca de dominio de fato: atualiza o estado e anuncia na conversa. */
-function trocarDominio(novo: "med" | "agro"): void {
+function trocarDominio(novo: "med" | "agro" | "fut"): void {
   dominioAtual.value = novo;
   if (mensagens.value.length > 0) {
     mensagens.value.push({
@@ -214,7 +219,7 @@ function trocarDominio(novo: "med" | "agro"): void {
 
 /** Handler do DomainPicker: so troca na hora se nao houver nada em andamento. */
 function aoEscolherDominio(novo: string): void {
-  const alvo = novo as "med" | "agro";
+  const alvo = novo as "med" | "agro" | "fut";
   if (alvo === dominioAtual.value) return;
 
   if (enviando.value || loteAtivo.value) {
@@ -262,7 +267,7 @@ function abrirSeletorArquivo(): void {
 
 function escolherModeloLote(id: string): void {
   modalEscolherModeloLoteAberto.value = false;
-  const dominio = id as "med" | "agro";
+  const dominio = id as "med" | "agro" | "fut";
   dominioLoteSelecionado.value = dominio;
   if (dominio !== dominioAtual.value) trocarDominio(dominio);
   inputArquivoLote.value?.click();
@@ -320,7 +325,7 @@ async function aoSelecionarArquivo(evento: Event): Promise<void> {
 async function rodarLote(
   cenarios: CenarioLote[],
   idLote: number,
-  dominio: "med" | "agro",
+  dominio: "med" | "agro" | "fut",
 ): Promise<void> {
   const msg = mensagens.value.find((m) => m.id === idLote);
   if (!msg?.lote) return;

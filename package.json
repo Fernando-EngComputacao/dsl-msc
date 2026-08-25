@@ -21,13 +21,19 @@
     "graph:sync:agro": "tsx src/database/neo4j-agro.ts",
     "batch:agro": "tsx src/inference/agro-client.ts",
 
+    "bnf:export:fut": "tsx src/cli/export-bnf-fut.ts",
+    "graph:sync:fut": "tsx src/database/neo4j-fut.ts",
+    "batch:fut": "tsx src/inference/fut-client.ts",
+
     "start": "tsx src/inference/cli.ts",
     "web:api": "tsx src/web/server.ts",
 
     "deploy:med": "bash src/scripts/local/deploy-med.sh",
     "deploy:agro": "bash src/scripts/local/deploy-agro.sh",
+    "deploy:fut": "bash src/scripts/local/deploy-fut.sh",
     "deploy:docker:med": "bash src/scripts/docker/deploy-docker-med.sh",
     "deploy:docker:agro": "bash src/scripts/docker/deploy-docker-agro.sh",
+    "deploy:docker:fut": "bash src/scripts/docker/deploy-docker-fut.sh",
 
     "test:model": "tsx src/test/test.ts",
     "test:earley": "tsx src/test/earley.test.ts",

@@ -7,7 +7,7 @@
 # deteccao de uvicorn morto e aviso de carga preguicosa do modelo. Duplicar isso
 # faria as correcoes divergirem no primeiro ajuste.
 #
-# Uso:  subir_motor <dominio>      # dominio: medico | agro
+# Uso:  subir_motor <dominio>      # dominio: medico | agro | fut
 
 API="${SPC_CML_ENDPOINT:-http://127.0.0.1:8000}"
 PID_FILE="src/python_engine/uvicorn.pid"
@@ -60,7 +60,12 @@ subir_motor() {
         echo
         echo "   Ou ative o venv local (README secao 6.5), ou rode via Docker:"
         echo
-        echo "       bash src/scripts/docker/deploy-docker-$([ "$dominio" = medico ] && echo med || echo agro).sh"
+        local script_dominio
+        case "$dominio" in
+            medico) script_dominio=med ;;
+            *) script_dominio="$dominio" ;;
+        esac
+        echo "       bash src/scripts/docker/deploy-docker-$script_dominio.sh"
         echo
         exit 1
     fi

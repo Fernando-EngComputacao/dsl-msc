@@ -33,16 +33,18 @@ from grammar_from_kg import gramatica_do_subgrafo  # noqa: E402
 from prompt_builder import carregar_exemplos, montar_prompt  # noqa: E402
 
 # O dominio e escolhido na subida do servico. A gramatica e os exemplares mudam;
-# a maquinaria (poda, mascaramento, verificacao) e a mesma nos dois — e essa
+# a maquinaria (poda, mascaramento, verificacao) e a mesma nos tres — e essa
 # indiferenca ao dominio e o que sustenta a generalidade da arquitetura.
 DOMINIO = os.environ.get("SPC_CML_DOMINIO", "medico")
 _GRAMATICA_PADRAO = {
     "medico": "advanced_icu.bnf",
     "agro": "agro_drone.bnf",
+    "fut": "futebol.bnf",
 }.get(DOMINIO, "advanced_icu.bnf")
 _EXEMPLOS_PADRAO = {
     "medico": "exemplos_icu.jsonl",
     "agro": "exemplos_agro.jsonl",
+    "fut": "exemplos_fut.jsonl",
 }.get(DOMINIO, "exemplos_icu.jsonl")
 
 GRAMMAR_PATH = os.environ.get(
@@ -52,8 +54,10 @@ EXAMPLES_PATH = os.environ.get(
     "SPC_CML_EXAMPLES", os.path.join(BASE_DIR, "data", _EXEMPLOS_PADRAO)
 )
 
-# A regra inicial da BNF: `plano` na DSL clinica, `missao` na agricola.
-INICIO = os.environ.get("SPC_CML_INICIO", "missao" if DOMINIO == "agro" else "plano")
+# A regra inicial da BNF: `plano` na DSL clinica, `missao` na agricola,
+# `arbitragem` na de futebol.
+_INICIO_PADRAO = {"agro": "missao", "fut": "arbitragem"}.get(DOMINIO, "plano")
+INICIO = os.environ.get("SPC_CML_INICIO", _INICIO_PADRAO)
 MODEL_ID = os.environ.get("SPC_CML_MODEL", "Qwen/Qwen2.5-7B-Instruct")
 
 # Backend de decodificacao restrita. Os dois mascaram logits sobre a MESMA

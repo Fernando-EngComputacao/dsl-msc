@@ -90,9 +90,9 @@ function parseLinhasCsv(conteudo: string): string[][] {
     return linhas.filter(l => l.length > 1 || (l[0]?.trim().length ?? 0) > 0);
 }
 
-const COLUNA_ID: Record<'med' | 'agro', string> = { med: 'paciente', agro: 'talhao' };
-const COLUNA_LISTA1: Record<'med' | 'agro', string> = { med: 'populacoes', agro: 'areas' };
-const COLUNA_LISTA2: Record<'med' | 'agro', string> = { med: 'farmacosEmUso', agro: 'produtosEmUso' };
+const COLUNA_ID: Record<'med' | 'agro' | 'fut', string> = { med: 'paciente', agro: 'talhao', fut: 'partida' };
+const COLUNA_LISTA1: Record<'med' | 'agro' | 'fut', string> = { med: 'populacoes', agro: 'areas', fut: 'contextos' };
+const COLUNA_LISTA2: Record<'med' | 'agro' | 'fut', string> = { med: 'farmacosEmUso', agro: 'produtosEmUso', fut: 'infracoesEmUso' };
 
 /**
  * Colunas reservadas: intencao, a coluna de identificação (talhao/paciente) e as
@@ -100,7 +100,7 @@ const COLUNA_LISTA2: Record<'med' | 'agro', string> = { med: 'farmacosEmUso', ag
  * coluna vira um campo numérico de telemetria — não há um esquema fixo de
  * telemetria porque ele depende do modelo DSL carregado.
  */
-export function parseCsv(conteudo: string, dominio: 'med' | 'agro'): CenarioLote[] {
+export function parseCsv(conteudo: string, dominio: 'med' | 'agro' | 'fut'): CenarioLote[] {
     const linhas = parseLinhasCsv(conteudo);
     if (linhas.length < 2) throw new Error('CSV vazio ou sem linhas de dados');
 
@@ -139,7 +139,7 @@ export function parseCsv(conteudo: string, dominio: 'med' | 'agro'): CenarioLote
     });
 }
 
-export function parseArquivoLote(nome: string, conteudo: string, dominio: 'med' | 'agro'): CenarioLote[] {
+export function parseArquivoLote(nome: string, conteudo: string, dominio: 'med' | 'agro' | 'fut'): CenarioLote[] {
     const nomeMin = nome.toLowerCase();
     let cenarios: CenarioLote[];
     if (nomeMin.endsWith('.jsonl')) cenarios = parseJsonl(conteudo);

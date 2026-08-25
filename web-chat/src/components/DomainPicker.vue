@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import type { Dominio } from '../api';
+import DomainIcon from './DomainIcon.vue';
 
 const props = defineProps<{
     dominios: Dominio[];
@@ -18,9 +19,7 @@ function selecionar(id: string): void {
     aberto.value = false;
 }
 
-function atual(): Dominio | undefined {
-    return props.dominios.find(d => d.id === props.modelValue);
-}
+const atual = computed<Dominio | undefined>(() => props.dominios.find(d => d.id === props.modelValue));
 </script>
 
 <template>
@@ -31,7 +30,8 @@ function atual(): Dominio | undefined {
             @click="aberto = !aberto"
             :aria-expanded="aberto"
         >
-            <span class="max-w-[9rem] truncate sm:max-w-none">{{ atual()?.nome ?? 'Modelo' }}</span>
+            <DomainIcon v-if="atual" :id="atual.id" :size="14" class="shrink-0 text-neutral-500 dark:text-neutral-400" />
+            <span class="max-w-[9rem] truncate sm:max-w-none">{{ atual?.nome ?? 'Modelo' }}</span>
             <svg
                 width="16"
                 height="16"
@@ -53,12 +53,20 @@ function atual(): Dominio | undefined {
                 v-for="d in dominios"
                 :key="d.id"
                 type="button"
-                class="flex w-full flex-col items-start gap-0.5 rounded-xl px-3 py-2.5 text-left hover:bg-neutral-100 dark:hover:bg-white/10"
+                class="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left hover:bg-neutral-100 dark:hover:bg-white/10"
                 :class="d.id === modelValue ? 'bg-blue-50 dark:bg-blue-500/15' : ''"
                 @click="selecionar(d.id)"
             >
-                <span class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ d.nome }}</span>
-                <span class="text-xs text-neutral-500 dark:text-neutral-400">{{ d.descricao }}</span>
+                <span
+                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors"
+                    :class="d.id === modelValue ? 'bg-blue-600 text-white' : 'bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-300'"
+                >
+                    <DomainIcon :id="d.id" :size="15" />
+                </span>
+                <span class="flex min-w-0 flex-col items-start gap-0.5">
+                    <span class="text-sm font-medium text-neutral-900 dark:text-neutral-100">{{ d.nome }}</span>
+                    <span class="text-xs text-neutral-500 dark:text-neutral-400">{{ d.descricao }}</span>
+                </span>
             </button>
         </div>
     </div>

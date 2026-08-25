@@ -1,0 +1,30 @@
+# GRAMATICA G — Esquema de Dados da DSL de arbitragem (SPC-CML).
+# 
+# ARQUIVO GERADO AUTOMATICAMENTE — NAO EDITAR A MAO.
+# Gerado por: src/cli/export-bnf-fut.ts
+# Gramatica:  src/language/futebol.langium (regra DecisionCommand)
+# Modelo:     futebol.fut (esquema_dados AssistenteArbitragem_v1)
+# 
+# Infracoes citaveis: 10 | Condutas: 8 | Decisoes: 13 | Reinicios: 8
+# 
+# Toda alternativa desta gramatica corresponde a uma entidade declarada no
+# modelo do arbitro. O que nao esta aqui e inexprimivel pelo LLM.
+
+arbitragem_g1 ::= "," conduta
+arbitragem_g2 ::= marcacao
+arbitragem_g3 ::= alerta
+arbitragem ::= "arbitragem" identificador "para" lance "{" "esquema_referencia" esquema "partida" texto "sequencia" "[" conduta arbitragem_g1* "]" arbitragem_g2* arbitragem_g3* "auditoria" texto "}"
+marcacao ::= "marcacao" infracao "decisao" decisao "minuto" quantidade "reinicio" reinicio "justificativa" texto
+alerta ::= "alerta" nivel_alerta texto "regra" texto
+quantidade ::= numero unidade
+conduta ::= "Emitir_Advertencia_Verbal" | "Aplicar_Cartao_Amarelo" | "Aplicar_Cartao_Vermelho" | "Marcar_Penalti" | "Manter_Jogo" | "Acionar_Revisao_VAR" | "Anular_Gol" | "Bloquear_Decisao_Insegura"
+lance ::= "Penalti_Na_Area" | "Impedimento_Ataque" | "Conduta_Violenta_Jogo" | "Disputa_Bola_Dividida"
+esquema ::= "AssistenteArbitragem_v1"
+infracao ::= "Carga_Imprudente" | "Entrada_Violenta" | "Mao_Deliberada" | "Simulacao" | "Dissenso" | "Perda_Tempo" | "Impedimento" | "Contato_Goleiro_Area" | "Cusparada" | "Reincidencia_Amarelo"
+decisao ::= "ADVERTENCIA_VERBAL" | "CARTAO_AMARELO" | "CARTAO_VERMELHO" | "PENALTI" | "TIRO_LIVRE_DIRETO" | "TIRO_LIVRE_INDIRETO" | "MANTER_JOGO" | "PARALISAR_JOGO" | "ACIONAR_VAR" | "ANULAR_GOL" | "CONFIRMAR_GOL" | "EXPULSAR" | "BLOQUEAR_DECISAO"
+reinicio ::= "BOLA_AO_CHAO" | "TIRO_LIVRE_DIRETO" | "TIRO_LIVRE_INDIRETO" | "PENALTI" | "ESCANTEIO" | "TIRO_DE_META" | "ARREMESSO_LATERAL" | "SEM_PARALISACAO"
+nivel_alerta ::= "INFORMATIVO" | "ATENCAO" | "CRITICO" | "BLOQUEANTE"
+unidade ::= "m" | "partida" | "faltas" | "min" | "jogadores" | "cartoes"
+identificador ::= /[A-Za-z_][A-Za-z_0-9]*/
+texto ::= /'[^']*'/
+numero ::= /[0-9]+(\.[0-9]+)?/

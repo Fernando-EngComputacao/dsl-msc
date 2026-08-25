@@ -1,0 +1,71 @@
+{
+  "name": "fut",
+  "scopeName": "source.fut",
+  "fileTypes": [
+    ".fut"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "name": "keyword.control.fut",
+      "match": "\\b(ACIONAR_VAR|ADVERTENCIA_VERBAL|ANULAR_GOL|ARBITRO_ASSISTENTE|ARBITRO_PRINCIPAL|AREA_ADVERSARIA|AREA_PROPRIA|ARREMESSO_LATERAL|ATENCAO|BLOQUEANTE|BLOQUEAR_DECISAO|BOLA_AO_CHAO|CARTAO_AMARELO|CARTAO_VERMELHO|COMISSAO_DISCIPLINAR|CONFIRMAR_GOL|CRITICO|ESCANTEIO|EXPULSAR|INFORMATIVO|MANTER_JOGO|MEIO_CAMPO|NENHUM|PARALISAR_JOGO|PENALTI|QUARTO_ARBITRO|SEM_PARALISACAO|TIRO_DE_META|TIRO_LIVRE_DIRETO|TIRO_LIVRE_INDIRETO|ULTIMO_TERCO|VAR|a_cada|acrescimo|ajusta|alerta|alertas|alta|alvo|arbitragem|auditoria|bloquear_decisao|cartoes|cartoes_amarelos_jogador|classe|conduta|conduta_antidesportiva|contexto|criterio|decisao|decisoes|dissenso|distancia_bola|distancia_gol|distancia_ultimo_defensor|dogso|esquema_dados|esquema_referencia|etapa|excecao|exige|expulsao|falta_pessoal|falta_tecnica|faltas|faltas_acumuladas_time|fator|gols|gravidade|impedimento|indicacao|infracao|invasao_campo|jogadores|jogadores_entre_bola_e_gol|jogo_violento|justificativa|justificativa_obrigatoria|km/h|lance|lei_ifab|leve|m|mao_na_bola|marcacao|min|minuto|minuto_partida|mitigacao|moderada|motivo|nao|para|partida|perda_tempo|placar_diferenca|pontos|prazo|proibe|protocolo_ifab|reavaliar_em|recomenda|referencia|regra|reincidencia|reinicio|reinicios|requer_var|s|sancao|se|sequencia|severidade|sim|simulacao|tempo_revisao_var|toques|var_revisavel|velocidade_bola|veta)\\b|\\b(agravante:|confusao_comum:|desfecho:|escalonar:|gatilho:|isento:|limiar:|monitorar:|regra_global:|regra_seguranca:|zona_penal:)\\B"
+    },
+    {
+      "name": "string.quoted.double.fut",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "include": "#string-character-escape"
+        }
+      ]
+    },
+    {
+      "name": "string.quoted.single.fut",
+      "begin": "'",
+      "end": "'",
+      "patterns": [
+        {
+          "include": "#string-character-escape"
+        }
+      ]
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.fut",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.fut"
+            }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.fut"
+            }
+          }
+        },
+        {
+          "begin": "//",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.whitespace.comment.leading.fut"
+            }
+          },
+          "end": "(?=$)",
+          "name": "comment.line.fut"
+        }
+      ]
+    },
+    "string-character-escape": {
+      "name": "constant.character.escape.fut",
+      "match": "\\\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|u\\{[0-9A-Fa-f]+\\}|[0-2][0-7]{0,2}|3[0-6][0-7]?|37[0-7]?|[4-7][0-7]?|.|$)"
+    }
+  }
+}

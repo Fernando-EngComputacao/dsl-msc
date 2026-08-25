@@ -1,7 +1,7 @@
 import type { Mensagem } from './types';
 
 export interface Dominio {
-    id: 'med' | 'agro';
+    id: 'med' | 'agro' | 'fut';
     nome: string;
     descricao: string;
 }
@@ -9,7 +9,7 @@ export interface Dominio {
 export interface ChatResumo {
     id: string;
     titulo: string;
-    dominio: 'med' | 'agro';
+    dominio: 'med' | 'agro' | 'fut';
     criadoEm: string;
     atualizadoEm: string;
 }
@@ -56,7 +56,14 @@ export interface RespostaComando {
     aceito: boolean;
     motivoValidacao?: string;
     sorteio?: Record<string, unknown>;
-    foco?: { farmacos?: string[]; protocolos?: string[]; produtos?: string[]; culturas?: string[] } | null;
+    foco?: {
+        farmacos?: string[];
+        protocolos?: string[];
+        produtos?: string[];
+        culturas?: string[];
+        infracoes?: string[];
+        lances?: string[];
+    } | null;
     focoIndisponivel?: string;
     promptSemantico?: string;
     decisoesAdmissiveis?: string[];
@@ -88,7 +95,7 @@ export async function buscarChat(id: string): Promise<ChatCompleto> {
 }
 
 export async function avaliarResultados(
-    dominio: 'med' | 'agro',
+    dominio: 'med' | 'agro' | 'fut',
     arquiteturaJsonl?: string,
     baselineJsonl?: string
 ): Promise<RespostaAvaliacao> {
@@ -104,7 +111,7 @@ export async function avaliarResultados(
     return resp.json();
 }
 
-export async function criarChat(dominio: 'med' | 'agro', mensagens: Mensagem[]): Promise<ChatCompleto> {
+export async function criarChat(dominio: 'med' | 'agro' | 'fut', mensagens: Mensagem[]): Promise<ChatCompleto> {
     const resp = await fetch(`${BASE_URL}/api/chats`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -114,7 +121,7 @@ export async function criarChat(dominio: 'med' | 'agro', mensagens: Mensagem[]):
     return resp.json();
 }
 
-export async function atualizarChat(id: string, dominio: 'med' | 'agro', mensagens: Mensagem[]): Promise<ChatCompleto> {
+export async function atualizarChat(id: string, dominio: 'med' | 'agro' | 'fut', mensagens: Mensagem[]): Promise<ChatCompleto> {
     const resp = await fetch(`${BASE_URL}/api/chats/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

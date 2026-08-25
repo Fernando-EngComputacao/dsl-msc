@@ -16,8 +16,9 @@ from bnf import Rule
 #
 # O motor e agnostico de dominio: sao estes tres papeis — o que se decide, sobre
 # o que se decide, e por qual meio — que ele precisa conhecer. Cada DSL nomeia os
-# papeis a sua maneira (farmaco/via na clinica, produto/modo no agro) e ambas
-# convivem aqui, porque uma BNF so traz os nomes do seu proprio dominio.
+# papeis a sua maneira (farmaco/via na clinica, produto/modo no agro,
+# infracao/reinicio na arbitragem) e todas convivem aqui, porque uma BNF so traz
+# os nomes do seu proprio dominio.
 MAPA_PODA = {
     # dominio clinico (dsl.langium)
     "decisao": "acoes_permitidas",
@@ -26,6 +27,9 @@ MAPA_PODA = {
     # dominio agricola (agrodrone.langium)
     "produto": "farmacos_liberados",
     "modo": "vias_disponiveis",
+    # dominio de arbitragem (futebol.langium)
+    "infracao": "farmacos_liberados",
+    "reinicio": "vias_disponiveis",
     # compatibilidade com a BNF manual anterior
     "tipo_acao": "acoes_permitidas",
     "tipo_farmaco": "farmacos_liberados",

@@ -6,7 +6,8 @@ import ComparacaoLinhas from './ComparacaoLinhas.vue';
 
 const DOMINIOS = [
     { id: 'med' as const, nome: 'Clínico (UTI)', descricao: 'uti.dsl', icone: 'activity' as const },
-    { id: 'agro' as const, nome: 'Agrícola (drone)', descricao: 'lavoura.agro', icone: 'feather' as const }
+    { id: 'agro' as const, nome: 'Agrícola (drone)', descricao: 'lavoura.agro', icone: 'feather' as const },
+    { id: 'fut' as const, nome: 'Arbitragem (futebol)', descricao: 'futebol.fut', icone: 'flag' as const }
 ];
 
 const MODELOS = [
@@ -14,7 +15,7 @@ const MODELOS = [
     { chave: 'baseline' as const, nome: 'Baseline', descricao: 'Qwen puro, sem a arquitetura', icone: 'cpu' as const }
 ];
 
-const dominioSelecionado = ref<'med' | 'agro'>('med');
+const dominioSelecionado = ref<'med' | 'agro' | 'fut'>('med');
 const incluirArquitetura = ref(true);
 const incluirBaseline = ref(true);
 
@@ -53,7 +54,7 @@ const podeAvaliar = computed(() => {
     return true;
 });
 
-function alternarDominio(id: 'med' | 'agro'): void {
+function alternarDominio(id: 'med' | 'agro' | 'fut'): void {
     dominioSelecionado.value = id;
     resultado.value = null;
     erro.value = null;
@@ -141,10 +142,14 @@ async function avaliar(): Promise<void> {
                         <svg v-if="d.icone === 'activity'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
                         </svg>
-                        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg v-else-if="d.icone === 'feather'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M20.24 12.24a6 6 0 00-8.49-8.49L5 10.5V19h8.5z" />
                             <line x1="16" y1="8" x2="2" y2="22" />
                             <line x1="17.5" y1="15" x2="9" y2="15" />
+                        </svg>
+                        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+                            <line x1="4" y1="22" x2="4" y2="15" />
                         </svg>
                     </div>
                     <div class="min-w-0">
