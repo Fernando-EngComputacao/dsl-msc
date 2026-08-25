@@ -295,7 +295,7 @@ export function parseOrdensTexto(texto: string): OrdemEsperada[] {
     return ordens;
 }
 
-function textoGerado(registro: RegistroAvaliar): string {
+export function textoGerado(registro: RegistroAvaliar): string {
     return registro.plano ?? registro.resultado ?? '';
 }
 
@@ -312,7 +312,7 @@ function sintaxeEstruturalmenteOk(texto: string): boolean {
     return /decisao\s+[A-Z_]+/.test(texto);
 }
 
-function sintaxeOk(registro: RegistroAvaliar): boolean {
+export function sintaxeOk(registro: RegistroAvaliar): boolean {
     if (typeof registro.valido === 'boolean') return registro.valido;
     return sintaxeEstruturalmenteOk(textoGerado(registro));
 }

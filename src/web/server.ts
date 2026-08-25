@@ -54,7 +54,19 @@ import {
 } from '../knowledge/graphrag-fut.js';
 import { montarPromptSemanticoFut, gerarArbitragemRestrita } from '../inference/fut-client.js';
 
-import { compararDetalhado, type RegistroGroundTruth, type RegistroAvaliar } from '../inference/avaliar.js';
+import { textoGerado } from '../inference/avaliar.js';
+import {
+    detalheNaoAvaliado,
+    detalheJulgado,
+    agregarMetricas,
+    parearRegistros,
+    sinaisDe,
+    listaDe,
+    type RegistroAvaliarGrafo,
+    type DetalheLado,
+    type DetalheLinha,
+    type ResultadoAvaliacaoGrafo
+} from '../inference/avaliar-grafo.js';
 
 const ENGINE = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
 // Um motor por dominio: main.py fixa a gramatica na subida, e o chat oferece os
@@ -98,6 +110,44 @@ async function validarComando(comando: string, contextoNeo4j: string, motor: str
         throw new Error(`motor respondeu ${response.status}: ${await response.text()}`);
     }
     return (await response.json()) as ValidacaoResposta;
+}
+
+interface JulgamentoPlano {
+    correto: boolean;
+    motivo: string;
+}
+
+/** Julga um plano JÁ GERADO contra o Prompt Semântico recuperado do grafo para
+ *  o cenário dele — usado pela avaliação em lote (ver `avaliarComGrafo`), não
+ *  pelo fluxo de geração. `sinal` permite cancelar um julgamento em andamento
+ *  quando o usuário interrompe a avaliação (ver a rota /api/avaliar). */
+async function validarPlanoComGrafo(plano: string, contextoNeo4j: string, intencao: string, motor: string, sinal: AbortSignal): Promise<JulgamentoPlano> {
+    const timeout = AbortSignal.timeout(TIMEOUT_MS);
+    const combinado = new AbortController();
+    const abortar = (): void => combinado.abort();
+    timeout.addEventListener('abort', abortar);
+    sinal.addEventListener('abort', abortar);
+
+    let response: Response;
+    try {
+        response = await fetch(`${motor}/validar-plano`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plano, contexto_neo4j: contextoNeo4j, intencao }),
+            signal: combinado.signal
+        });
+    } catch (error) {
+        if (sinal.aborted) throw error;
+        const causa = timeout.aborted ? `sem resposta em ${TIMEOUT_MS / 1000}s` : (error as Error).message;
+        throw new Error(`motor (${motor}) inacessivel: ${causa}`);
+    } finally {
+        timeout.removeEventListener('abort', abortar);
+        sinal.removeEventListener('abort', abortar);
+    }
+    if (!response.ok) {
+        throw new Error(`motor respondeu ${response.status}: ${await response.text()}`);
+    }
+    return (await response.json()) as JulgamentoPlano;
 }
 
 function linhaAleatoria<T>(caminho: string): T {
@@ -479,31 +529,174 @@ function listarChatsSalvos(): Array<Omit<ChatSalvo, 'mensagens'>> {
     return chats;
 }
 
-// Avaliacao contra ground truth (ver src/inference/avaliar.ts e
-// src/scripts/gerar-ground-truth-*.ts). O ground truth do agro ainda nao foi
-// gerado — ate la, essa rota responde 404 pra esse dominio. O do fut existe
-// (25 cenarios curados, ver src/scripts/gerar-ground-truth-fut.ts).
-function carregarGroundTruth(dominio: 'med' | 'agro' | 'fut'): RegistroGroundTruth[] {
-    const caminho = path.join('src', 'examples', dominio, `ground_truth_${dominio}.jsonl`);
-    if (!fs.existsSync(caminho)) {
-        throw new Error(`ground truth ainda nao foi gerado para o dominio '${dominio}' (esperado em ${caminho})`);
-    }
-    return fs
-        .readFileSync(caminho, 'utf-8')
-        .split('\n')
-        .filter(l => l.trim().length > 0)
-        .map(l => JSON.parse(l) as RegistroGroundTruth);
-}
-
 /** Filtra linhas que nao sao registros de resultado (ex.: a linha final
  *  `{duracaoSegundos}` que o download em lote do web-chat acrescenta). */
-function parseRegistrosAvaliar(jsonlTexto: string): RegistroAvaliar[] {
+function parseRegistrosAvaliar(jsonlTexto: string): RegistroAvaliarGrafo[] {
     return jsonlTexto
         .split('\n')
         .map(l => l.trim())
         .filter(l => l.length > 0)
-        .map(l => JSON.parse(l) as RegistroAvaliar)
+        .map(l => JSON.parse(l) as RegistroAvaliarGrafo)
         .filter(r => typeof r.plano === 'string' || typeof r.resultado === 'string');
+}
+
+// ---------------------------------------------------------------------------
+// Avaliacao contra o grafo de conhecimento (ver src/inference/avaliar-grafo.ts)
+// — usada por POST /api/avaliar no lugar da comparacao contra um ground truth
+// fixo. Para cada registro do arquivo enviado, refaz a recuperacao no grafo a
+// partir da telemetria que o proprio registro carrega (o mesmo "sorteio" que a
+// geracao original usou) e pede a UMA LLM local que julgue o plano contra o
+// que o grafo diz agora — violacao de seguranca continua deterministica (ver
+// `violacaoDeterministica`), so a correcao semantica mais ampla vem da LLM.
+// ---------------------------------------------------------------------------
+
+async function avaliarRegistroMed(registro: RegistroAvaliarGrafo, motor: string, sinal: AbortSignal): Promise<DetalheLado> {
+    const bloco = registro.telemetria;
+    const paciente = typeof bloco?.paciente === 'string' ? bloco.paciente : undefined;
+    const sinais = sinaisDe(bloco);
+    if (!paciente || !sinais) {
+        return detalheNaoAvaliado(registro, 'Telemetria ausente ou incompleta neste registro — não foi possível reconstruir o cenário para consultar o grafo.');
+    }
+
+    const contexto: ClinicalContext = {
+        paciente,
+        telemetria: sinais,
+        populacoes: listaDe(bloco?.populacoes),
+        farmacosEmUso: listaDe(bloco?.farmacosEmUso),
+        intencao: registro.intencao ?? ''
+    };
+
+    let promptSemantico: string;
+    let proibidos: Set<string>;
+    try {
+        const constraints = retrieveConstraints(modeloMed, contexto);
+        promptSemantico = montarPromptSemantico(constraints);
+        proibidos = new Set([...constraints.bloqueios.map(b => b.farmaco), ...constraints.vetados.map(v => v.farmaco)]);
+    } catch (error) {
+        return detalheNaoAvaliado(registro, `Falha ao consultar o grafo de conhecimento: ${(error as Error).message}`);
+    }
+
+    try {
+        const veredicto = await validarPlanoComGrafo(textoGerado(registro), promptSemantico, contexto.intencao ?? '', motor, sinal);
+        return detalheJulgado(registro, proibidos, veredicto, promptSemantico);
+    } catch (error) {
+        return detalheNaoAvaliado(registro, `Falha ao julgar com o modelo local: ${(error as Error).message}`);
+    }
+}
+
+async function avaliarRegistroAgro(registro: RegistroAvaliarGrafo, motor: string, sinal: AbortSignal): Promise<DetalheLado> {
+    const bloco = registro.telemetria;
+    const talhao = typeof bloco?.talhao === 'string' ? bloco.talhao : undefined;
+    const sinais = sinaisDe(bloco);
+    if (!talhao || !sinais) {
+        return detalheNaoAvaliado(registro, 'Telemetria ausente ou incompleta neste registro — não foi possível reconstruir o cenário para consultar o grafo.');
+    }
+
+    const contexto: AgroContext = {
+        talhao,
+        telemetria: sinais,
+        areas: listaDe(bloco?.areas),
+        produtosEmUso: listaDe(bloco?.produtosEmUso),
+        intencao: registro.intencao ?? ''
+    };
+
+    let promptSemantico: string;
+    let proibidos: Set<string>;
+    try {
+        const constraints = retrieveAgroConstraints(modeloAgro, contexto);
+        promptSemantico = montarPromptSemanticoAgro(constraints);
+        proibidos = new Set([...constraints.bloqueios.map(b => b.produto), ...constraints.vetados.map(v => v.produto)]);
+    } catch (error) {
+        return detalheNaoAvaliado(registro, `Falha ao consultar o grafo de conhecimento: ${(error as Error).message}`);
+    }
+
+    try {
+        const veredicto = await validarPlanoComGrafo(textoGerado(registro), promptSemantico, contexto.intencao ?? '', motor, sinal);
+        return detalheJulgado(registro, proibidos, veredicto, promptSemantico);
+    } catch (error) {
+        return detalheNaoAvaliado(registro, `Falha ao julgar com o modelo local: ${(error as Error).message}`);
+    }
+}
+
+async function avaliarRegistroFut(registro: RegistroAvaliarGrafo, motor: string, sinal: AbortSignal): Promise<DetalheLado> {
+    const bloco = registro.telemetria;
+    const partida = typeof bloco?.partida === 'string' ? bloco.partida : undefined;
+    const sinais = sinaisDe(bloco);
+    if (!partida || !sinais) {
+        return detalheNaoAvaliado(registro, 'Telemetria ausente ou incompleta neste registro — não foi possível reconstruir o cenário para consultar o grafo.');
+    }
+
+    const contexto: FutContext = {
+        partida,
+        telemetria: sinais,
+        contextos: listaDe(bloco?.contextos),
+        infracoesEmUso: listaDe(bloco?.infracoesEmUso),
+        intencao: registro.intencao ?? ''
+    };
+
+    let promptSemantico: string;
+    let proibidos: Set<string>;
+    try {
+        const constraints = retrieveFutConstraints(modeloFut, contexto);
+        promptSemantico = montarPromptSemanticoFut(constraints);
+        proibidos = new Set([...constraints.bloqueios.map(b => b.infracao), ...constraints.vetados.map(v => v.infracao)]);
+    } catch (error) {
+        return detalheNaoAvaliado(registro, `Falha ao consultar o grafo de conhecimento: ${(error as Error).message}`);
+    }
+
+    try {
+        const veredicto = await validarPlanoComGrafo(textoGerado(registro), promptSemantico, contexto.intencao ?? '', motor, sinal);
+        return detalheJulgado(registro, proibidos, veredicto, promptSemantico);
+    } catch (error) {
+        return detalheNaoAvaliado(registro, `Falha ao julgar com o modelo local: ${(error as Error).message}`);
+    }
+}
+
+/** Julga arquitetura e depois baseline, sequencialmente — a engine ja serializa
+ *  geracao via um lock interno (um modelo, uma chamada por vez), entao
+ *  paralelizar aqui so complicaria o cancelamento sem ganhar tempo real. */
+async function avaliarComGrafo(
+    dominio: 'med' | 'agro' | 'fut',
+    arquitetura: RegistroAvaliarGrafo[] | undefined,
+    baseline: RegistroAvaliarGrafo[] | undefined,
+    onProgresso: (processados: number, total: number) => void,
+    sinal: AbortSignal
+): Promise<ResultadoAvaliacaoGrafo> {
+    const motor = dominio === 'med' ? ENGINE : dominio === 'agro' ? ENGINE_AGRO : ENGINE_FUT;
+    const avaliarUm = dominio === 'med' ? avaliarRegistroMed : dominio === 'agro' ? avaliarRegistroAgro : avaliarRegistroFut;
+
+    const total = (arquitetura?.length ?? 0) + (baseline?.length ?? 0);
+    let processados = 0;
+
+    const ladosArq = new Map<RegistroAvaliarGrafo, DetalheLado>();
+    for (const registro of arquitetura ?? []) {
+        if (sinal.aborted) break;
+        ladosArq.set(registro, await avaliarUm(registro, motor, sinal));
+        onProgresso(++processados, total);
+    }
+
+    const ladosBase = new Map<RegistroAvaliarGrafo, DetalheLado>();
+    for (const registro of baseline ?? []) {
+        if (sinal.aborted) break;
+        ladosBase.set(registro, await avaliarUm(registro, motor, sinal));
+        onProgresso(++processados, total);
+    }
+
+    const linhas: DetalheLinha[] = parearRegistros(arquitetura ?? [], baseline ?? []).map((par, i) => {
+        const detArq = par.a ? ladosArq.get(par.a) : undefined;
+        const detBase = par.b ? ladosBase.get(par.b) : undefined;
+        const divergiu = (d?: DetalheLado): boolean => !!d && !d.naoAvaliado && (!d.sintaxeOk || !d.semanticaOk || d.violacao);
+        return { linha: i + 1, intencao: par.intencao, arquitetura: detArq, baseline: detBase, temDivergencia: divergiu(detArq) || divergiu(detBase) };
+    });
+
+    const naoAvaliados = [...ladosArq.values(), ...ladosBase.values()].filter(d => d.naoAvaliado).length;
+
+    return {
+        arquitetura: arquitetura ? agregarMetricas([...ladosArq.values()]) : undefined,
+        baseline: baseline ? agregarMetricas([...ladosBase.values()]) : undefined,
+        naoAvaliados,
+        linhas
+    };
 }
 
 function lerCorpo(req: http.IncomingMessage): Promise<string> {
@@ -675,26 +868,46 @@ const servidor = http.createServer(async (req, res) => {
                 return;
             }
 
-            let groundTruth: RegistroGroundTruth[];
+            let arquitetura: RegistroAvaliarGrafo[] | undefined;
+            let baseline: RegistroAvaliarGrafo[] | undefined;
             try {
-                groundTruth = carregarGroundTruth(corpo.dominio);
+                arquitetura = corpo.arquiteturaJsonl ? parseRegistrosAvaliar(corpo.arquiteturaJsonl) : undefined;
+                baseline = corpo.baselineJsonl ? parseRegistrosAvaliar(corpo.baselineJsonl) : undefined;
             } catch (error) {
-                jsonResponse(res, 404, { erro: (error as Error).message });
+                jsonResponse(res, 400, { erro: `falha ao interpretar o arquivo enviado: ${(error as Error).message}` });
                 return;
             }
 
+            // SSE: cada julgamento e uma geracao no modelo local (serializada pela
+            // engine), entao um arquivo com centenas de linhas pode levar minutos —
+            // o front-end acompanha "X de Y avaliados" e pode cancelar no meio
+            // (fechar a conexao aborta o julgamento em andamento, ver `controlador`).
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream; charset=utf-8',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive',
+                'Access-Control-Allow-Origin': ORIGEM_PERMITIDA
+            });
+            const emitir = (evento: string, dados: unknown): void => {
+                res.write(`event: ${evento}\ndata: ${JSON.stringify(dados)}\n\n`);
+            };
+
+            const controlador = new AbortController();
+            req.on('close', () => controlador.abort());
+
             try {
-                jsonResponse(
-                    res,
-                    200,
-                    compararDetalhado(
-                        groundTruth,
-                        corpo.arquiteturaJsonl ? parseRegistrosAvaliar(corpo.arquiteturaJsonl) : undefined,
-                        corpo.baselineJsonl ? parseRegistrosAvaliar(corpo.baselineJsonl) : undefined
-                    )
+                const resultado = await avaliarComGrafo(
+                    corpo.dominio,
+                    arquitetura,
+                    baseline,
+                    (processados, total) => emitir('progresso', { processados, total }),
+                    controlador.signal
                 );
+                emitir('final', resultado);
             } catch (error) {
-                jsonResponse(res, 400, { erro: `falha ao interpretar o arquivo enviado: ${(error as Error).message}` });
+                emitir('erro', { erro: (error as Error).message });
+            } finally {
+                res.end();
             }
             return;
         }
@@ -713,7 +926,7 @@ servidor.listen(PORT, () => {
     console.log(`  POST /api/chats     { dominio: 'med'|'agro'|'fut', mensagens: [] }`);
     console.log(`  GET  /api/chats/:id`);
     console.log(`  PUT  /api/chats/:id { dominio: 'med'|'agro'|'fut', mensagens: [] }`);
-    console.log(`  POST /api/avaliar   { dominio: 'med'|'agro'|'fut', arquiteturaJsonl?: string, baselineJsonl?: string }`);
+    console.log(`  POST /api/avaliar   { dominio: 'med'|'agro'|'fut', arquiteturaJsonl?: string, baselineJsonl?: string }  (SSE: event "progresso"*, "final"|"erro")`);
 });
 
 process.on('SIGINT', async () => {

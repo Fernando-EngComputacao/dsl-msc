@@ -40,8 +40,8 @@ const linhasVisiveis = computed(() => {
     return lista;
 });
 
-/** Quantas colunas o painel expandido tem: ground truth + os lados selecionados. */
-const colunas = computed(() => 1 + (props.mostrarArquitetura ? 1 : 0) + (props.mostrarBaseline ? 1 : 0));
+/** Quantas colunas o painel expandido tem: um por lado selecionado. */
+const colunas = computed(() => (props.mostrarArquitetura ? 1 : 0) + (props.mostrarBaseline ? 1 : 0));
 
 function alternar(linha: number): void {
     const novo = new Set(abertas.value);
@@ -59,18 +59,26 @@ function recolherTodas(): void {
 }
 
 function ladoOk(lado: DetalheLado | undefined): boolean {
-    return !!lado && lado.sintaxeOk && lado.semanticaOk && !lado.violacao;
+    return !!lado && !lado.naoAvaliado && lado.sintaxeOk && lado.semanticaOk && !lado.violacao;
 }
 
 /** Lista curta do que falhou naquele lado — o que a pessoa precisa ler pra
  *  saber por que a linha está marcada como divergente. */
 function motivos(lado: DetalheLado | undefined): string[] {
-    if (!lado) return [];
+    if (!lado || lado.naoAvaliado) return [];
     const lista: string[] = [];
     if (!lado.sintaxeOk) lista.push('sintaxe');
-    if (!lado.semanticaOk) lista.push('semântica');
+    if (!lado.semanticaOk) lista.push('semântica (grafo)');
     if (lado.violacao) lista.push('violação');
     return lista;
+}
+
+/** Rótulo curto do veredicto — usado tanto na pill da linha colapsada quanto
+ *  no cabeçalho do painel expandido. */
+function rotuloVeredicto(lado: DetalheLado | undefined): string {
+    if (!lado) return '';
+    if (lado.naoAvaliado) return 'não avaliado';
+    return ladoOk(lado) ? 'correto' : motivos(lado).join(' · ');
 }
 </script>
 
@@ -162,7 +170,7 @@ function motivos(lado: DetalheLado | undefined): string[] {
 
         <p v-if="linhasVisiveis.length === 0" class="rounded-2xl border border-dashed border-neutral-200 px-4 py-8 text-center text-sm text-neutral-400 dark:border-white/10 dark:text-neutral-500">
             <template v-if="busca.trim()">Nenhum caso encontrado para “{{ busca.trim() }}”.</template>
-            <template v-else>Nenhuma divergência — todos os casos avaliados bateram com o ground truth.</template>
+            <template v-else>Nenhuma divergência — todos os casos avaliados foram aprovados pelo grafo de conhecimento.</template>
         </p>
 
         <div v-else class="overflow-hidden rounded-2xl border border-neutral-200 dark:border-white/10">
@@ -201,11 +209,13 @@ function motivos(lado: DetalheLado | undefined): string[] {
                         v-if="mostrarArquitetura && l.arquitetura"
                         class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium"
                         :class="
-                            ladoOk(l.arquitetura)
-                                ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                                : 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
+                            l.arquitetura.naoAvaliado
+                                ? 'bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-400'
+                                : ladoOk(l.arquitetura)
+                                  ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+                                  : 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
                         "
-                        :title="ladoOk(l.arquitetura) ? 'SPC-CML: correto' : `SPC-CML: ${motivos(l.arquitetura).join(', ')}`"
+                        :title="`SPC-CML: ${rotuloVeredicto(l.arquitetura)}`"
                     >
                         SPC-CML
                     </span>
@@ -214,11 +224,13 @@ function motivos(lado: DetalheLado | undefined): string[] {
                         v-if="mostrarBaseline && l.baseline"
                         class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium"
                         :class="
-                            ladoOk(l.baseline)
-                                ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                                : 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
+                            l.baseline.naoAvaliado
+                                ? 'bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-400'
+                                : ladoOk(l.baseline)
+                                  ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+                                  : 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
                         "
-                        :title="ladoOk(l.baseline) ? 'Baseline: correto' : `Baseline: ${motivos(l.baseline).join(', ')}`"
+                        :title="`Baseline: ${rotuloVeredicto(l.baseline)}`"
                     >
                         Baseline
                     </span>
@@ -230,27 +242,16 @@ function motivos(lado: DetalheLado | undefined): string[] {
                             class="grid gap-3 border-t border-neutral-200 bg-neutral-50/60 p-3.5 dark:border-white/10 dark:bg-white/[0.02]"
                             :class="colunas === 3 ? 'lg:grid-cols-3' : colunas === 2 ? 'lg:grid-cols-2' : 'grid-cols-1'"
                         >
-                            <!-- Ground truth -->
-                            <div class="flex min-w-0 flex-col rounded-xl border border-neutral-200 bg-white p-3 dark:border-white/10 dark:bg-white/5">
-                                <div class="mb-2 flex items-center gap-1.5">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" class="shrink-0 text-neutral-500 dark:text-neutral-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M9 11l3 3L22 4" />
-                                        <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-                                    </svg>
-                                    <span class="text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">Ground truth</span>
-                                </div>
-                                <pre class="mb-2 max-h-72 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-neutral-700 dark:bg-black/20 dark:text-neutral-300">{{ l.groundTruth.plano }}</pre>
-                                <p class="text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">{{ l.groundTruth.description }}</p>
-                            </div>
-
                             <!-- Arquitetura SPC-CML -->
                             <div
                                 v-if="mostrarArquitetura"
                                 class="flex min-w-0 flex-col rounded-xl border p-3"
                                 :class="
-                                    l.arquitetura && !ladoOk(l.arquitetura)
-                                        ? 'border-rose-200 bg-rose-50/50 dark:border-rose-500/25 dark:bg-rose-500/[0.06]'
-                                        : 'border-neutral-200 bg-white dark:border-white/10 dark:bg-white/5'
+                                    l.arquitetura && l.arquitetura.naoAvaliado
+                                        ? 'border-neutral-200 bg-neutral-50/60 dark:border-white/10 dark:bg-white/[0.03]'
+                                        : l.arquitetura && !ladoOk(l.arquitetura)
+                                          ? 'border-rose-200 bg-rose-50/50 dark:border-rose-500/25 dark:bg-rose-500/[0.06]'
+                                          : 'border-neutral-200 bg-white dark:border-white/10 dark:bg-white/5'
                                 "
                             >
                                 <div class="mb-2 flex items-center gap-1.5">
@@ -262,15 +263,24 @@ function motivos(lado: DetalheLado | undefined): string[] {
                                         v-if="l.arquitetura"
                                         class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
                                         :class="
-                                            ladoOk(l.arquitetura)
-                                                ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                                                : 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300'
+                                            l.arquitetura.naoAvaliado
+                                                ? 'bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-400'
+                                                : ladoOk(l.arquitetura)
+                                                  ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+                                                  : 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300'
                                         "
                                     >
-                                        {{ ladoOk(l.arquitetura) ? 'correto' : motivos(l.arquitetura).join(' · ') }}
+                                        {{ rotuloVeredicto(l.arquitetura) }}
                                     </span>
                                 </div>
-                                <pre v-if="l.arquitetura" class="max-h-72 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-neutral-700 dark:bg-black/20 dark:text-neutral-300">{{ l.arquitetura.plano }}</pre>
+                                <template v-if="l.arquitetura">
+                                    <pre class="max-h-72 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-neutral-700 dark:bg-black/20 dark:text-neutral-300">{{ l.arquitetura.plano }}</pre>
+                                    <p class="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-300">{{ l.arquitetura.justificativa }}</p>
+                                    <details v-if="l.arquitetura.contextoGrafo" class="mt-2">
+                                        <summary class="cursor-pointer text-[11px] text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300">Contexto recuperado do grafo</summary>
+                                        <pre class="mt-1.5 max-h-56 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-neutral-600 dark:bg-black/20 dark:text-neutral-400">{{ l.arquitetura.contextoGrafo }}</pre>
+                                    </details>
+                                </template>
                                 <p v-else class="rounded-lg bg-neutral-50 p-2.5 text-[11px] text-neutral-400 dark:bg-black/20 dark:text-neutral-500">Sem registro para esta linha no arquivo enviado.</p>
                             </div>
 
@@ -279,9 +289,11 @@ function motivos(lado: DetalheLado | undefined): string[] {
                                 v-if="mostrarBaseline"
                                 class="flex min-w-0 flex-col rounded-xl border p-3"
                                 :class="
-                                    l.baseline && !ladoOk(l.baseline)
-                                        ? 'border-rose-200 bg-rose-50/50 dark:border-rose-500/25 dark:bg-rose-500/[0.06]'
-                                        : 'border-neutral-200 bg-white dark:border-white/10 dark:bg-white/5'
+                                    l.baseline && l.baseline.naoAvaliado
+                                        ? 'border-neutral-200 bg-neutral-50/60 dark:border-white/10 dark:bg-white/[0.03]'
+                                        : l.baseline && !ladoOk(l.baseline)
+                                          ? 'border-rose-200 bg-rose-50/50 dark:border-rose-500/25 dark:bg-rose-500/[0.06]'
+                                          : 'border-neutral-200 bg-white dark:border-white/10 dark:bg-white/5'
                                 "
                             >
                                 <div class="mb-2 flex items-center gap-1.5">
@@ -294,15 +306,24 @@ function motivos(lado: DetalheLado | undefined): string[] {
                                         v-if="l.baseline"
                                         class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
                                         :class="
-                                            ladoOk(l.baseline)
-                                                ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                                                : 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300'
+                                            l.baseline.naoAvaliado
+                                                ? 'bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-400'
+                                                : ladoOk(l.baseline)
+                                                  ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+                                                  : 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300'
                                         "
                                     >
-                                        {{ ladoOk(l.baseline) ? 'correto' : motivos(l.baseline).join(' · ') }}
+                                        {{ rotuloVeredicto(l.baseline) }}
                                     </span>
                                 </div>
-                                <pre v-if="l.baseline" class="max-h-72 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-neutral-700 dark:bg-black/20 dark:text-neutral-300">{{ l.baseline.plano }}</pre>
+                                <template v-if="l.baseline">
+                                    <pre class="max-h-72 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-neutral-700 dark:bg-black/20 dark:text-neutral-300">{{ l.baseline.plano }}</pre>
+                                    <p class="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-300">{{ l.baseline.justificativa }}</p>
+                                    <details v-if="l.baseline.contextoGrafo" class="mt-2">
+                                        <summary class="cursor-pointer text-[11px] text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300">Contexto recuperado do grafo</summary>
+                                        <pre class="mt-1.5 max-h-56 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-neutral-600 dark:bg-black/20 dark:text-neutral-400">{{ l.baseline.contextoGrafo }}</pre>
+                                    </details>
+                                </template>
                                 <p v-else class="rounded-lg bg-neutral-50 p-2.5 text-[11px] text-neutral-400 dark:bg-black/20 dark:text-neutral-500">Sem registro para esta linha no arquivo enviado.</p>
                             </div>
                         </div>

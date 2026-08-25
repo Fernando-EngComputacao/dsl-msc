@@ -30,12 +30,19 @@ export interface DetalheLado {
     sintaxeOk: boolean;
     semanticaOk: boolean;
     violacao: boolean;
+    /** Explicação da LLM para o veredicto — por que o plano está certo ou errado. */
+    justificativa: string;
+    /** Prompt Semântico recuperado do grafo para este registro, para auditoria. */
+    contextoGrafo?: string;
+    /** true quando não foi possível consultar o grafo para este registro
+     *  (telemetria ausente/incompleta, ou falha ao julgar) — os demais campos
+     *  além de `sintaxeOk` não são confiáveis nesse caso. */
+    naoAvaliado: boolean;
 }
 
 export interface DetalheLinha {
     linha: number;
     intencao: string;
-    groundTruth: { plano: string; description: string };
     arquitetura?: DetalheLado;
     baseline?: DetalheLado;
     temDivergencia: boolean;
@@ -44,11 +51,9 @@ export interface DetalheLinha {
 export interface RespostaAvaliacao {
     arquitetura?: MetricasAvaliacao;
     baseline?: MetricasAvaliacao;
-    /** Registros enviados que não casaram com nenhum cenário do ground truth. */
-    naoPareados: number;
-    /** Registros cujo paciente/talhão existe no ground truth mas com telemetria
-     *  diferente — mesmo código, outro quadro clínico. */
-    telemetriaDivergente: number;
+    /** Registros que não puderam ser avaliados (telemetria ausente/incompleta
+     *  ou falha ao consultar o grafo/julgar), somando os dois arquivos. */
+    naoAvaliados: number;
     linhas: DetalheLinha[];
 }
 
@@ -94,21 +99,61 @@ export async function buscarChat(id: string): Promise<ChatCompleto> {
     return resp.json();
 }
 
+/**
+ * Envia o(s) arquivo(s) para avaliação e acompanha o progresso via SSE: cada
+ * julgamento é uma geração no modelo local, então um arquivo grande pode levar
+ * minutos — o servidor emite um evento "progresso" a cada linha julgada, antes
+ * do evento final "final"/"erro".
+ */
 export async function avaliarResultados(
     dominio: 'med' | 'agro' | 'fut',
-    arquiteturaJsonl?: string,
-    baselineJsonl?: string
+    arquiteturaJsonl: string | undefined,
+    baselineJsonl: string | undefined,
+    aoProgresso: (processados: number, total: number) => void,
+    signal?: AbortSignal
 ): Promise<RespostaAvaliacao> {
     const resp = await fetch(`${BASE_URL}/api/avaliar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dominio, arquiteturaJsonl, baselineJsonl })
+        body: JSON.stringify({ dominio, arquiteturaJsonl, baselineJsonl }),
+        signal
     });
-    if (!resp.ok) {
+
+    if (!resp.ok || !resp.body) {
         const corpo = await resp.json().catch(() => ({}) as { erro?: string });
         throw new Error((corpo as { erro?: string }).erro ?? `o servidor respondeu ${resp.status}`);
     }
-    return resp.json();
+
+    const leitor = resp.body.getReader();
+    const decodificador = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await leitor.read();
+        if (done) break;
+        buffer += decodificador.decode(value, { stream: true });
+
+        let fimBloco: number;
+        while ((fimBloco = buffer.indexOf('\n\n')) !== -1) {
+            const bloco = buffer.slice(0, fimBloco);
+            buffer = buffer.slice(fimBloco + 2);
+
+            let evento = 'message';
+            let dadosTexto = '';
+            for (const linha of bloco.split('\n')) {
+                if (linha.startsWith('event: ')) evento = linha.slice(7);
+                else if (linha.startsWith('data: ')) dadosTexto += linha.slice(6);
+            }
+            if (!dadosTexto) continue;
+            const dados = JSON.parse(dadosTexto);
+
+            if (evento === 'progresso') aoProgresso(dados.processados, dados.total);
+            else if (evento === 'final') return dados as RespostaAvaliacao;
+            else if (evento === 'erro') throw new Error(dados.erro ?? 'falha desconhecida no servidor');
+        }
+    }
+
+    throw new Error('conexão encerrada antes do resultado final');
 }
 
 export async function criarChat(dominio: 'med' | 'agro' | 'fut', mensagens: Mensagem[]): Promise<ChatCompleto> {

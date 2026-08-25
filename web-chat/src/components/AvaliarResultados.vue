@@ -26,6 +26,8 @@ const inputBaseline = ref<HTMLInputElement | null>(null);
 const avaliando = ref(false);
 const erro = ref<string | null>(null);
 const resultado = ref<RespostaAvaliacao | null>(null);
+const progresso = ref<{ processados: number; total: number } | null>(null);
+const controlador = ref<AbortController | null>(null);
 
 function modeloIncluido(chave: 'arquitetura' | 'baseline'): boolean {
     return chave === 'arquitetura' ? incluirArquitetura.value : incluirBaseline.value;
@@ -87,15 +89,32 @@ async function avaliar(): Promise<void> {
     avaliando.value = true;
     erro.value = null;
     resultado.value = null;
+    progresso.value = null;
+    const ctrl = new AbortController();
+    controlador.value = ctrl;
     try {
         const arquiteturaJsonl = incluirArquitetura.value && arquivos.arquitetura ? await arquivos.arquitetura.text() : undefined;
         const baselineJsonl = incluirBaseline.value && arquivos.baseline ? await arquivos.baseline.text() : undefined;
-        resultado.value = await avaliarResultados(dominioSelecionado.value, arquiteturaJsonl, baselineJsonl);
+        resultado.value = await avaliarResultados(
+            dominioSelecionado.value,
+            arquiteturaJsonl,
+            baselineJsonl,
+            (processados, total) => {
+                progresso.value = { processados, total };
+            },
+            ctrl.signal
+        );
     } catch (e) {
-        erro.value = (e as Error).message;
+        if ((e as Error).name !== 'AbortError') erro.value = (e as Error).message;
     } finally {
         avaliando.value = false;
+        progresso.value = null;
+        controlador.value = null;
     }
+}
+
+function cancelar(): void {
+    controlador.value?.abort();
 }
 </script>
 
@@ -111,7 +130,7 @@ async function avaliar(): Promise<void> {
             </div>
             <div>
                 <h1 class="text-2xl font-medium text-neutral-900 dark:text-neutral-100">Avaliar resultados</h1>
-                <p class="text-sm text-neutral-500 dark:text-neutral-400">Compare a saída em lote contra o ground truth do domínio.</p>
+                <p class="text-sm text-neutral-500 dark:text-neutral-400">Cada plano é julgado por uma LLM contra o grafo de conhecimento recuperado para o cenário — com a justificativa do veredito.</p>
             </div>
         </div>
 
@@ -257,20 +276,46 @@ async function avaliar(): Promise<void> {
             </TransitionGroup>
         </section>
 
-        <button
-            type="button"
-            class="mb-6 flex items-center justify-center gap-2 self-start rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-blue-700 hover:shadow active:scale-[0.97] disabled:bg-neutral-300 disabled:text-neutral-500 disabled:shadow-none dark:disabled:bg-neutral-700 dark:disabled:text-neutral-400"
-            :disabled="!podeAvaliar || avaliando"
-            @click="avaliar"
-        >
-            <svg v-if="avaliando" width="15" height="15" viewBox="0 0 24 24" class="animate-spin">
-                <path d="M21 12a9 9 0 11-9-9" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
-            </svg>
-            <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M5 13l4 4L19 7" />
-            </svg>
-            {{ avaliando ? 'Avaliando…' : 'Avaliar' }}
-        </button>
+        <div class="mb-6 flex flex-col items-start gap-3">
+            <div class="flex items-center gap-2.5">
+                <button
+                    type="button"
+                    class="flex items-center justify-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-blue-700 hover:shadow active:scale-[0.97] disabled:bg-neutral-300 disabled:text-neutral-500 disabled:shadow-none dark:disabled:bg-neutral-700 dark:disabled:text-neutral-400"
+                    :disabled="!podeAvaliar || avaliando"
+                    @click="avaliar"
+                >
+                    <svg v-if="avaliando" width="15" height="15" viewBox="0 0 24 24" class="animate-spin">
+                        <path d="M21 12a9 9 0 11-9-9" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                    </svg>
+                    <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 13l4 4L19 7" />
+                    </svg>
+                    {{ avaliando ? 'Avaliando…' : 'Avaliar' }}
+                </button>
+
+                <button
+                    v-if="avaliando"
+                    type="button"
+                    class="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
+                    @click="cancelar"
+                >
+                    Cancelar
+                </button>
+            </div>
+
+            <div v-if="avaliando && progresso && progresso.total > 0" class="w-full max-w-sm">
+                <div class="mb-1 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
+                    <span>{{ progresso.processados }} de {{ progresso.total }} avaliados</span>
+                    <span>{{ Math.round((progresso.processados / progresso.total) * 100) }}%</span>
+                </div>
+                <div class="h-1.5 overflow-hidden rounded-full bg-neutral-100 dark:bg-white/10">
+                    <div
+                        class="h-full rounded-full bg-blue-500 transition-[width] duration-300 ease-out"
+                        :style="{ width: (progresso.processados / progresso.total) * 100 + '%' }"
+                    ></div>
+                </div>
+            </div>
+        </div>
         </div>
 
         <Transition name="fade-slide">
@@ -287,7 +332,7 @@ async function avaliar(): Promise<void> {
         <Transition name="fade-slide">
             <div v-if="resultado">
                 <p
-                    v-if="resultado.naoPareados > 0 || resultado.telemetriaDivergente > 0"
+                    v-if="resultado.naoAvaliados > 0"
                     class="mb-4 flex max-w-5xl items-start gap-2.5 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
                 >
                     <svg width="16" height="16" viewBox="0 0 24 24" class="mt-0.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -296,15 +341,8 @@ async function avaliar(): Promise<void> {
                         <line x1="12" y1="17" x2="12.01" y2="17" />
                     </svg>
                     <span>
-                        <template v-if="resultado.naoPareados > 0">
-                            {{ resultado.naoPareados }} registro(s) não correspondem a nenhum cenário do ground truth deste domínio — confira se o arquivo é do domínio
-                            selecionado e se o lote rodou sobre os cenários oficiais.
-                        </template>
-                        <template v-if="resultado.telemetriaDivergente > 0">
-                            <template v-if="resultado.naoPareados > 0"><br /></template>
-                            {{ resultado.telemetriaDivergente }} registro(s) têm paciente conhecido mas telemetria diferente da do cenário — como o ground truth é derivado
-                            da telemetria, esses casos ficaram de fora em vez de serem julgados por um gabarito que não se aplica.
-                        </template>
+                        {{ resultado.naoAvaliados }} registro(s) não puderam ser avaliados — telemetria ausente/incompleta para reconstruir o cenário, ou falha ao
+                        consultar o grafo de conhecimento/julgar com o modelo local. Veja o motivo em cada linha marcada abaixo.
                     </span>
                 </p>
 

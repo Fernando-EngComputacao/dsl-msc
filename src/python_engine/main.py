@@ -289,8 +289,85 @@ def _validar_comando(comando: str) -> tuple[bool, str]:
     return status == "VALIDO", motivo
 
 
+# Gramatica GBNF fixa para o julgamento do PLANO ja gerado (avaliacao em lote, ver
+# POST /api/avaliar no web-chat) — mesma logica de VALIDACAO_GBNF: forcar duas linhas
+# em vez de deixar a LLM justificar em texto solto e sem estrutura. A violacao de
+# seguranca (ordem de incremento num farmaco/produto bloqueado ou vetado) NAO entra
+# aqui: e checada deterministicamente no lado TypeScript a partir do mesmo subgrafo
+# recuperado (ver src/inference/avaliar-grafo.ts) — este julgamento cobre so a
+# correcao semantica mais ampla (o plano atende a intencao e as recomendacoes do
+# grafo?), que e mais dificil de reduzir a uma comparacao numerica.
+JULGAMENTO_PLANO_GBNF = r"""
+root ::= veredito "\nmotivo: " motivo
+veredito ::= "CORRETO" | "INCORRETO"
+motivo ::= [^\n]+
+"""
+JULGAMENTO_PLANO_MAX_TOKENS = int(os.environ.get("SPC_CML_JULGAMENTO_MAX_TOKENS", "200"))
+
+JULGAMENTO_PLANO_INSTRUCAO = """Voce e um auditor que confere se um plano gerado por outro \
+sistema respeita as regras recuperadas do grafo de conhecimento e atende ao pedido do \
+profissional/operador.
+
+Considere INCORRETO quando o plano contraria um protocolo ativado, ignora um ajuste de \
+dose exigido, ignora uma recomendacao do protocolo sem justificativa, ou simplesmente nao \
+atende ao que foi pedido. Considere CORRETO quando o plano e coerente com as regras \
+abaixo e responde ao pedido, mesmo que nao siga exatamente as mesmas palavras.
+
+Nao julgue violacoes de seguranca (farmaco/produto bloqueado ou vetado) — isso ja e \
+conferido separadamente.
+
+[REGRAS RECUPERADAS DO GRAFO]
+{contexto_neo4j}
+
+[PEDIDO ORIGINAL]
+{intencao}
+
+[PLANO GERADO]
+{plano}
+
+Responda exatamente neste formato, sem mais nada:
+CORRETO
+motivo: <por que o plano atende as regras e ao pedido>
+
+ou
+
+INCORRETO
+motivo: <o que no plano contraria as regras ou deixa de atender ao pedido>
+
+resposta:
+"""
+
+
+def _validar_plano(plano: str, contexto_neo4j: str, intencao: str) -> tuple[bool, str]:
+    """Julgamento (sob a mesma decodificacao restrita) de um plano JA GERADO contra o
+    subgrafo recuperado do Neo4j para o cenario dele — usado pela avaliacao em lote,
+    nao pelo fluxo de geracao. Ver comentario de JULGAMENTO_PLANO_GBNF."""
+    from llama_cpp import LlamaGrammar
+
+    llm = get_llama()
+    prompt = JULGAMENTO_PLANO_INSTRUCAO.format(contexto_neo4j=contexto_neo4j, intencao=intencao, plano=plano)
+    with _LLAMA_LOCK:
+        saida = llm(
+            prompt,
+            grammar=LlamaGrammar.from_string(JULGAMENTO_PLANO_GBNF, verbose=False),
+            max_tokens=JULGAMENTO_PLANO_MAX_TOKENS,
+            temperature=0.1,
+        )
+    texto = saida["choices"][0]["text"].strip()
+    linhas = texto.splitlines()
+    veredito = linhas[0].strip() if linhas else "INCORRETO"
+    motivo = linhas[1][len("motivo: "):].strip() if len(linhas) > 1 else "sem motivo reportado pelo modelo"
+    return veredito == "CORRETO", motivo
+
+
 class ValidarRequest(BaseModel):
     comando_humano: str = Field(..., description="Texto digitado pelo usuario, a validar antes de entrar no fluxo")
+
+
+class ValidarPlanoRequest(BaseModel):
+    plano: str = Field(..., description="Texto do plano/missao/arbitragem gerado, a julgar contra o contexto do grafo")
+    contexto_neo4j: str = Field("", description="Prompt Semantico: regras recuperadas do grafo para este cenario")
+    intencao: str = Field("", description="Fala original do profissional/operador, para conferir se o plano a atende")
 
 
 class EmbedRequest(BaseModel):
@@ -383,6 +460,18 @@ def validar_comando(req: ValidarRequest):
     """
     compreensivel, motivo = _validar_comando(req.comando_humano)
     return {"compreensivel": compreensivel, "motivo": motivo}
+
+
+@app.post("/validar-plano")
+def validar_plano(req: ValidarPlanoRequest):
+    """
+    Avaliacao em lote (ver POST /api/avaliar no web-chat): julga se um plano JA
+    GERADO e coerente com o subgrafo recuperado do Neo4j para o cenario dele e com o
+    pedido original — substitui a comparacao contra um ground truth fixo por um
+    julgamento sobre o estado atual do grafo. Ver JULGAMENTO_PLANO_INSTRUCAO.
+    """
+    correto, motivo = _validar_plano(req.plano, req.contexto_neo4j, req.intencao)
+    return {"correto": correto, "motivo": motivo}
 
 
 @app.post("/embed")
