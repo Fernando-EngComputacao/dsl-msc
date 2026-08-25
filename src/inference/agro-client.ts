@@ -17,9 +17,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { loadAgroModel } from '../database/neo4j-agro.js';
+import { montarContrato } from '../knowledge/contrato.js';
+import { decodificarSobContrato, type ResultadoDecodificacao } from './decodificacao.js';
+import type { AgroModel } from '../generated/ast.js';
 import {
     retrieveAgroConstraints,
     agroPruningPayload,
+    condutasPorDecisaoAgro,
     type AgroContext,
     type RetrievedAgroConstraints
 } from '../knowledge/graphrag-agro.js';
@@ -65,8 +69,28 @@ export const TELEMETRIA_PADRAO: AgroContext = {
  * grafo. E texto para o LLM ler, mas cada linha saiu de uma comparacao numerica
  * sobre a telemetria dos sensores, nao de uma suposicao.
  */
-export function montarPromptSemanticoAgro(c: RetrievedAgroConstraints): string {
+export function montarPromptSemanticoAgro(
+    c: RetrievedAgroConstraints,
+    contexto?: AgroContext
+): string {
     const bloco: string[] = [];
+
+    // O estado corrente do cenario — o que ja esta na calda e sob que area — decide
+    // quais decisoes fazem sentido, e nunca chegava ao prompt.
+    if (contexto) {
+        bloco.push('[CENARIO]');
+        if (contexto.talhao) bloco.push(`- talhao: ${contexto.talhao}`);
+        const emUso = contexto.produtosEmUso ?? [];
+        bloco.push(
+            emUso.length > 0
+                ? `- na calda neste momento: ${emUso.join(', ')} (para estes cabe ajustar vazao ou suspender — nao iniciar)`
+                : '- nenhum produto na calda neste momento (so cabe iniciar)'
+        );
+        if ((contexto.areas ?? []).length > 0) {
+            bloco.push(`- areas restritivas do talhao: ${contexto.areas!.join(', ')}`);
+        }
+        bloco.push('');
+    }
 
     if (c.culturasAtivas.length > 0) {
         // Uma cultura pode entrar aqui por gatilho disparado OU por ter sido
@@ -112,7 +136,7 @@ export function montarPromptSemanticoAgro(c: RetrievedAgroConstraints): string {
     }
 
     if (c.incompatibilidades.length > 0) {
-        bloco.push('\n[INCOMPATIBILIDADES ENTRE PRODUTOS NO TANQUE]');
+        bloco.push('\n[INCOMPATIBILIDADES QUE ALCANCAM O QUE ESTA NA CALDA]');
         for (const i of c.incompatibilidades) {
             bloco.push(`- ${i.entre} [${i.gravidade}]: ${i.mecanismo}. ${i.conduta}`);
         }
@@ -135,34 +159,24 @@ export function montarPromptSemanticoAgro(c: RetrievedAgroConstraints): string {
 
 export async function gerarMissaoRestrita(
     contexto: AgroContext,
-    constraints: RetrievedAgroConstraints
-): Promise<AgroResponse> {
-    const payload = {
-        comando_humano: contexto.intencao ?? '',
-        contexto_neo4j: montarPromptSemanticoAgro(constraints),
-        subgrafo_regras: agroPruningPayload(constraints)
-    };
+    constraints: RetrievedAgroConstraints,
+    model?: AgroModel
+): Promise<ResultadoDecodificacao> {
+    const subgrafo = agroPruningPayload(constraints, contexto);
+    const contrato = montarContrato(
+        subgrafo,
+        model ? condutasPorDecisaoAgro(model) : {},
+        constraints.escalonamentos.map(e => `${e.destino}: ${e.detalhe}`)
+    );
 
-    let response: Response;
-    try {
-        response = await fetch(`${ENDPOINT}/generate-constrained`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(TIMEOUT_MS)
-        });
-    } catch (error) {
-        const causa =
-            (error as Error).name === 'TimeoutError'
-                ? `sem resposta em ${TIMEOUT_MS / 1000}s (ajuste SPC_CML_TIMEOUT_MS)`
-                : (error as Error).message;
-        throw new Error(`${ENDPOINT} inacessivel: ${causa}`);
-    }
-
-    if (!response.ok) {
-        throw new Error(`${ENDPOINT} respondeu ${response.status}: ${await response.text()}`);
-    }
-    return (await response.json()) as AgroResponse;
+    return decodificarSobContrato({
+        comando: contexto.intencao ?? '',
+        contexto: montarPromptSemanticoAgro(constraints, contexto),
+        subgrafo,
+        contrato,
+        endpoint: ENDPOINT,
+        timeoutMs: TIMEOUT_MS
+    });
 }
 
 function carregarCenarios(filePath: string): AgroContext[] {
@@ -199,7 +213,7 @@ export async function rodarLote(entrada: string, modelPath: string): Promise<voi
         );
 
         const constraints = retrieveAgroConstraints(model, contexto);
-        const poda = agroPruningPayload(constraints);
+        const poda = agroPruningPayload(constraints, contexto);
 
         console.log(
             `\nGrafo: ${constraints.culturasAtivas.length} culturas ativas, ` +
@@ -217,12 +231,17 @@ export async function rodarLote(entrada: string, modelPath: string): Promise<voi
         }
 
         try {
-            const resposta = await gerarMissaoRestrita(contexto, constraints);
+            const resposta = await gerarMissaoRestrita(contexto, constraints, model);
             console.log(
                 `\nMissao gerada (valido: ${resposta.valido}, ` +
-                    `${resposta.regras_em_g_hat} regras em G_hat):`
+                    `${resposta.regras_em_g_hat} regras em G_hat, ` +
+                `${resposta.tentativas} tentativa(s), contrato: ${resposta.conforme ? 'conforme' : 'violado'}):`
             );
             console.log(resposta.resultado);
+            for (const v of resposta.violacoes) {
+                const onde = v.clausula === null ? 'artefato' : `clausula ${v.clausula + 1}`;
+                console.log(`  [contrato] ${onde}: ${v.mensagem}`);
+            }
             if (resposta.erro) console.log(`Erro reportado: ${resposta.erro}`);
         } catch (error) {
             motorIndisponivel = true;

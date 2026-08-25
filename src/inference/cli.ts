@@ -211,18 +211,23 @@ async function loopDigitarUti(
             );
         }
 
-        const poda = pruningPayload(constraints);
+        const poda = pruningPayload(constraints, contexto);
 
         console.log('\n=== PROMPT SEMANTICO (recuperado do grafo) ===');
-        console.log(montarPromptSemantico(constraints));
+        console.log(montarPromptSemantico(constraints, contexto));
         console.log(`\ndecisoes admissiveis apos a poda: ${poda.acoes_permitidas.join(', ')}`);
 
         try {
-            const resposta = await gerarPlanoRestrito(contexto, constraints);
+            const resposta = await gerarPlanoRestrito(contexto, constraints, model);
             console.log(
-                `\nPlano gerado (valido: ${resposta.valido}, ${resposta.regras_em_g_hat} regras em G_hat):`
+                `\nPlano gerado (valido: ${resposta.valido}, ${resposta.regras_em_g_hat} regras em G_hat, ` +
+                `${resposta.tentativas} tentativa(s), contrato: ${resposta.conforme ? 'conforme' : 'violado'}):`
             );
             console.log(resposta.resultado);
+            for (const v of resposta.violacoes) {
+                const onde = v.clausula === null ? 'artefato' : `clausula ${v.clausula + 1}`;
+                console.log(`  [contrato] ${onde}: ${v.mensagem}`);
+            }
             if (resposta.erro) console.log(`Erro reportado: ${resposta.erro}`);
         } catch (error) {
             console.log(`\nMotor indisponivel: ${(error as Error).message}`);
@@ -287,18 +292,23 @@ async function loopDigitarAgro(
             );
         }
 
-        const poda = agroPruningPayload(constraints);
+        const poda = agroPruningPayload(constraints, contexto);
 
         console.log('\n=== PROMPT SEMANTICO (recuperado do grafo) ===');
-        console.log(montarPromptSemanticoAgro(constraints));
+        console.log(montarPromptSemanticoAgro(constraints, contexto));
         console.log(`\ndecisoes admissiveis apos a poda: ${poda.acoes_permitidas.join(', ')}`);
 
         try {
-            const resposta = await gerarMissaoRestrita(contexto, constraints);
+            const resposta = await gerarMissaoRestrita(contexto, constraints, model);
             console.log(
-                `\nMissao gerada (valido: ${resposta.valido}, ${resposta.regras_em_g_hat} regras em G_hat):`
+                `\nMissao gerada (valido: ${resposta.valido}, ${resposta.regras_em_g_hat} regras em G_hat, ` +
+                `${resposta.tentativas} tentativa(s), contrato: ${resposta.conforme ? 'conforme' : 'violado'}):`
             );
             console.log(resposta.resultado);
+            for (const v of resposta.violacoes) {
+                const onde = v.clausula === null ? 'artefato' : `clausula ${v.clausula + 1}`;
+                console.log(`  [contrato] ${onde}: ${v.mensagem}`);
+            }
             if (resposta.erro) console.log(`Erro reportado: ${resposta.erro}`);
         } catch (error) {
             console.log(`\nMotor indisponivel: ${(error as Error).message}`);
@@ -363,18 +373,23 @@ async function loopDigitarFut(
             );
         }
 
-        const poda = futPruningPayload(constraints);
+        const poda = futPruningPayload(constraints, contexto);
 
         console.log('\n=== PROMPT SEMANTICO (recuperado do grafo) ===');
-        console.log(montarPromptSemanticoFut(constraints));
+        console.log(montarPromptSemanticoFut(constraints, contexto));
         console.log(`\ndecisoes admissiveis apos a poda: ${poda.acoes_permitidas.join(', ')}`);
 
         try {
-            const resposta = await gerarArbitragemRestrita(contexto, constraints);
+            const resposta = await gerarArbitragemRestrita(contexto, constraints, model);
             console.log(
-                `\nDecisao gerada (valido: ${resposta.valido}, ${resposta.regras_em_g_hat} regras em G_hat):`
+                `\nDecisao gerada (valido: ${resposta.valido}, ${resposta.regras_em_g_hat} regras em G_hat, ` +
+                `${resposta.tentativas} tentativa(s), contrato: ${resposta.conforme ? 'conforme' : 'violado'}):`
             );
             console.log(resposta.resultado);
+            for (const v of resposta.violacoes) {
+                const onde = v.clausula === null ? 'artefato' : `clausula ${v.clausula + 1}`;
+                console.log(`  [contrato] ${onde}: ${v.mensagem}`);
+            }
             if (resposta.erro) console.log(`Erro reportado: ${resposta.erro}`);
         } catch (error) {
             console.log(`\nMotor indisponivel: ${(error as Error).message}`);

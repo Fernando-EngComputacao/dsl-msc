@@ -41,6 +41,19 @@ import {
     type ProtocolDef
 } from '../generated/ast.js';
 import { nomesMed } from './documentos.js';
+import {
+    escalar,
+    escalarMapa,
+    formatarNumero,
+    montarSubgrafo,
+    reticuloDeValores,
+    valoresPorDecisao,
+    type ConstantesCenario,
+    type PapeisDominio,
+    type PoliticaItem,
+    type SubgrafoPodado,
+    type ValorAdmissivel
+} from './politica.js';
 import { embedTexto } from './embeddings.js';
 import {
     casamentoLexical,
@@ -70,6 +83,11 @@ export interface DrugPolicy {
     decisoes: string[];
     vias: string[];
     unidades: string[];
+    /** Doses admissiveis por decisao — ver `PoliticaItem.valoresPorDecisao`. */
+    valoresPorDecisao?: Record<string, ValorAdmissivel[]>;
+    /** Doses que o modelo declara admissiveis (reticulo de `valoresOf`). Lista
+     *  vazia significa que o farmaco nao declara limite e o numero segue livre. */
+    valores: ValorAdmissivel[];
     /** Justificativas legiveis das restricoes aplicadas. */
     motivos: string[];
     bloqueado: boolean;
@@ -132,6 +150,133 @@ function unitsOf(drug: DrugDef): string[] {
 }
 
 /**
+ * Doses admissiveis de um farmaco, lidas da bula do proprio modelo.
+ *
+ * O plano de referencia do uti.dsl reporta o DEGRAU (titulacao) num incremento e
+ * 0.0 numa decisao de nao-incremento — entao o reticulo e {0} U {doses nomeadas}
+ * U {multiplos do degrau}, tudo limitado pelo limite leve da bomba (ou, na
+ * falta dele, pela dose maxima). Farmaco sem nenhum desses atributos devolve
+ * lista vazia: o modelo nao declarou limite, e inventar um aqui seria a
+ * arquitetura decidindo no lugar do especialista.
+ */
+function valoresOf(drug: DrugDef): ValorAdmissivel[] {
+    const nomeadas: number[] = [];
+    let passo: number | undefined;
+    let teto: number | undefined;
+    let maxima: number | undefined;
+    let unidade: string | undefined;
+
+    for (const attr of drug.attributes) {
+        if (isDoseLimitAttr(attr)) {
+            unidade ??= attr.value.unit;
+            if (attr.kind === 'maxima') maxima = attr.value.value;
+            else nomeadas.push(attr.value.value);
+        } else if (isTitrationAttr(attr)) {
+            unidade ??= attr.step.unit;
+            passo = attr.step.value;
+        } else if (isPumpLimitAttr(attr)) {
+            unidade ??= attr.soft.unit;
+            teto = attr.soft.value;
+        }
+    }
+
+    if (!unidade) return [];
+    return reticuloDeValores(unidade, nomeadas, passo, teto ?? maxima);
+}
+
+/**
+ * Remove das politicas as decisoes incompativeis com o estado de curso do item:
+ * quem ja esta em uso nao pode ser iniciado, quem nao esta nao pode ser titulado,
+ * reduzido nem suspenso. As duas listas vem dos papeis do dominio — dominio sem
+ * estado de curso nao declara nenhuma e nada e filtrado.
+ */
+function aplicarEstadoDeCurso(politicas: Map<string, DrugPolicy>, emUso: Set<string>): void {
+    const iniciam = new Set(PAPEIS_MED.decisoesQueIniciam ?? []);
+    const continuam = new Set(PAPEIS_MED.decisoesQueContinuam ?? []);
+    if (iniciam.size === 0 && continuam.size === 0) return;
+
+    for (const [nome, policy] of politicas) {
+        const emCurso = emUso.has(nome);
+        const proibidas = emCurso ? iniciam : continuam;
+        const antes = policy.decisoes.length;
+        policy.decisoes = policy.decisoes.filter(d => !proibidas.has(d));
+        if (policy.decisoes.length !== antes) {
+            policy.motivos.push(
+                emCurso
+                    ? 'ja em curso: nao cabe iniciar de novo'
+                    : 'nao esta em curso: so cabe iniciar, substituir ou escalar'
+            );
+        }
+    }
+}
+
+/**
+ * Doses por decisao. O plano de referencia do proprio uti.dsl mostra a
+ * convencao: `AUMENTAR_VAZAO dose 0.05` (o DEGRAU da titulacao) e
+ * `MANTER_BLOQUEADO dose 0.0`. Aqui essa convencao deixa de ser convencao e
+ * vira gramatica.
+ */
+function dosesPorDecisao(drug: DrugDef, decisoes: string[]): Record<string, ValorAdmissivel[]> {
+    let unidade: string | undefined;
+    const iniciais: number[] = [];
+    let passo: number | undefined;
+
+    for (const attr of drug.attributes) {
+        if (isDoseLimitAttr(attr)) {
+            unidade ??= attr.value.unit;
+            if (attr.kind === 'inicial' || attr.kind === 'ataque' || attr.kind === 'manutencao') {
+                iniciais.push(attr.value.value);
+            }
+        } else if (isTitrationAttr(attr)) {
+            unidade ??= attr.step.unit;
+            passo = attr.step.value;
+        }
+    }
+
+    if (!unidade) return {};
+    const u = unidade;
+    const zero = [{ valor: formatarNumero(0), unidade: u }];
+    const deInicio = iniciais.map(v => ({ valor: formatarNumero(v), unidade: u }));
+    const deDegrau = passo !== undefined ? [{ valor: formatarNumero(passo), unidade: u }] : deInicio;
+
+    return valoresPorDecisao(
+        decisoes,
+        [
+            { decisoes: ['INICIAR_INFUSAO'], valores: deInicio.length > 0 ? deInicio : deDegrau },
+            { decisoes: ['AUMENTAR_VAZAO', 'REDUZIR_VAZAO', 'AJUSTAR_DOSE'], valores: deDegrau }
+        ],
+        zero
+    );
+}
+
+/** Papeis da gramatica clinica — ver `PapeisDominio`. */
+export const PAPEIS_MED: PapeisDominio = {
+    artefato: 'plano',
+    clausula: 'ordem',
+    item: 'farmaco',
+    decisao: 'decisao',
+    meio: 'via',
+    quantidade: 'quantidade',
+    campoQuantidade: 'dose',
+    campoSujeito: 'paciente',
+    contexto: 'protocolo',
+    decisoesDeIncremento: ['INICIAR_INFUSAO', 'AUMENTAR_VAZAO', 'AJUSTAR_DOSE'],
+    decisaoDeEscalonamento: 'ESCALAR_EQUIPE',
+    decisoesQueIniciam: ['INICIAR_INFUSAO'],
+    decisoesQueContinuam: ['AUMENTAR_VAZAO', 'REDUZIR_VAZAO', 'MANTER_VAZAO', 'SUSPENDER', 'AJUSTAR_DOSE']
+};
+
+/** decisao -> conduta declarada no `esquema_dados`, para o contrato ligar a
+ *  `sequencia` do cabecalho as clausulas emitidas. */
+export function condutasPorDecisaoMed(model: MedicalModel): Record<string, string> {
+    const schema = model.elements.filter(isDataSchemaDef)[0];
+    const mapa: Record<string, string> = {};
+    if (!schema) return mapa;
+    for (const conduta of schema.conducts) mapa[conduta.decision] = conduta.name;
+    return mapa;
+}
+
+/**
  * Percorre o grafo derivado do modelo e devolve as restricoes ativas.
  * Regras cujo parametro nao esta presente na telemetria sao ignoradas: ausencia de
  * medida nao e evidencia de normalidade, mas tambem nao autoriza bloquear.
@@ -167,11 +312,18 @@ export function retrieveConstraints(
             farmaco: drug.name,
             decisoes: [...schema.decisions],
             vias: vias.length > 0 ? vias : [...schema.routes],
+            valores: valoresOf(drug),
+            valoresPorDecisao: dosesPorDecisao(drug, [...schema.decisions]),
             unidades: unitsOf(drug),
             motivos: [],
             bloqueado: false
         });
     }
+
+    // ------------------------------------------------ estado de curso do item
+    // Fato que o contexto sempre soube e a gramatica nunca soube: o que ja esta
+    // infundindo. Sem isto, "iniciar" um farmaco em curso e uma cadeia licita.
+    aplicarEstadoDeCurso(result.politicas, emUso);
 
     // --------------------------------------------------- protocolos e gatilhos
     for (const protocol of model.elements.filter(isProtocolDef)) {
@@ -250,12 +402,20 @@ export function retrieveConstraints(
                     origem: `populacao ${population.name}`
                 });
             } else if (isPopAdjust(restriction)) {
+                const farmaco = restriction.drug.$refText;
                 result.ajustes.push({
-                    farmaco: restriction.drug.$refText,
+                    farmaco,
                     acao: `multiplicar dose por ${restriction.factor}`,
                     detalhe: restriction.reason ?? '',
                     origem: `populacao ${population.name}`
                 });
+                // A dose ajustada e tao licita quanto a cheia: entra no reticulo
+                // para o fator do modelo ser exprimivel, nao so recomendavel.
+                const politica = result.politicas.get(farmaco);
+                if (politica) {
+                    politica.valores = escalar(politica.valores, restriction.factor);
+                    politica.valoresPorDecisao = escalarMapa(politica.valoresPorDecisao, restriction.factor);
+                }
             }
         }
     }
@@ -321,28 +481,29 @@ export function retrieveConstraints(
  * Mantido para compatibilidade com o motor de decodificacao local; a poda por
  * farmaco (mais estrita) e feita por `src/grammar/constrain.ts`.
  */
-export function pruningPayload(constraints: RetrievedConstraints): {
-    acoes_permitidas: string[];
-    farmacos_liberados: string[];
-    vias_disponiveis: string[];
-} {
-    const acoes = new Set<string>();
-    const farmacos: string[] = [];
-    const vias = new Set<string>();
+export function pruningPayload(
+    constraints: RetrievedConstraints,
+    contexto?: ClinicalContext
+): SubgrafoPodado {
+    const politicas: PoliticaItem[] = [...constraints.politicas.values()].map(p => ({
+        item: p.farmaco,
+        decisoes: p.decisoes,
+        meios: p.vias,
+        unidades: p.unidades,
+        valores: p.valores,
+        valoresPorDecisao: p.valoresPorDecisao,
+        bloqueado: p.bloqueado,
+        motivos: p.motivos
+    }));
 
-    for (const policy of constraints.politicas.values()) {
-        if (policy.decisoes.length === 0) continue;
-        farmacos.push(policy.farmaco);
-        for (const d of policy.decisoes) acoes.add(d);
-        for (const v of policy.vias) vias.add(v);
-    }
-
-    return {
-        acoes_permitidas: [...acoes],
-        farmacos_liberados: farmacos,
-        vias_disponiveis: [...vias]
+    const constantes: ConstantesCenario = {
+        sujeito: contexto?.paciente,
+        contextos: constraints.protocolosAtivos.map(p => p.nome)
     };
+
+    return montarSubgrafo(politicas, PAPEIS_MED, constantes);
 }
+
 /**
  * Recuperacao do subgrafo em foco — etapa OPCIONAL antes de `retrieveConstraints`,
  * usada quando o comando vem digitado em vez de vir de um cenario pronto (ver
@@ -650,9 +811,11 @@ function recomputarPoliticasMed(
         politicas.set(farmaco, {
             farmaco,
             decisoes: [...schema.decisions],
-            // vias e unidades vem da bula do farmaco: nao dependem de contexto.
+            // vias, unidades e doses vem da bula do farmaco: nao dependem de contexto.
             vias: original.vias,
             unidades: original.unidades,
+            valores: original.valores,
+            valoresPorDecisao: original.valoresPorDecisao,
             motivos: [],
             bloqueado: false
         });

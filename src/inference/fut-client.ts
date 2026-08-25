@@ -19,9 +19,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { loadFutModel } from '../database/neo4j-fut.js';
+import { montarContrato } from '../knowledge/contrato.js';
+import { decodificarSobContrato, type ResultadoDecodificacao } from './decodificacao.js';
+import type { FutModel } from '../generated/ast.js';
 import {
     retrieveFutConstraints,
     futPruningPayload,
+    condutasPorDecisaoFut,
     type FutContext,
     type RetrievedFutConstraints
 } from '../knowledge/graphrag-fut.js';
@@ -68,8 +72,28 @@ export const TELEMETRIA_PADRAO: FutContext = {
  * recuperado do grafo. E texto para o LLM ler, mas cada linha saiu de uma
  * comparacao numerica sobre a leitura da partida, nao de uma suposicao.
  */
-export function montarPromptSemanticoFut(c: RetrievedFutConstraints): string {
+export function montarPromptSemanticoFut(
+    c: RetrievedFutConstraints,
+    contexto?: FutContext
+): string {
     const bloco: string[] = [];
+
+    // O estado corrente da partida — o que ja foi marcado e sob que contexto de
+    // competicao — decide quais sancoes fazem sentido, e nunca chegava ao prompt.
+    if (contexto) {
+        bloco.push('[CENARIO]');
+        if (contexto.partida) bloco.push(`- partida: ${contexto.partida}`);
+        const emUso = contexto.infracoesEmUso ?? [];
+        bloco.push(
+            emUso.length > 0
+                ? `- ja marcado nesta partida: ${emUso.join(', ')}`
+                : '- nenhuma infracao marcada ate aqui nesta partida'
+        );
+        if ((contexto.contextos ?? []).length > 0) {
+            bloco.push(`- contextos da competicao: ${contexto.contextos!.join(', ')}`);
+        }
+        bloco.push('');
+    }
 
     if (c.lancesAtivos.length > 0) {
         // Um lance pode entrar aqui por gatilho disparado OU por ter sido
@@ -116,7 +140,7 @@ export function montarPromptSemanticoFut(c: RetrievedFutConstraints): string {
     }
 
     if (c.agravantes.length > 0) {
-        bloco.push('\n[AGRAVANTES ENTRE INFRACOES MARCADAS]');
+        bloco.push('\n[AGRAVANTES QUE ALCANCAM O QUE JA FOI MARCADO]');
         for (const a of c.agravantes) {
             bloco.push(`- ${a.entre} [${a.gravidade}]: ${a.mecanismo}. ${a.conduta}`);
         }
@@ -139,34 +163,24 @@ export function montarPromptSemanticoFut(c: RetrievedFutConstraints): string {
 
 export async function gerarArbitragemRestrita(
     contexto: FutContext,
-    constraints: RetrievedFutConstraints
-): Promise<FutResponse> {
-    const payload = {
-        comando_humano: contexto.intencao ?? '',
-        contexto_neo4j: montarPromptSemanticoFut(constraints),
-        subgrafo_regras: futPruningPayload(constraints)
-    };
+    constraints: RetrievedFutConstraints,
+    model?: FutModel
+): Promise<ResultadoDecodificacao> {
+    const subgrafo = futPruningPayload(constraints, contexto);
+    const contrato = montarContrato(
+        subgrafo,
+        model ? condutasPorDecisaoFut(model) : {},
+        constraints.escalonamentos.map(e => `${e.destino}: ${e.detalhe}`)
+    );
 
-    let response: Response;
-    try {
-        response = await fetch(`${ENDPOINT}/generate-constrained`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(TIMEOUT_MS)
-        });
-    } catch (error) {
-        const causa =
-            (error as Error).name === 'TimeoutError'
-                ? `sem resposta em ${TIMEOUT_MS / 1000}s (ajuste SPC_CML_TIMEOUT_MS)`
-                : (error as Error).message;
-        throw new Error(`${ENDPOINT} inacessivel: ${causa}`);
-    }
-
-    if (!response.ok) {
-        throw new Error(`${ENDPOINT} respondeu ${response.status}: ${await response.text()}`);
-    }
-    return (await response.json()) as FutResponse;
+    return decodificarSobContrato({
+        comando: contexto.intencao ?? '',
+        contexto: montarPromptSemanticoFut(constraints, contexto),
+        subgrafo,
+        contrato,
+        endpoint: ENDPOINT,
+        timeoutMs: TIMEOUT_MS
+    });
 }
 
 function carregarCenarios(filePath: string): FutContext[] {
@@ -203,7 +217,7 @@ export async function rodarLote(entrada: string, modelPath: string): Promise<voi
         );
 
         const constraints = retrieveFutConstraints(model, contexto);
-        const poda = futPruningPayload(constraints);
+        const poda = futPruningPayload(constraints, contexto);
 
         console.log(
             `\nGrafo: ${constraints.lancesAtivos.length} lances ativos, ` +
@@ -221,12 +235,17 @@ export async function rodarLote(entrada: string, modelPath: string): Promise<voi
         }
 
         try {
-            const resposta = await gerarArbitragemRestrita(contexto, constraints);
+            const resposta = await gerarArbitragemRestrita(contexto, constraints, model);
             console.log(
                 `\nDecisao gerada (valido: ${resposta.valido}, ` +
-                    `${resposta.regras_em_g_hat} regras em G_hat):`
+                    `${resposta.regras_em_g_hat} regras em G_hat, ` +
+                `${resposta.tentativas} tentativa(s), contrato: ${resposta.conforme ? 'conforme' : 'violado'}):`
             );
             console.log(resposta.resultado);
+            for (const v of resposta.violacoes) {
+                const onde = v.clausula === null ? 'artefato' : `clausula ${v.clausula + 1}`;
+                console.log(`  [contrato] ${onde}: ${v.mensagem}`);
+            }
             if (resposta.erro) console.log(`Erro reportado: ${resposta.erro}`);
         } catch (error) {
             motorIndisponivel = true;

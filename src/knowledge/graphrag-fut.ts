@@ -42,6 +42,15 @@ import {
     type SituationDef
 } from '../generated/ast.js';
 import { nomesFut } from './documentos.js';
+import {
+    formatarNumero,
+    montarSubgrafo,
+    type ConstantesCenario,
+    type PapeisDominio,
+    type PoliticaItem,
+    type SubgrafoPodado,
+    type ValorAdmissivel
+} from './politica.js';
 import { embedTexto } from './embeddings.js';
 import {
     casamentoLexical,
@@ -71,6 +80,8 @@ export interface InfractionPolicy {
     decisoes: string[];
     reinicios: string[];
     unidades: string[];
+    /** Minuto admissivel na marcacao — o da leitura corrente, nao um qualquer. */
+    valores: ValorAdmissivel[];
     motivos: string[];
     bloqueado: boolean;
 }
@@ -122,6 +133,51 @@ function unitsOf(infraction: InfractionDef): string[] {
 }
 
 /**
+ * Minuto admissivel de uma marcacao.
+ *
+ * Diferente de dose e vazao, o minuto nao e uma escolha do arbitro: e a leitura
+ * do cronometro, que o cenario ja informa. Entao o "reticulo" aqui tem um
+ * elemento so — e escrever outro minuto na sumula deixa de ser exprimivel.
+ * Sem `minuto_partida` na leitura, volta vazio e o campo segue livre.
+ */
+function valoresDaLeitura(telemetria: Record<string, number>): ValorAdmissivel[] {
+    const minuto = telemetria['minuto_partida'];
+    if (minuto === undefined) return [];
+    const acrescimo = telemetria['acrescimo'] ?? 0;
+    const valores = new Set([formatarNumero(minuto)]);
+    // Nos acrescimos, tanto o minuto corrido quanto o regulamentar sao a mesma
+    // marcacao para a sumula; o modelo aceita os dois.
+    if (acrescimo > 0) valores.add(formatarNumero(minuto - acrescimo));
+    return [...valores].map(valor => ({ valor, unidade: 'min' }));
+}
+
+/** Papeis da gramatica de arbitragem — ver `PapeisDominio`. */
+export const PAPEIS_FUT: PapeisDominio = {
+    artefato: 'arbitragem',
+    clausula: 'marcacao',
+    item: 'infracao',
+    decisao: 'decisao',
+    meio: 'reinicio',
+    quantidade: 'quantidade',
+    campoQuantidade: 'minuto',
+    campoSujeito: 'partida',
+    contexto: 'lance',
+    // Uma sancao mais grave e o analogo do incremento: expoe mais o jogador.
+    decisoesDeIncremento: ['CARTAO_AMARELO', 'CARTAO_VERMELHO', 'EXPULSAR', 'PENALTI'],
+    decisaoDeEscalonamento: 'ACIONAR_VAR'
+    // Sem estado de curso: uma infracao nao "esta em andamento" como uma infusao.
+};
+
+/** decisao -> conduta declarada no `esquema_dados`. */
+export function condutasPorDecisaoFut(model: FutModel): Record<string, string> {
+    const schema = model.elements.filter(isFutSchemaDef)[0];
+    const mapa: Record<string, string> = {};
+    if (!schema) return mapa;
+    for (const conduta of schema.conducts) mapa[conduta.decision] = conduta.name;
+    return mapa;
+}
+
+/**
  * Percorre o grafo derivado do modelo e devolve as restricoes ativas.
  * Regras cujo parametro nao esta na leitura da partida sao ignoradas: leitura
  * ausente nao e evidencia de condicao segura, mas tambem nao autoriza bloquear.
@@ -158,6 +214,7 @@ export function retrieveFutConstraints(
             decisoes: [...schema.decisions],
             reinicios: [...schema.restarts],
             unidades: unitsOf(infraction),
+            valores: valoresDaLeitura(telemetria),
             motivos: [],
             bloqueado: false
         });
@@ -303,30 +360,29 @@ export function retrieveFutConstraints(
  * uniao das decisoes de todas as infracoes passa a valer para todas — o que
  * devolve o produto cartesiano ao decodificador.
  */
-export function futPruningPayload(constraints: RetrievedFutConstraints): {
-    acoes_permitidas: string[];
-    farmacos_liberados: string[];
-    vias_disponiveis: string[];
-} {
-    const acoes = new Set<string>();
-    const infracoes: string[] = [];
-    const reinicios = new Set<string>();
+export function futPruningPayload(
+    constraints: RetrievedFutConstraints,
+    contexto?: FutContext
+): SubgrafoPodado {
+    const politicas: PoliticaItem[] = [...constraints.politicas.values()].map(p => ({
+        item: p.infracao,
+        decisoes: p.decisoes,
+        meios: p.reinicios,
+        unidades: p.unidades,
+        valores: p.valores,
+        // Sem mapa por decisao: o minuto e o da leitura, qualquer que seja a sancao.
+        bloqueado: p.bloqueado,
+        motivos: p.motivos
+    }));
 
-    for (const policy of constraints.politicas.values()) {
-        if (policy.decisoes.length === 0) continue;
-        infracoes.push(policy.infracao);
-        for (const d of policy.decisoes) acoes.add(d);
-        for (const r of policy.reinicios) reinicios.add(r);
-    }
-
-    // As chaves seguem os nomes do motor Python (MAPA_PODA em grammar_from_kg.py),
-    // que sao os mesmos nos tres dominios: o motor e agnostico de dominio.
-    return {
-        acoes_permitidas: [...acoes],
-        farmacos_liberados: infracoes,
-        vias_disponiveis: [...reinicios]
+    const constantes: ConstantesCenario = {
+        sujeito: contexto?.partida,
+        contextos: constraints.lancesAtivos.map(l => l.nome)
     };
+
+    return montarSubgrafo(politicas, PAPEIS_FUT, constantes);
 }
+
 /**
  * Recuperacao do subgrafo em foco — espelha `graphrag.ts::retrieverFoco` e
  * `graphrag-agro.ts::retrieverFocoAgro` no dominio da arbitragem. So decide
@@ -343,6 +399,7 @@ export interface FutFoco {
     /** Como cada no entrou no foco — para o log da interface e para auditoria. */
     origem: Map<string, OrigemFoco>;
 }
+
 
 export type OrigemFoco = 'lexical' | 'vetorial' | 'grafo';
 
@@ -627,6 +684,7 @@ function recomputarPoliticasFut(
             // reinicios e unidades vem da propria infracao: nao dependem do contexto.
             reinicios: original.reinicios,
             unidades: original.unidades,
+            valores: original.valores,
             motivos: [],
             bloqueado: false
         });

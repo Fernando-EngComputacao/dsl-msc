@@ -16,12 +16,16 @@
 
 import * as path from 'node:path';
 import { loadModel } from '../database/neo4j.js';
+import { montarContrato } from '../knowledge/contrato.js';
 import {
     retrieveConstraints,
     pruningPayload,
+    condutasPorDecisaoMed,
     type ClinicalContext,
     type RetrievedConstraints
 } from '../knowledge/graphrag.js';
+import { decodificarSobContrato, type ResultadoDecodificacao } from './decodificacao.js';
+import type { MedicalModel } from '../generated/ast.js';
 
 const ENDPOINT = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
 
@@ -52,8 +56,30 @@ interface ICUResponse {
  * bloco factual recuperado do grafo. E texto para o LLM ler, mas cada linha aqui
  * saiu de uma comparacao numerica sobre a telemetria, nao de uma suposicao.
  */
-export function montarPromptSemantico(constraints: RetrievedConstraints): string {
+export function montarPromptSemantico(
+    constraints: RetrievedConstraints,
+    contexto?: ClinicalContext
+): string {
     const bloco: string[] = [];
+
+    // O que ja esta correndo no leito muda a decisao licita (nao se INICIA o que
+    // ja infunde) e nunca chegava ao prompt: so aparecia, de lado, no bloco de
+    // interacoes. Sem este bloco, o modelo escolhe entre iniciar e titular no
+    // escuro.
+    if (contexto) {
+        bloco.push('[CENARIO]');
+        if (contexto.paciente) bloco.push(`- paciente: ${contexto.paciente}`);
+        const emUso = contexto.farmacosEmUso ?? [];
+        bloco.push(
+            emUso.length > 0
+                ? `- em infusao neste momento: ${emUso.join(', ')} (para estes cabe titular, reduzir ou suspender — nao iniciar)`
+                : '- nenhum farmaco em infusao neste momento (so cabe iniciar)'
+        );
+        if ((contexto.populacoes ?? []).length > 0) {
+            bloco.push(`- populacoes especiais: ${contexto.populacoes!.join(', ')}`);
+        }
+        bloco.push('');
+    }
 
     if (constraints.protocolosAtivos.length > 0) {
         // Um protocolo pode entrar aqui por gatilho disparado OU por ter sido
@@ -122,36 +148,24 @@ export function montarPromptSemantico(constraints: RetrievedConstraints): string
 
 export async function gerarPlanoRestrito(
     contexto: ClinicalContext,
-    constraints: RetrievedConstraints
-): Promise<ICUResponse> {
-    const payload: ICURequest = {
-        comando_humano: contexto.intencao ?? '',
-        contexto_neo4j: montarPromptSemantico(constraints),
-        subgrafo_regras: pruningPayload(constraints)
-    };
+    constraints: RetrievedConstraints,
+    model?: MedicalModel
+): Promise<ResultadoDecodificacao> {
+    const subgrafo = pruningPayload(constraints, contexto);
+    const contrato = montarContrato(
+        subgrafo,
+        model ? condutasPorDecisaoMed(model) : {},
+        constraints.escalonamentos.map(e => `${e.destino}: ${e.detalhe}`)
+    );
 
-    // A primeira chamada carrega os pesos sob demanda (get_model, no motor Python)
-    // e pode levar minutos; sem teto, porem, uma falha de rede fica indistinguivel
-    // de um carregamento lento e o lote trava sem diagnostico.
-    let response: Response;
-    try {
-        response = await fetch(`${ENDPOINT}/generate-constrained`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(TIMEOUT_MS)
-        });
-    } catch (error) {
-        const causa = (error as Error).name === 'TimeoutError'
-            ? `sem resposta em ${TIMEOUT_MS / 1000}s (ajuste SPC_CML_TIMEOUT_MS)`
-            : (error as Error).message;
-        throw new Error(`${ENDPOINT} inacessivel: ${causa}`);
-    }
-
-    if (!response.ok) {
-        throw new Error(`${ENDPOINT} respondeu ${response.status}: ${await response.text()}`);
-    }
-    return (await response.json()) as ICUResponse;
+    return decodificarSobContrato({
+        comando: contexto.intencao ?? '',
+        contexto: montarPromptSemantico(constraints, contexto),
+        subgrafo,
+        contrato,
+        endpoint: ENDPOINT,
+        timeoutMs: TIMEOUT_MS
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -168,10 +182,10 @@ async function main(): Promise<void> {
     const modelPath = process.argv[2] ?? path.join('src', 'examples', 'med', 'uti.dsl');
     const model = await loadModel(modelPath);
     const constraints = retrieveConstraints(model, CONTEXTO);
-    const poda = pruningPayload(constraints);
+    const poda = pruningPayload(constraints, CONTEXTO);
 
     console.log('=== PROMPT SEMANTICO (recuperado do grafo) ===');
-    console.log(montarPromptSemantico(constraints));
+    console.log(montarPromptSemantico(constraints, CONTEXTO));
 
     console.log('\n=== SUBGRAFO DE PODA (define G_hat no motor) ===');
     console.log(`  acoes_permitidas:  ${poda.acoes_permitidas.join(', ')}`);
@@ -180,7 +194,7 @@ async function main(): Promise<void> {
 
     console.log(`\n=== CHAMANDO ${ENDPOINT}/generate-constrained ===`);
     try {
-        const resposta = await gerarPlanoRestrito(CONTEXTO, constraints);
+        const resposta = await gerarPlanoRestrito(CONTEXTO, constraints, model);
         console.log(`Plano gerado (valido: ${resposta.valido}):`);
         console.log(resposta.resultado);
         if (resposta.erro) console.log(`Erro reportado pelo motor: ${resposta.erro}`);

@@ -34,8 +34,9 @@
         "test:earley": "tsx src/test/earley.test.ts",
         "test:avaliar": "tsx src/test/avaliar.test.ts",
         "test:grammar": "cd src/python_engine && python test_grammar.py",
-        "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:foco && npm run test:grammar",
-        "test:foco": "tsx src/test/foco.test.ts"
+        "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:foco && npm run test:contrato && npm run test:grammar",
+        "test:foco": "tsx src/test/foco.test.ts",
+        "test:contrato": "tsx src/test/contrato.test.ts"
     },
     "keywords": [
         "dsl",

@@ -289,8 +289,8 @@ async function processarMed(
         await session.close();
     }
 
-    const poda = pruningPayload(constraints);
-    const promptSemantico = montarPromptSemantico(constraints);
+    const poda = pruningPayload(constraints, contexto);
+    const promptSemantico = montarPromptSemantico(constraints, contexto);
     const sorteio = { paciente: contexto.paciente, telemetria, populacoes: contexto.populacoes, farmacosEmUso: contexto.farmacosEmUso };
 
     let motivoValidacao: string | undefined;
@@ -304,7 +304,7 @@ async function processarMed(
     }
 
     await estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
-    const resposta = await gerarPlanoRestrito(contexto, constraints);
+    const resposta = await gerarPlanoRestrito(contexto, constraints, modeloMed);
     await estagio('Plano gerado.');
 
     return {
@@ -373,8 +373,8 @@ async function processarAgro(
         await session.close();
     }
 
-    const poda = agroPruningPayload(constraints);
-    const promptSemantico = montarPromptSemanticoAgro(constraints);
+    const poda = agroPruningPayload(constraints, contexto);
+    const promptSemantico = montarPromptSemanticoAgro(constraints, contexto);
     const sorteio = { talhao: contexto.talhao, telemetria, areas: contexto.areas, produtosEmUso: contexto.produtosEmUso };
 
     let motivoValidacao: string | undefined;
@@ -388,7 +388,7 @@ async function processarAgro(
     }
 
     await estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
-    const resposta = await gerarMissaoRestrita(contexto, constraints);
+    const resposta = await gerarMissaoRestrita(contexto, constraints, modeloAgro);
     await estagio('Missão gerada.');
 
     return {
@@ -457,8 +457,8 @@ async function processarFut(
         await session.close();
     }
 
-    const poda = futPruningPayload(constraints);
-    const promptSemantico = montarPromptSemanticoFut(constraints);
+    const poda = futPruningPayload(constraints, contexto);
+    const promptSemantico = montarPromptSemanticoFut(constraints, contexto);
     const sorteio = { partida: contexto.partida, telemetria, contextos: contexto.contextos, infracoesEmUso: contexto.infracoesEmUso };
 
     let motivoValidacao: string | undefined;
@@ -472,7 +472,7 @@ async function processarFut(
     }
 
     await estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
-    const resposta = await gerarArbitragemRestrita(contexto, constraints);
+    const resposta = await gerarArbitragemRestrita(contexto, constraints, modeloFut);
     await estagio('Decisão gerada.');
 
     return {

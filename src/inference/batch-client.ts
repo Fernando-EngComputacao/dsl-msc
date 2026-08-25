@@ -71,7 +71,7 @@ export async function rodarLote(entrada: string, modelPath: string): Promise<voi
         );
 
         const constraints = retrieveConstraints(model, contexto);
-        const poda = pruningPayload(constraints);
+        const poda = pruningPayload(constraints, contexto);
 
         console.log(
             `\nGrafo: ${constraints.protocolosAtivos.length} protocolos ativos, ` +
@@ -89,10 +89,15 @@ export async function rodarLote(entrada: string, modelPath: string): Promise<voi
         }
 
         try {
-            const resposta = await gerarPlanoRestrito(contexto, constraints);
+            const resposta = await gerarPlanoRestrito(contexto, constraints, model);
             console.log(`\nPlano gerado (valido: ${resposta.valido}, ` +
-                `${resposta.regras_em_g_hat} regras em G_hat):`);
+                `${resposta.regras_em_g_hat} regras em G_hat, ` +
+                `${resposta.tentativas} tentativa(s), contrato: ${resposta.conforme ? 'conforme' : 'violado'}):`);
             console.log(resposta.resultado);
+            for (const v of resposta.violacoes) {
+                const onde = v.clausula === null ? 'artefato' : `clausula ${v.clausula + 1}`;
+                console.log(`  [contrato] ${onde}: ${v.mensagem}`);
+            }
             if (resposta.erro) console.log(`Erro reportado: ${resposta.erro}`);
         } catch (error) {
             motorIndisponivel = true;

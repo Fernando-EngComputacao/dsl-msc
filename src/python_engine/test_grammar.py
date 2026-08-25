@@ -127,8 +127,123 @@ def main() -> int:
             falhas += 1
         print(f"      {marca}: {descricao}")
 
+    # ---------------------------------------------------------------- [7]
+    # Especializacao por item: a poda por vocabulario acima ainda deixa o
+    # produto cartesiano de pe (qualquer farmaco com qualquer decisao liberada).
+    # Com a politica POR ITEM, cada par (item, decisao) carrega os seus proprios
+    # meios e o seu proprio valor — e o caso real que motivou esta fase deixa de
+    # ser derivavel.
+    subgrafo_especializado = {
+        "papeis": {
+            "artefato": "plano",
+            "clausula": "ordem",
+            "item": "farmaco",
+            "decisao": "decisao",
+            "meio": "via",
+            "quantidade": "quantidade",
+            "campoQuantidade": "dose",
+            "campoSujeito": "paciente",
+            "contexto": "protocolo",
+        },
+        "constantes": {"sujeito": "PT-2026-4001", "contextos": ["Choque_Septico"]},
+        "politicas": [
+            {
+                # Noradrenalina JA em infusao: iniciar de novo nao cabe, e o
+                # incremento e o degrau declarado (titulacao 0.05), nao um numero
+                # qualquer.
+                "item": "Noradrenalina",
+                "decisoes": ["AUMENTAR_VAZAO", "MANTER_BLOQUEADO"],
+                "meios": ["ACESSO_CENTRAL"],
+                "valores": [{"valor": "0.05", "unidade": "mcg/kg/min"}],
+                "valoresPorDecisao": {
+                    "AUMENTAR_VAZAO": [{"valor": "0.05", "unidade": "mcg/kg/min"}],
+                    "MANTER_BLOQUEADO": [{"valor": "0.0", "unidade": "mcg/kg/min"}],
+                },
+            },
+            {
+                # Vasopressina fora de curso: so iniciar, e no maximo o limite
+                # rigido de 0.04 U/min declarado no uti.dsl.
+                "item": "Vasopressina",
+                "decisoes": ["INICIAR_INFUSAO"],
+                "meios": ["ACESSO_CENTRAL"],
+                "valores": [{"valor": "0.01", "unidade": "U/min"}],
+                "valoresPorDecisao": {
+                    "INICIAR_INFUSAO": [{"valor": "0.01", "unidade": "U/min"}]
+                },
+            },
+        ],
+    }
+
+    g_esp = build_parser(
+        parse_bnf(gramatica_do_subgrafo(subgrafo_especializado, rules, inicio="plano")),
+        start="plano",
+    )
+
+    cabecalho = (
+        "plano P para Choque_Septico { esquema_referencia AssistenteUTI_v2 "
+        "paciente 'PT-2026-4001' sequencia [ Titular_Vasopressor ] "
+    )
+    rodape = "auditoria 'plano derivado sob restricao gramatical' }"
+    def _plano(ordem):
+        return cabecalho + ordem + " " + rodape
+
+    ORDEM_OK = (
+        "ordem Noradrenalina decisao AUMENTAR_VAZAO dose 0.05 mcg/kg/min "
+        "via ACESSO_CENTRAL justificativa 'PAM 52 abaixo do alvo'"
+    )
+    casos_esp = [
+        ("aceita o par (item, decisao, valor) que o modelo declara", _plano(ORDEM_OK), True),
+        (
+            "recusa iniciar farmaco que ja esta em infusao",
+            _plano(ORDEM_OK.replace("AUMENTAR_VAZAO", "INICIAR_INFUSAO")),
+            False,
+        ),
+        (
+            "recusa dose fora do degrau declarado (0.4 no lugar de 0.05)",
+            _plano(ORDEM_OK.replace("dose 0.05", "dose 0.4")),
+            False,
+        ),
+        (
+            "recusa valor acima do limite rigido da bomba (0.1 U/min)",
+            _plano(
+                "ordem Vasopressina decisao INICIAR_INFUSAO dose 0.1 U/min "
+                "via ACESSO_CENTRAL justificativa 'segunda linha'"
+            ),
+            False,
+        ),
+        (
+            "recusa decisao que nao cabe ao item (MANTER_BLOQUEADO em item livre)",
+            _plano(
+                "ordem Vasopressina decisao MANTER_BLOQUEADO dose 0.0 U/min "
+                "via ACESSO_CENTRAL justificativa 'segunda linha'"
+            ),
+            False,
+        ),
+        (
+            "recusa identificador de paciente copiado do exemplar few-shot",
+            _plano(ORDEM_OK).replace("PT-2026-4001", "PT-2026-0031"),
+            False,
+        ),
+        (
+            "recusa protocolo fora do foco recuperado",
+            _plano(ORDEM_OK).replace("Choque_Septico", "Controle_Glicemico_UTI"),
+            False,
+        ),
+    ]
+    print("[7] G_hat especializada por item (o produto cartesiano deixa de existir):")
+    for descricao, programa, esperado in casos_esp:
+        try:
+            g_esp.parse(programa)
+            obtido = True
+        except Exception:
+            obtido = False
+        marca = "ok" if obtido == esperado else "FALHA"
+        if obtido != esperado:
+            falhas += 1
+        print(f"      {marca}: {descricao}")
+
     gbnf = to_gbnf(rules, start="plano")
-    print(f"[7] GBNF exportada para mascaramento de logits: {len(gbnf.splitlines())} regras")
+    print(f"[8] GBNF exportada para mascaramento de logits: {len(gbnf.splitlines())} regras")
 
     print("\nRESULTADO:", "OK" if falhas == 0 else f"{falhas} falha(s)")
     return 0 if falhas == 0 else 1

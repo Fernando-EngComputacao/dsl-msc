@@ -37,6 +37,19 @@ import {
     type ProductDef
 } from '../generated/ast.js';
 import { nomesAgro } from './documentos.js';
+import {
+    escalar,
+    escalarMapa,
+    formatarNumero,
+    montarSubgrafo,
+    reticuloDeValores,
+    valoresPorDecisao,
+    type ConstantesCenario,
+    type PapeisDominio,
+    type PoliticaItem,
+    type SubgrafoPodado,
+    type ValorAdmissivel
+} from './politica.js';
 import { embedTexto } from './embeddings.js';
 import {
     casamentoLexical,
@@ -66,6 +79,10 @@ export interface ProductPolicy {
     decisoes: string[];
     modos: string[];
     unidades: string[];
+    /** Vazoes que o modelo declara admissiveis; vazio = sem limite declarado. */
+    valores: ValorAdmissivel[];
+    /** Vazoes por decisao — ver `PoliticaItem.valoresPorDecisao`. */
+    valoresPorDecisao?: Record<string, ValorAdmissivel[]>;
     motivos: string[];
     bloqueado: boolean;
 }
@@ -121,6 +138,111 @@ function unitsOf(product: ProductDef): string[] {
 }
 
 /**
+ * Vazoes admissiveis de um produto: {0} U {doses declaradas}, limitadas pela
+ * dose maxima. Sem `dose` declarada, devolve vazio e o numero segue livre.
+ */
+function valoresOf(product: ProductDef): ValorAdmissivel[] {
+    const nomeadas: number[] = [];
+    let maxima: number | undefined;
+    let unidade: string | undefined;
+
+    for (const attr of product.attributes) {
+        if (!isDoseAttr(attr)) continue;
+        unidade ??= attr.value.unit;
+        if (attr.kind === 'maxima') maxima = attr.value.value;
+        else nomeadas.push(attr.value.value);
+    }
+
+    if (!unidade) return [];
+    if (maxima !== undefined) nomeadas.push(maxima);
+    return reticuloDeValores(unidade, nomeadas, undefined, maxima);
+}
+
+/**
+ * Vazoes por decisao: quem aplica leva a vazao declarada (e a ajustada pela
+ * area); quem bloqueia, aguarda ou escala leva 0.0 — uma missao que "aguarda
+ * janela" com vazao de 2 L/ha e uma contradicao que a gramatica passa a nao
+ * gerar.
+ */
+function vazoesPorDecisao(product: ProductDef, decisoes: string[]): Record<string, ValorAdmissivel[]> {
+    let unidade: string | undefined;
+    const taxas: number[] = [];
+
+    for (const attr of product.attributes) {
+        if (!isDoseAttr(attr)) continue;
+        unidade ??= attr.value.unit;
+        taxas.push(attr.value.value);
+    }
+    if (!unidade) return {};
+
+    const u = unidade;
+    const zero = [{ valor: formatarNumero(0), unidade: u }];
+    const aplicaveis = taxas.map(v => ({ valor: formatarNumero(v), unidade: u }));
+
+    return valoresPorDecisao(
+        decisoes,
+        [
+            {
+                decisoes: ['INICIAR_APLICACAO', 'AUMENTAR_VAZAO', 'REDUZIR_VAZAO', 'MANTER_VAZAO', 'SUBSTITUIR'],
+                valores: aplicaveis
+            }
+        ],
+        zero
+    );
+}
+
+/** Papeis da gramatica agricola — ver `PapeisDominio`. */
+export const PAPEIS_AGRO: PapeisDominio = {
+    artefato: 'missao',
+    clausula: 'aplicacao',
+    item: 'produto',
+    decisao: 'decisao',
+    meio: 'modo',
+    quantidade: 'quantidade',
+    campoQuantidade: 'vazao',
+    campoSujeito: 'talhao',
+    contexto: 'cultura',
+    decisoesDeIncremento: ['INICIAR_APLICACAO', 'AUMENTAR_VAZAO'],
+    decisaoDeEscalonamento: 'ACIONAR_AGRONOMO',
+    decisoesQueIniciam: ['INICIAR_APLICACAO'],
+    decisoesQueContinuam: ['AUMENTAR_VAZAO', 'REDUZIR_VAZAO', 'MANTER_VAZAO', 'SUSPENDER']
+};
+
+/** decisao -> conduta declarada no `esquema_dados`. */
+export function condutasPorDecisaoAgro(model: AgroModel): Record<string, string> {
+    const schema = model.elements.filter(isAgroSchemaDef)[0];
+    const mapa: Record<string, string> = {};
+    if (!schema) return mapa;
+    for (const conduta of schema.conducts) mapa[conduta.decision] = conduta.name;
+    return mapa;
+}
+
+/**
+ * Remove das politicas as decisoes incompativeis com o estado de curso do item
+ * (produto ja carregado no tanque nao se "inicia" de novo). Ver o gemeo em
+ * graphrag.ts — as duas listas vem dos papeis, nao de nomes de dominio.
+ */
+function aplicarEstadoDeCurso(politicas: Map<string, ProductPolicy>, emUso: Set<string>): void {
+    const iniciam = new Set(PAPEIS_AGRO.decisoesQueIniciam ?? []);
+    const continuam = new Set(PAPEIS_AGRO.decisoesQueContinuam ?? []);
+    if (iniciam.size === 0 && continuam.size === 0) return;
+
+    for (const [nome, policy] of politicas) {
+        const emCurso = emUso.has(nome);
+        const proibidas = emCurso ? iniciam : continuam;
+        const antes = policy.decisoes.length;
+        policy.decisoes = policy.decisoes.filter(d => !proibidas.has(d));
+        if (policy.decisoes.length !== antes) {
+            policy.motivos.push(
+                emCurso
+                    ? 'ja na calda: nao cabe iniciar de novo'
+                    : 'nao esta na calda: so cabe iniciar, substituir ou escalar'
+            );
+        }
+    }
+}
+
+/**
  * Percorre o grafo derivado do modelo e devolve as restricoes ativas.
  * Regras cujo parametro nao esta na telemetria sao ignoradas: sensor ausente nao
  * e evidencia de condicao segura, mas tambem nao autoriza bloquear.
@@ -157,10 +279,15 @@ export function retrieveAgroConstraints(
             decisoes: [...schema.decisions],
             modos: [...schema.modes],
             unidades: unitsOf(product),
+            valores: valoresOf(product),
+            valoresPorDecisao: vazoesPorDecisao(product, [...schema.decisions]),
             motivos: [],
             bloqueado: false
         });
     }
+
+    // ------------------------------------------------ estado de curso do item
+    aplicarEstadoDeCurso(result.politicas, emUso);
 
     // ----------------------------------------------------- culturas e gatilhos
     for (const culture of model.elements.filter(isCultureDef)) {
@@ -238,12 +365,19 @@ export function retrieveAgroConstraints(
                     origem: `area ${area.name}`
                 });
             } else if (isAreaAdjust(restriction)) {
+                const produto = restriction.product.$refText;
                 result.ajustes.push({
-                    produto: restriction.product.$refText,
+                    produto,
                     acao: `multiplicar vazao por ${restriction.factor}`,
                     detalhe: restriction.reason ?? '',
                     origem: `area ${area.name}`
                 });
+                // A vazao reduzida pela area tambem precisa ser exprimivel.
+                const politica = result.politicas.get(produto);
+                if (politica) {
+                    politica.valores = escalar(politica.valores, restriction.factor);
+                    politica.valoresPorDecisao = escalarMapa(politica.valoresPorDecisao, restriction.factor);
+                }
             }
         }
     }
@@ -301,29 +435,27 @@ export function retrieveAgroConstraints(
  * QUALQUER decisao admissivel, e a uniao das decisoes de todos os produtos passa
  * a valer para todos — o que devolve o produto cartesiano ao decodificador.
  */
-export function agroPruningPayload(constraints: RetrievedAgroConstraints): {
-    acoes_permitidas: string[];
-    farmacos_liberados: string[];
-    vias_disponiveis: string[];
-} {
-    const acoes = new Set<string>();
-    const produtos: string[] = [];
-    const modos = new Set<string>();
+export function agroPruningPayload(
+    constraints: RetrievedAgroConstraints,
+    contexto?: AgroContext
+): SubgrafoPodado {
+    const politicas: PoliticaItem[] = [...constraints.politicas.values()].map(p => ({
+        item: p.produto,
+        decisoes: p.decisoes,
+        meios: p.modos,
+        unidades: p.unidades,
+        valores: p.valores,
+        valoresPorDecisao: p.valoresPorDecisao,
+        bloqueado: p.bloqueado,
+        motivos: p.motivos
+    }));
 
-    for (const policy of constraints.politicas.values()) {
-        if (policy.decisoes.length === 0) continue;
-        produtos.push(policy.produto);
-        for (const d of policy.decisoes) acoes.add(d);
-        for (const m of policy.modos) modos.add(m);
-    }
-
-    // As chaves seguem os nomes do motor Python (MAPA_PODA em grammar_from_kg.py),
-    // que sao os mesmos nos dois dominios: o motor e agnostico de dominio.
-    return {
-        acoes_permitidas: [...acoes],
-        farmacos_liberados: produtos,
-        vias_disponiveis: [...modos]
+    const constantes: ConstantesCenario = {
+        sujeito: contexto?.talhao,
+        contextos: constraints.culturasAtivas.map(c => c.nome)
     };
+
+    return montarSubgrafo(politicas, PAPEIS_AGRO, constantes);
 }
 /**
  * Recuperacao do subgrafo em foco — espelha `graphrag.ts::retrieverFoco` no
@@ -625,6 +757,8 @@ function recomputarPoliticasAgro(
             modos: [...schema.modes],
             // unidades vem da bula do produto: nao dependem de contexto nenhum.
             unidades: original.unidades,
+            valores: original.valores,
+            valoresPorDecisao: original.valoresPorDecisao,
             motivos: [],
             bloqueado: false
         });

@@ -853,7 +853,7 @@ async function main(): Promise<void> {
                 farmacos: [...infracoesFoco],
                 protocolos: constraints.lancesAtivos.map(l => l.nome)
             },
-            promptSemantico: montarPromptSemanticoFut(constraints),
+            promptSemantico: montarPromptSemanticoFut(constraints, contexto),
             plano: montarArbitragem(linha, contexto, resultado),
             description: resultado.descricao,
             ordensEsperadas: resultado.marcacoes.map(m => ({ farmaco: m.infracao, decisao: m.decisao })),
