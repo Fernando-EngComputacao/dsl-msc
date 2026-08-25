@@ -202,6 +202,7 @@ export const PAPEIS_AGRO: PapeisDominio = {
     campoQuantidade: 'vazao',
     campoSujeito: 'talhao',
     contexto: 'cultura',
+    conduta: 'conduta',
     decisoesDeIncremento: ['INICIAR_APLICACAO', 'AUMENTAR_VAZAO'],
     decisaoDeEscalonamento: 'ACIONAR_AGRONOMO',
     decisoesQueIniciam: ['INICIAR_APLICACAO'],
@@ -209,6 +210,11 @@ export const PAPEIS_AGRO: PapeisDominio = {
 };
 
 /** decisao -> conduta declarada no `esquema_dados`. */
+/** Nome do `esquema_dados` do modelo — o cabecalho do artefato o cita. */
+export function esquemaDeDadosAgro(model: AgroModel): string | undefined {
+    return model.elements.filter(isAgroSchemaDef)[0]?.name;
+}
+
 export function condutasPorDecisaoAgro(model: AgroModel): Record<string, string> {
     const schema = model.elements.filter(isAgroSchemaDef)[0];
     const mapa: Record<string, string> = {};

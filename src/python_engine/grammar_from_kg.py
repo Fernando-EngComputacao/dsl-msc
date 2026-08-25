@@ -209,6 +209,21 @@ def especializar_por_item(
         if restantes:
             novas[contexto_sym] = Rule(contexto_sym, restantes)
 
+    # As condutas da `sequencia` sao restringidas passo a passo pela
+    # decodificacao incremental: a cada elemento aceito, o que ja foi listado sai
+    # da lista, e so as condutas efetivamente realizadas pelas ordens entram.
+    # Fora desse modo a chave nao vem e a regra fica como estava.
+    conduta_sym = papeis.get("conduta")
+    condutas = (constantes or {}).get("condutas")
+    if conduta_sym and conduta_sym in novas and condutas is not None:
+        permitidas = set(condutas)
+        restantes = [
+            a
+            for a in novas[conduta_sym].alts
+            if len(a) == 1 and a[0].strip('"') in permitidas
+        ]
+        novas[conduta_sym] = Rule(conduta_sym, restantes)
+
     return novas
 
 

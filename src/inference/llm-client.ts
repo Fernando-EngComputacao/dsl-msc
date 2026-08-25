@@ -21,10 +21,11 @@ import {
     retrieveConstraints,
     pruningPayload,
     condutasPorDecisaoMed,
+    esquemaDeDadosMed,
     type ClinicalContext,
     type RetrievedConstraints
 } from '../knowledge/graphrag.js';
-import { decodificarSobContrato, type ResultadoDecodificacao } from './decodificacao.js';
+import { decodificar, type ResultadoDecodificacao } from './decodificacao.js';
 import type { MedicalModel } from '../generated/ast.js';
 
 const ENDPOINT = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
@@ -155,10 +156,11 @@ export async function gerarPlanoRestrito(
     const contrato = montarContrato(
         subgrafo,
         model ? condutasPorDecisaoMed(model) : {},
-        constraints.escalonamentos.map(e => `${e.destino}: ${e.detalhe}`)
+        constraints.escalonamentos.map(e => `${e.destino}: ${e.detalhe}`),
+        model ? esquemaDeDadosMed(model) : undefined
     );
 
-    return decodificarSobContrato({
+    return decodificar({
         comando: contexto.intencao ?? '',
         contexto: montarPromptSemantico(constraints, contexto),
         subgrafo,

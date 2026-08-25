@@ -20,12 +20,13 @@ import * as path from 'node:path';
 
 import { loadFutModel } from '../database/neo4j-fut.js';
 import { montarContrato } from '../knowledge/contrato.js';
-import { decodificarSobContrato, type ResultadoDecodificacao } from './decodificacao.js';
+import { decodificar, type ResultadoDecodificacao } from './decodificacao.js';
 import type { FutModel } from '../generated/ast.js';
 import {
     retrieveFutConstraints,
     futPruningPayload,
     condutasPorDecisaoFut,
+    esquemaDeDadosFut,
     type FutContext,
     type RetrievedFutConstraints
 } from '../knowledge/graphrag-fut.js';
@@ -170,10 +171,11 @@ export async function gerarArbitragemRestrita(
     const contrato = montarContrato(
         subgrafo,
         model ? condutasPorDecisaoFut(model) : {},
-        constraints.escalonamentos.map(e => `${e.destino}: ${e.detalhe}`)
+        constraints.escalonamentos.map(e => `${e.destino}: ${e.detalhe}`),
+        model ? esquemaDeDadosFut(model) : undefined
     );
 
-    return decodificarSobContrato({
+    return decodificar({
         comando: contexto.intencao ?? '',
         contexto: montarPromptSemanticoFut(constraints, contexto),
         subgrafo,

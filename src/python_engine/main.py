@@ -28,7 +28,7 @@ sys.path.insert(0, BASE_DIR)
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-from bnf import load_bnf, parse_bnf, build_parser, to_lark, to_gbnf  # noqa: E402
+from bnf import Rule, load_bnf, parse_bnf, build_parser, to_lark, to_gbnf  # noqa: E402
 from grammar_from_kg import gramatica_do_subgrafo  # noqa: E402
 from prompt_builder import carregar_exemplos, montar_prompt  # noqa: E402
 
@@ -193,12 +193,21 @@ def _modelo_carregado() -> bool:
     return (_MODEL if BACKEND == "outlines" else _LLAMA) is not None
 
 
-def _gerar(prompt: str, regras_hat: dict) -> str:
-    """Geracao sob mascaramento de logits pela gramatica ja podada."""
+def _gerar(prompt: str, regras_hat: dict, inicio: str | None = None) -> str:
+    """
+    Geracao sob mascaramento de logits pela gramatica ja podada.
+
+    `inicio` permite mascarar por um NAO-TERMINAL QUALQUER, e nao apenas pelo
+    simbolo do artefato inteiro. E o que sustenta a decodificacao incremental:
+    gerar uma `ordem` de cada vez, ou uma `conduta` de cada vez, com o texto ja
+    aceito servindo de prefixo — cada fragmento nasce sob a gramatica que as
+    validacoes anteriores deixaram de pe.
+    """
+    alvo = inicio or INICIO
     if BACKEND == "outlines":
         import outlines
 
-        return outlines.generate.cfg(get_model(), to_lark(regras_hat, start=INICIO))(prompt)
+        return outlines.generate.cfg(get_model(), to_lark(regras_hat, start=alvo))(prompt)
 
     from llama_cpp import LlamaGrammar
 
@@ -219,7 +228,7 @@ def _gerar(prompt: str, regras_hat: dict) -> str:
         saida = llm(
             prompt,
             grammar=LlamaGrammar.from_string(
-                to_gbnf(regras_hat, start=INICIO, max_itens=MAX_ITENS), verbose=False
+                to_gbnf(regras_hat, start=alvo, max_itens=MAX_ITENS), verbose=False
             ),
             max_tokens=MAX_TOKENS,
             temperature=TEMPERATURA,
@@ -391,6 +400,27 @@ class VerifyRequest(BaseModel):
     subgrafo_regras: dict = Field(default_factory=dict)
 
 
+class FragmentoRequest(BaseModel):
+    """
+    Um passo da decodificacao incremental: gera UM elemento do artefato (uma
+    ordem, uma conduta da sequencia, um alerta) sob a gramatica que as
+    validacoes anteriores deixaram de pe, tendo o artefato parcial como prefixo.
+    """
+
+    simbolo: str = Field(..., description="Nao-terminal do fragmento: ordem | conduta | alerta | identificador | texto")
+    prefixo: str = Field("", description="Artefato parcial ja aceito, usado como prefixo da geracao")
+    comando_humano: str = Field("", description="Fala do profissional/operador")
+    contexto_neo4j: str = Field("", description="Prompt Semantico do cenario")
+    subgrafo_regras: dict = Field(default_factory=dict, description="Poda corrente — muda a cada elemento aceito")
+    encerramento: str | None = Field(
+        None,
+        description=(
+            "Literal de controle que o modelo pode emitir no lugar do fragmento para "
+            "encerrar a lista. Nao pertence a DSL: existe so no passo de decodificacao"
+        ),
+    )
+
+
 def _gramatica_efetiva(subgrafo: dict):
     """
     Devolve (regras, bnf_texto) apos a poda pelo subgrafo.
@@ -517,4 +547,64 @@ def generate_constrained(req: ICURequest):
         "erro": erro,
         "g_hat_utilizada": g_hat_texto,
         "regras_em_g_hat": len(regras_hat),
+        # Diz ao cliente se a especializacao por item chegou a rodar. Sem esta
+        # marca, um motor desatualizado (processo antigo ainda no ar) poda so
+        # pelos tres vocabularios e devolve um plano com aparencia normal — foi
+        # exatamente assim que uma correcao ja aplicada pareceu nao ter efeito.
+        "especializada": bool(
+            req.subgrafo_regras.get("politicas") and req.subgrafo_regras.get("papeis")
+        ),
+    }
+
+
+@app.post("/generate-fragment")
+def generate_fragment(req: FragmentoRequest):
+    """
+    Decodificacao incremental: gera UM elemento do artefato.
+
+    O cliente valida cada elemento contra o grafo antes de aceita-lo; se o
+    elemento violar alguma regra, o cliente repoda o subgrafo (o par que falhou
+    sai) e pede este mesmo passo de novo. Como a poda entra na gramatica, a
+    tentativa seguinte nao consegue repetir o erro.
+
+    O servico continua sem conhecer o dominio: recebe o nao-terminal a gerar e a
+    poda corrente, e devolve texto.
+    """
+    regras_hat, g_hat_texto = _gramatica_efetiva(req.subgrafo_regras)
+
+    if req.simbolo not in regras_hat:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"O simbolo '{req.simbolo}' nao existe na gramatica podada: "
+                "o contexto nao admite nenhum elemento desse tipo."
+            ),
+        )
+
+    regras = dict(regras_hat)
+    inicio = req.simbolo
+    if req.encerramento:
+        # Alternativa de controle: o modelo pode dizer "acabou" em vez de emitir
+        # mais um elemento. O literal nao pertence a DSL e nao entra no artefato.
+        nome = "fragmento_incremental"
+        regras[nome] = Rule(nome, [[req.simbolo], ['"' + req.encerramento + '"']])
+        inicio = nome
+
+    prompt = montar_prompt(
+        exemplos=EXEMPLOS,
+        x_teste=req.comando_humano,
+        contexto_teste=req.contexto_neo4j,
+        gramatica_completa=g_hat_texto,
+    ) + req.prefixo
+
+    texto = _gerar(prompt, regras, inicio=inicio).strip()
+    encerrou = bool(req.encerramento) and texto == req.encerramento
+
+    return {
+        "fragmento": "" if encerrou else texto,
+        "encerrou": encerrou,
+        "regras_em_g_hat": len(regras_hat),
+        "especializada": bool(
+            req.subgrafo_regras.get("politicas") and req.subgrafo_regras.get("papeis")
+        ),
     }

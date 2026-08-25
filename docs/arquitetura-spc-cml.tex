@@ -1,0 +1,1208 @@
+% =============================================================================
+%  SPC-CML — Arquitetura revista: especializacao gramatical por item
+%  e contrato de artefato.
+%
+%  Compilar com:      pdflatex arquitetura-spc-cml.tex   (duas vezes)
+%  Sem dependencias externas: todas as figuras sao TikZ, nenhuma imagem.
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds,shapes.geometric}
+\usepackage[hidelinks]{hyperref}
+
+% ------------------------------------------------------------------ cores
+\definecolor{corBase}{HTML}{2F3E4E}
+\definecolor{corNovo}{HTML}{1F6FB2}
+\definecolor{corNovoFundo}{HTML}{E7F1FA}
+\definecolor{corGrafo}{HTML}{3B7A57}
+\definecolor{corGrafoFundo}{HTML}{E8F2EC}
+\definecolor{corAlerta}{HTML}{A33A3A}
+\definecolor{corAlertaFundo}{HTML}{F8ECEC}
+\definecolor{corCinza}{HTML}{6B7280}
+\definecolor{corFundo}{HTML}{F4F5F7}
+
+% ------------------------------------------------------------------ listings
+\lstdefinestyle{codigo}{
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{corNovo}\bfseries,
+  commentstyle=\color{corCinza}\itshape,
+  stringstyle=\color{corGrafo},
+  numbers=none,
+  frame=single,
+  rulecolor=\color{corCinza!50},
+  backgroundcolor=\color{corFundo},
+  breaklines=true,
+  breakatwhitespace=true,
+  columns=fullflexible,
+  showstringspaces=false,
+  captionpos=b,
+  xleftmargin=4pt,
+  framexleftmargin=4pt
+}
+\lstset{style=codigo}
+
+\lstdefinelanguage{bnf}{
+  morekeywords={},
+  morecomment=[l]{\#},
+  morestring=[b]"
+}
+\lstdefinelanguage{tsx}{
+  morekeywords={interface,export,const,function,return,for,of,if,else,new,type,await,async,let,string,number,boolean,Record,Map,Set},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]',
+  morestring=[b]"
+}
+
+% ------------------------------------------------------------------ estilos TikZ
+\tikzset{
+  caixa/.style={
+    draw=corBase, rounded corners=2pt, align=center, font=\scriptsize,
+    inner sep=3pt, minimum height=8mm, text width=34mm, fill=white, line width=0.5pt
+  },
+  novo/.style={caixa, draw=corNovo, fill=corNovoFundo, line width=0.9pt},
+  grafo/.style={caixa, draw=corGrafo, fill=corGrafoFundo},
+  alerta/.style={caixa, draw=corAlerta, fill=corAlertaFundo},
+  titulo/.style={font=\scriptsize\bfseries, align=center},
+  seta/.style={-{Latex[length=2mm]}, draw=corBase, line width=0.5pt},
+  setanovo/.style={-{Latex[length=2mm]}, draw=corNovo, line width=0.8pt},
+  setaloop/.style={-{Latex[length=2mm]}, draw=corAlerta, line width=0.8pt, dashed},
+  rot/.style={font=\tiny, inner sep=1.5pt, fill=white, midway},
+  decisao/.style={
+    draw=corAlerta, fill=corAlertaFundo, diamond, aspect=2.2, align=center,
+    font=\scriptsize, inner sep=1pt, text width=20mm
+  }
+}
+
+\captionsetup{font=small,labelfont=bf}
+\setlength{\parskip}{0.45em}
+
+\title{\textbf{SPC-CML — Arquitetura revista}\\[2mm]
+\large Especialização gramatical por item e contrato de artefato:\\
+da poda por vocabulário à decodificação semântica}
+\author{Compilador Semântico de Prompts (SPC-CML)}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Este documento descreve a revisão da arquitetura de integração do SPC-CML
+apresentada na Figura~5.1 da dissertação. A versão anterior enviava ao motor de
+decodificação restrita três vocabulários independentes --- ações, itens e meios
+permitidos --- que a gramática recombinava livremente; a política \emph{por item}
+que o GraphRAG já calculava era achatada nessa união e perdida exatamente no
+ponto em que decidia algo. O resultado prático é que violações
+\emph{combinatórias} (item~$\times$ decisão~$\times$ meio) e \emph{numéricas}
+(dose, vazão, minuto) permaneciam deriváveis: a arquitetura garantia que a saída
+pertencia a $L(\hat{G})$, mas $\hat{G}$ era mais larga que o domínio.
+A revisão introduz duas camadas. A primeira leva a política por item até a
+gramática, convertendo a regra da cláusula de um produto cartesiano em uma soma
+de casos especializados, com valores lidos do modelo do especialista e com as
+constantes do cenário fixadas como literais. A segunda define um
+\emph{contrato de artefato}, verificado cláusula a cláusula, que cobre o que uma
+gramática livre de contexto não expressa --- unicidade, concordância entre a
+sequência declarada e as cláusulas emitidas, escalonamento disparado e não
+atendido --- e realimenta a poda: cada violação retira da gramática o par que
+falhou, de modo que a tentativa seguinte opera sobre um $\hat{G}$ estritamente
+menor. Sobre essas duas camadas roda a \textbf{decodificação incremental}: o
+artefato é montado um elemento por vez --- cada conduta da sequência, cada
+cláusula --- e cada elemento é validado no grafo antes de ser aceito; o que
+viola alguma regra é descartado e a posição é refeita sob uma gramática já sem o
+par reprovado. Todas as camadas são agnósticas de domínio: falam em
+\emph{papéis} (item, decisão, meio, quantidade, sujeito, contexto) declarados por
+cada modelo, e foram exercitadas nos três domínios do projeto --- terapia
+intensiva, pulverização agrícola e arbitragem de futebol.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Motivação: o caso que expôs o limite}
+% =============================================================================
+
+Para o cenário clínico abaixo --- pressão arterial média (PAM) de 52\,mmHg,
+lactato de 4{,}2\,mmol/L e noradrenalina \emph{já em infusão} --- o operador
+digitou: \emph{``subo a noradrenalina em um degrau?''}
+
+\begin{lstlisting}[language=tsx,caption={Cenário de entrada (\texttt{cenarios-200-med.jsonl}, linha 1).}]
+{"intencao": "PAM 52 mmHg e lactato 4.2 mmol/L depois de 30 mL/kg de cristaloide: subo a noradrenalina em um degrau?",
+ "paciente": "PT-2026-4001",
+ "telemetria": {"PAM": 52, "FC": 104, "lactato": 4.2, "RASS": -2, "TFG": 106,
+                "plaquetas": 182, "glicemia": 158, "SpO2": 93},
+ "populacoes": [], "farmacosEmUso": ["Noradrenalina"]}
+\end{lstlisting}
+
+A recuperação no grafo funcionou: o protocolo \texttt{Choque\_Septico} foi
+ativado pelos dois gatilhos corretos, os bloqueios de Propofol e Cisatracúrio
+foram computados, os dois escalonamentos dispararam. Ainda assim, o plano gerado
+sob decodificação restrita continha cinco defeitos simultâneos --- e
+\emph{nenhum deles era acidental}: todos pertenciam ao espaço que
+$\hat{G}$ autorizava. A Tabela~\ref{tab:defeitos} enumera cada defeito ao lado
+da razão de ele ser derivável.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Os cinco defeitos do plano gerado e a razão de cada um ser derivável.}
+\label{tab:defeitos}
+\begin{tabular}{@{}p{6.1cm}p{8.4cm}@{}}
+\toprule
+\textbf{Defeito no plano} & \textbf{Por que $\hat{G}$ permitia} \\
+\midrule
+\texttt{Noradrenalina INICIAR\_INFUSAO} (o fármaco já infundia) &
+\texttt{INICIAR\_INFUSAO} entrou na união de ações por causa de \emph{outro}
+fármaco; o estado de curso (\texttt{farmacosEmUso}) nunca chegava à gramática
+nem ao prompt. \\
+\addlinespace
+\texttt{dose 0.4 mcg/kg/min} em \texttt{AUMENTAR\_VAZAO} &
+\texttt{numero ::= /[0-9]+(\textbackslash.[0-9]+)?/} é folha léxica livre; o
+degrau declarado no modelo (\texttt{titulacao 0.05}) não chegava a $\hat{G}$. \\
+\addlinespace
+\texttt{Vasopressina 0.1 U/min} &
+2{,}5$\times$ o limite rígido declarado (\texttt{bomba limite\_rigido 0.04}),
+e ainda assim uma cadeia derivável. \\
+\addlinespace
+\texttt{Vasopressina MANTER\_BLOQUEADO} (não estava bloqueada) &
+\texttt{MANTER\_BLOQUEADO} estava na união por causa de Propofol e Cisatracúrio;
+a gramática não amarra a decisão ao item que a justifica. \\
+\addlinespace
+\texttt{paciente 'PT-2026-0031'} &
+o identificador do cenário não era enviado ao motor, e o campo era um
+\texttt{texto} livre: o modelo copiou o identificador do exemplar
+\emph{few-shot}. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Somam-se a esses três defeitos de coerência global: duas ordens contraditórias
+para o mesmo fármaco (\texttt{INICIAR\_INFUSAO} seguido de
+\texttt{AUMENTAR\_VAZAO}), uma \texttt{sequencia} declarando condutas sem
+cláusula correspondente, e dois escalonamentos disparados pelo grafo que não
+viraram ordem alguma.
+
+O diagnóstico, portanto, não é ``o modelo alucinou''. É que a arquitetura
+cumpria a sua promessa apenas na dimensão do \emph{vocabulário}: garantia que
+cada símbolo isolado pertencia ao modelo do especialista, mas deixava livres a
+\emph{combinação} entre símbolos e o \emph{valor} numérico. Este documento
+descreve como as duas dimensões restantes foram fechadas.
+
+% =============================================================================
+\section{Visão geral da arquitetura revista}
+% =============================================================================
+
+A Figura~\ref{fig:arquitetura} mantém o esqueleto da Figura~5.1 da dissertação
+--- a DSL do especialista particionada em Esquema de Controle e Esquema de
+Dados, alimentando respectivamente o Grafo de Conhecimento e a gramática --- e
+acrescenta os três elementos em destaque: a \textbf{política por item} que
+atravessa o fio, a \textbf{especialização de $\hat{G}$} que a consome, e o
+\textbf{contrato do artefato} que fecha o ciclo realimentando a poda.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=6mm and 9mm]
+
+% ----------------------------------------------------------------- modelo
+\node[caixa, text width=38mm] (ctrl) {\textbf{Esquema de Controle}\\
+entidades, invariantes,\\ gatilhos e limiares};
+\node[caixa, text width=38mm, below=8mm of ctrl] (dados) {\textbf{Esquema de Dados}\\
+universo fechado de saídas\\ (decisões, meios, condutas)};
+\node[titulo, above=3mm of ctrl] (dsltit) {Modelo do especialista (DSL)};
+
+\begin{scope}[on background layer]
+\node[draw=corCinza!60, dashed, rounded corners=3pt, fit=(dsltit)(ctrl)(dados),
+      inner sep=4mm, fill=corFundo] (modelo) {};
+\end{scope}
+
+% ------------------------------------------------------ grafo e gramatica
+\node[grafo, below=14mm of dados, text width=38mm] (kg)
+  {\textbf{Grafo de Conhecimento}\\ nós, arestas e índice vetorial\\ (Neo4j)};
+\node[caixa, right=16mm of dados, text width=30mm] (gramatica)
+  {\textbf{Gramática $G$}\\ BNF exportada da DSL};
+
+\draw[seta] (ctrl.east) -- ++(6mm,0) |- (kg.west) node[rot, pos=0.75] {sincroniza};
+\draw[seta] (dados.east) -- (gramatica.west);
+
+% ----------------------------------------------------------------- entrada
+\node[caixa, right=20mm of ctrl, text width=42mm] (entrada)
+  {\textbf{Entrada}\\ fala do operador $+$ telemetria/leitura\\
+   $+$ estado de curso do cenário};
+\node[caixa, below=6mm of entrada, text width=42mm] (foco)
+  {\textbf{Foco semântico}\\ casamento lexical $+$ índice vetorial\\
+   \textit{(decide o que é MOSTRADO)}};
+
+\draw[seta] (entrada) -- (foco);
+\draw[seta] (kg.east) -- ++(8mm,0) |- (foco.west) node[rot, pos=0.8] {consulta};
+
+% ------------------------------------------------- recuperacao determinista
+\node[grafo, below=16mm of foco, text width=52mm] (recup)
+  {\textbf{Recuperação determinística}\\
+   \texttt{retrieve*Constraints}: compara telemetria com limiares\\
+   \textit{(decide o que é PERMITIDO)}};
+\draw[seta] (foco) -- (recup);
+
+% ------------------------------------------------------------ tres saidas
+\node[caixa, below left=14mm and -6mm of recup, text width=34mm] (prompt)
+  {\textbf{Prompt Semântico}\\ protocolos, bloqueios, vetos,\\ ajustes, cenário};
+\node[novo, below right=14mm and -6mm of recup, text width=40mm] (politica)
+  {\textbf{Política por item} \textcolor{corNovo}{(novo)}\\
+   decisões, meios, \textbf{valores} e\\ constantes do cenário};
+
+\draw[seta] (recup) -- (prompt);
+\draw[setanovo] (recup) -- (politica);
+
+% ------------------------------------------------------------ especializacao
+\node[novo, below=12mm of politica, text width=40mm] (especializa)
+  {\textbf{Especialização de $\hat{G}$} \textcolor{corNovo}{(novo)}\\
+   uma produção por (item, decisão),\\ valor e sujeito como literais};
+\draw[setanovo] (politica) -- (especializa);
+\draw[seta] (gramatica.south) -- ++(0,-4mm) -| (especializa.north east)
+  node[rot, pos=0.25] {$G$};
+
+% ------------------------------------------------------------ decodificacao
+\node[caixa, below=13mm of prompt, text width=38mm] (decod)
+  {\textbf{Decodificação restrita}\\ mascaramento de logits\\ (llama.cpp / Outlines)};
+\draw[seta] (prompt) -- (decod);
+\draw[setanovo] (especializa.south) |- ($(decod.east)+(0,2mm)$)
+  node[rot, pos=0.72] {$\hat{G}$};
+
+\node[caixa, below=8mm of decod, text width=38mm] (artefato)
+  {\textbf{Artefato}\\ plano / missão / arbitragem};
+\draw[seta] (decod) -- (artefato);
+
+% ------------------------------------------------------------ contrato
+\node[novo, right=14mm of artefato, text width=38mm] (contrato)
+  {\textbf{Contrato do artefato} \textcolor{corNovo}{(novo)}\\
+   unicidade, sequência, escalonamento,\\ sujeito e contexto};
+\draw[setanovo] (artefato) -- (contrato);
+
+\node[decisao, below=9mm of contrato] (conforme) {conforme?};
+\draw[setanovo] (contrato) -- (conforme);
+
+\node[caixa, left=14mm of conforme, text width=34mm] (saida)
+  {\textbf{Saída auditável}\\ artefato $+$ justificativas $+$ trilha};
+\draw[setanovo] (conforme) -- node[rot] {sim} (saida);
+
+\draw[setaloop] (conforme.east) -- ++(7mm,0) |- ($(especializa.east)+(0,-2mm)$)
+  node[rot, pos=0.25] {não: repoda ($\hat{G}$ menor)};
+
+\end{tikzpicture}
+\caption{Arquitetura SPC-CML revista. Em azul, os elementos introduzidos por
+esta revisão; em verde, a camada factual determinística; tracejado vermelho, a
+realimentação da poda pela verificação semântica. O esqueleto (DSL particionada
+em dois esquemas, grafo de conhecimento, prompt semântico, decodificação
+restrita) é o da Figura~5.1 original.}
+\label{fig:arquitetura}
+\end{figure}
+
+\subsection{O que cada etapa decide}
+
+A separação de responsabilidades é a mesma da versão original, com dois papéis
+novos ao final:
+
+\begin{description}[leftmargin=1.4cm,style=nextline]
+\item[Foco semântico] decide \emph{o que é mostrado}. Combina o nome escrito na
+fala (casamento lexical), a proximidade no índice vetorial e as arestas do grafo.
+Nunca decide o que é permitido: um erro de foco empobrece o Prompt Semântico,
+não afrouxa uma restrição.
+\item[Recuperação determinística] decide \emph{o que é permitido}. Compara a
+telemetria com os limiares declarados na DSL. Quem determina que o Propofol está
+bloqueado é a comparação \texttt{PAM 52 < 60}, não o modelo de linguagem.
+\item[Política por item \textnormal{(novo)}] transporta essa decisão sem
+achatá-la: para cada item, as decisões que lhe restaram, os meios admissíveis,
+os \emph{valores} que o modelo declara e o estado de curso.
+\item[Especialização de $\hat{G}$ \textnormal{(novo)}] converte a política em
+gramática. É aqui que a violação combinatória e a numérica deixam de ser
+``improváveis'' e passam a ser inexprimíveis.
+\item[Contrato do artefato \textnormal{(novo)}] verifica o que a gramática não
+alcança e, ao reprovar, devolve um \emph{reparo} --- o par que sai da política
+antes da próxima tentativa.
+\end{description}
+
+% =============================================================================
+\section{Fluxo de execução, passo a passo}
+% =============================================================================
+
+A Figura~\ref{fig:fluxo} mostra o percurso de uma requisição, separando o que
+executa na camada simbólica (TypeScript, sobre a AST da DSL) do que executa no
+motor de decodificação (Python, com mascaramento de logits). A separação
+importa: \emph{toda} decisão de segurança acontece na camada simbólica; o motor
+apenas não consegue emitir o que a gramática não gera.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=5mm and 10mm]
+
+% ---------------------------------------------------------------- raia TS
+\node[caixa, text width=44mm] (p1)
+  {\textbf{1. Entrada}\\ fala, telemetria, estado de curso, sujeito};
+\node[caixa, below=of p1, text width=44mm] (p2)
+  {\textbf{2. Foco semântico}\\ \texttt{retrieverFoco*} $\rightarrow$ subgrafo em foco};
+\node[grafo, below=of p2, text width=44mm] (p3)
+  {\textbf{3. Restrições ativas}\\ \texttt{retrieve*Constraints}\\
+   protocolos, bloqueios, vetos, ajustes, escalonamentos};
+\node[novo, below=of p3, text width=44mm] (p4)
+  {\textbf{4. Política por item $+$ contrato}\\
+   \texttt{pruningPayload(constraints, contexto)}\\ \texttt{montarContrato(...)}};
+\node[caixa, below=of p4, text width=44mm] (p5)
+  {\textbf{5. Prompt Semântico}\\ \texttt{montarPromptSemantico*}\\
+   inclui o bloco \texttt{[CENARIO]}};
+
+% ------------------------------------------------------------ raia Python
+\node[novo, right=26mm of p4, text width=44mm] (q1)
+  {\textbf{6. Especialização de $\hat{G}$}\\
+   \texttt{especializar\_por\_item}\\ produção por (item, decisão)};
+\node[caixa, below=of q1, text width=44mm] (q2)
+  {\textbf{7. Decodificação restrita}\\ máscara de logits sobre $\hat{G}$\\
+   $+$ reparse independente};
+
+% ------------------------------------------------------------ volta ao TS
+\node[novo, below=16mm of p5, text width=44mm] (p6)
+  {\textbf{8. Verificação do contrato}\\ \texttt{verificarContrato}\\
+   cláusula a cláusula, para na primeira};
+\node[decisao, below=8mm of p6] (dec) {conforme?};
+\node[caixa, below=8mm of dec, text width=44mm] (p7)
+  {\textbf{10. Saída auditável}\\ artefato, violações (se houver), tentativas};
+\node[alerta, right=26mm of dec, text width=44mm] (p8)
+  {\textbf{9. Repoda por violação}\\ \texttt{podarPorViolacoes}\\
+   retira o par que falhou de $\hat{G}$};
+
+\draw[seta] (p1) -- (p2);
+\draw[seta] (p2) -- (p3);
+\draw[setanovo] (p3) -- (p4);
+\draw[seta] (p4) -- (p5);
+\draw[setanovo] (p4) -- node[rot] {políticas} (q1);
+\draw[seta] (q1) -- (q2);
+\draw[seta] (p5.south) -- ++(0,-6mm) -| node[rot, pos=0.25] {prompt} (q2.south west);
+\draw[setanovo] (q2.south) |- (p6.east) node[rot, pos=0.75] {artefato};
+\draw[setanovo] (p6) -- (dec);
+\draw[setanovo] (dec) -- node[rot] {sim} (p7);
+\draw[setaloop] (dec) -- node[rot] {não} (p8);
+\draw[setaloop] (p8.north) |- ($(q1.west)+(0,-3mm)$)
+  node[rot, pos=0.8] {nova tentativa};
+
+% ------------------------------------------------------------------ raias
+\begin{scope}[on background layer]
+\node[draw=corCinza!50, dashed, rounded corners=3pt,
+      fit=(p1)(p2)(p3)(p4)(p5)(p6)(dec)(p7), inner sep=4mm] (raia1) {};
+\node[draw=corCinza!50, dashed, rounded corners=3pt,
+      fit=(q1)(q2)(p8), inner sep=4mm] (raia2) {};
+\end{scope}
+\node[titulo, above=1mm of raia1.north] {Camada simbólica (TypeScript / AST da DSL)};
+\node[titulo, above=1mm of raia2.north] {Motor de decodificação (Python)};
+
+\end{tikzpicture}
+\caption{Fluxo de execução de uma requisição. Passos 4, 6, 8 e 9 são desta
+revisão. O laço 9\,$\rightarrow$\,6 é limitado por
+\texttt{SPC\_CML\_MAX\_TENTATIVAS} (padrão 3) e cada volta opera sobre um
+$\hat{G}$ estritamente menor.}
+\label{fig:fluxo}
+\end{figure}
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item \textbf{Entrada.} Fala em linguagem natural, leitura corrente
+(telemetria clínica, sensores do talhão ou leitura da partida), populações /
+áreas / contextos aplicáveis e --- explicitamente --- o que já está em curso
+(\texttt{farmacosEmUso}, \texttt{produtosEmUso}, \texttt{infracoesEmUso}).
+
+\item \textbf{Foco semântico.} Recupera o subgrafo pertinente por casamento
+lexical do nome escrito, similaridade no índice vetorial e expansão pelas
+arestas do modelo. Só define o que aparece no Prompt Semântico.
+
+\item \textbf{Restrições ativas.} Percorre o modelo comparando a leitura com os
+limiares declarados. Produz protocolos ativos, bloqueios de incremento, vetos,
+ajustes, escalonamentos, interações --- e a política de saída de cada item.
+
+\item \textbf{Política por item e contrato.} A política deixa de ser achatada em
+três listas e passa a viajar íntegra, junto com as constantes do cenário. Do
+mesmo material deriva-se o contrato que será cobrado no passo 8.
+
+\item \textbf{Prompt Semântico.} Bloco factual legível, agora com uma seção
+\texttt{[CENARIO]} que declara o sujeito e o que está em curso --- informação
+que existia no contexto desde sempre e nunca chegava ao modelo.
+
+\item \textbf{Especialização de $\hat{G}$.} O motor recebe a política e reescreve
+a regra da cláusula (Seção~\ref{sec:especializacao}).
+
+\item \textbf{Decodificação restrita.} Geração sob máscara de logits, seguida de
+\emph{reparse} independente contra $\hat{G}$ --- a verificação não confia na
+própria geração.
+
+\item \textbf{Verificação do contrato.} As cláusulas são lidas na ordem em que
+foram geradas e a primeira violação interrompe a leitura, devolvendo um reparo.
+
+\item \textbf{Repoda.} O par (item, decisão) que falhou sai da política; se o
+reparo não tem decisão associada, o item inteiro sai. A gramática da tentativa
+seguinte é estritamente menor.
+
+\item \textbf{Saída auditável.} Artefato, número de tentativas, veredito do
+contrato e as violações remanescentes. Uma saída não conforme é devolvida
+marcada, nunca escondida: é o caso mais informativo de um lote.
+\end{enumerate}
+
+Os passos 7 a 9 admitem duas granularidades. No modo \emph{monolítico} o
+artefato inteiro é gerado e só então verificado, com repoda e nova tentativa. No
+modo \emph{incremental} --- padrão --- cada elemento é gerado e validado
+separadamente, e a posição só avança quando o contrato aceita
+(Seção~\ref{sec:incremental}).
+
+% =============================================================================
+\section{As três camadas de restrição}
+% =============================================================================
+
+A revisão fica mais clara quando se separa o que pode ser garantido em cada
+momento do ciclo. A Tabela~\ref{tab:camadas} organiza as três camadas.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Camadas de restrição, momento de aplicação e estado antes/depois.}
+\label{tab:camadas}
+\begin{tabular}{@{}p{2.6cm}p{4.6cm}p{3.2cm}p{4.0cm}@{}}
+\toprule
+\textbf{Camada} & \textbf{O que restringe} & \textbf{Quando age} & \textbf{Estado} \\
+\midrule
+1. Vocabulário &
+Quais símbolos podem aparecer (itens, decisões, meios, condutas) &
+Antes da geração, na poda de $G$ &
+Já existia \\
+\addlinespace
+2. Combinação e valor &
+Quais \emph{tuplas} (item, decisão, meio, valor) e quais números &
+Antes da geração, na especialização de $\hat{G}$ &
+\textbf{Introduzida} \\
+\addlinespace
+3. Coerência do artefato &
+Unicidade, sequência declarada, escalonamento atendido, sujeito &
+Depois da geração, com repoda e nova tentativa &
+\textbf{Introduzida} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A distinção entre as camadas 2 e 3 não é de importância, e sim de
+\emph{expressividade}: a camada 2 reúne tudo o que depende de uma cláusula
+isolada, e por isso cabe numa gramática livre de contexto; a camada 3 reúne
+propriedades do artefato inteiro, que só uma gramática sensível ao contexto
+--- ou uma verificação posterior --- alcança. Empurrar o máximo possível para a
+camada 2 é o que mantém a promessa da arquitetura: \emph{tornar a violação
+inexprimível, em vez de improvável}.
+
+% =============================================================================
+\section{Camada 2: especialização gramatical por item}
+\label{sec:especializacao}
+% =============================================================================
+
+\subsection{O defeito estrutural da versão anterior}
+
+A regra da cláusula, na BNF exportada da DSL, é um produto cartesiano de quatro
+vocabulários independentes:
+
+\begin{lstlisting}[language=bnf,caption={Regra da cláusula em $G$ (domínio clínico), antes da revisão.}]
+ordem     ::= "ordem" farmaco "decisao" decisao "dose" quantidade "via" via "justificativa" texto
+quantidade ::= numero unidade
+farmaco   ::= "Noradrenalina" | "Adrenalina" | ... (12 itens)
+decisao   ::= "INICIAR_INFUSAO" | "AUMENTAR_VAZAO" | ... (11 decisoes)
+via       ::= "ACESSO_CENTRAL" | "ACESSO_PERIFERICO" | "INTRAOSSEO" | "SC"
+numero    ::= /[0-9]+(\.[0-9]+)?/
+\end{lstlisting}
+
+A poda recebia três listas planas e restringia cada vocabulário
+\emph{isoladamente}. Como as listas eram a \emph{união} sobre todos os itens,
+bastava um único item admitir uma decisão para que todos passassem a admiti-la.
+A Figura~\ref{fig:cartesiano} ilustra o efeito.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=4mm and 12mm]
+
+% ---------------------------------------------------------------- antes
+\node[titulo] (t1) {Antes: três vocabulários independentes};
+\node[caixa, below=5mm of t1, text width=26mm] (i1) {itens\\ \{$A$, $B$, $C$\}};
+\node[caixa, right=6mm of i1, text width=26mm] (d1) {decisões\\ \{$x$, $y$\}};
+\node[caixa, right=6mm of d1, text width=26mm] (v1) {valores\\ $\mathbb{R}$ (livre)};
+\node[alerta, below=7mm of d1, text width=58mm] (r1)
+  {$L(\hat{G}) \supseteq \{A,B,C\} \times \{x,y\} \times \mathbb{R}$\\
+   \textbf{$A$ com $y$ é derivável mesmo que só $B$ admita $y$}};
+\draw[seta] (i1.south) -- (r1.north west);
+\draw[seta] (d1) -- (r1);
+\draw[seta] (v1.south) -- (r1.north east);
+
+% ---------------------------------------------------------------- depois
+\node[titulo, below=12mm of r1] (t2) {Depois: uma produção por (item, decisão)};
+\node[novo, below=5mm of t2, text width=26mm] (c1)
+  {$A$ com $x$\\ valor $=v_{A,x}$};
+\node[novo, right=6mm of c1, text width=26mm] (c2)
+  {$B$ com $x$\\ valor $=v_{B,x}$};
+\node[novo, right=6mm of c2, text width=26mm] (c3)
+  {$B$ com $y$\\ valor $=v_{B,y}$};
+\node[grafo, below=7mm of c2, text width=58mm] (r2)
+  {$L(\hat{G})$ contém exatamente os pares que o modelo declara\\
+   \textbf{$A$ com $y$ não é uma cadeia da linguagem}};
+\draw[setanovo] (c1.south) -- (r2.north west);
+\draw[setanovo] (c2) -- (r2);
+\draw[setanovo] (c3.south) -- (r2.north east);
+
+\end{tikzpicture}
+\caption{A regra da cláusula deixa de ser um produto cartesiano de vocabulários
+e passa a ser uma soma de casos especializados. O tamanho da gramática cresce
+linearmente com o número de itens; o espaço de geração encolhe de um produto
+para uma união de casos declarados.}
+\label{fig:cartesiano}
+\end{figure}
+
+\subsection{O que passou a viajar no payload}
+
+\begin{lstlisting}[language=tsx,caption={Estrutura da política transportada (\texttt{src/knowledge/politica.ts}).}]
+interface PoliticaItem {
+    item: string;                 // Noradrenalina | Glifosato | Entrada_Violenta
+    decisoes: string[];           // o que sobrou para ESTE item
+    meios: string[];              // vias | modos | reinicios admissiveis
+    unidades: string[];
+    valores: ValorAdmissivel[];   // reticulo do item (vazio = livre)
+    valoresPorDecisao?: Record<string, ValorAdmissivel[]>;  // mais estrito
+    bloqueado: boolean;
+    motivos: string[];            // justificativa legivel de cada restricao
+}
+
+interface SubgrafoPodado {
+    acoes_permitidas: string[];   // as tres chaves legadas continuam,
+    farmacos_liberados: string[]; // para um motor nao atualizado podar
+    vias_disponiveis: string[];   // como antes
+    politicas: PoliticaItem[];    // <- a politica intacta
+    papeis: PapeisDominio;        // <- como o dominio nomeia cada papel
+    constantes: { sujeito?: string; contextos: string[] };  // <- dado, nao decisao
+}
+\end{lstlisting}
+
+\subsection{O algoritmo de especialização}
+
+Executado em \texttt{especializar\_por\_item}
+(\texttt{src/python\_engine/grammar\_from\_kg.py}), antes das fases de poda já
+existentes. Nenhum passo menciona nome de domínio: tudo vem de
+\texttt{papeis}.
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item Localiza a regra da cláusula (\texttt{ordem}, \texttt{aplicacao},
+\texttt{marcacao}) e toma a sua primeira alternativa como \emph{molde}.
+\item Para cada item com política não vazia, instancia o molde substituindo:
+o símbolo do item pelo literal do nome; o símbolo da decisão pelo literal de
+cada decisão admissível; o símbolo do meio pela regra restrita àquele item; e o
+símbolo da quantidade pelo valor que \emph{aquela decisão} admite (inline quando
+há um único valor).
+\item Reescreve a regra da cláusula como a soma das produções especializadas.
+\item Fixa o sujeito do cenário como literal no cabeçalho do artefato,
+substituindo o \texttt{texto} livre que havia depois de
+\texttt{"paciente"} / \texttt{"talhao"} / \texttt{"partida"}.
+\item Restringe o vocabulário de contexto (\texttt{protocolo}, \texttt{cultura},
+\texttt{lance}) ao que o foco recuperou.
+\item Entrega às fases seguintes, que eliminam símbolos não geradores e varrem o
+alcance --- os vocabulários globais, agora inalcançáveis, desaparecem sozinhos.
+\end{enumerate}
+
+\subsection{De onde vêm os valores}
+
+O retículo é lido do modelo do especialista, nunca arbitrado pela arquitetura;
+a Tabela~\ref{tab:valores} mostra a origem em cada domínio.
+Quando o modelo nada declara, o campo permanece livre --- inventar um limite
+seria a arquitetura decidindo no lugar de quem escreveu a DSL.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Origem dos valores admissíveis em cada domínio.}
+\label{tab:valores}
+\begin{tabular}{@{}p{2.4cm}p{4.4cm}p{8.0cm}@{}}
+\toprule
+\textbf{Domínio} & \textbf{Campo} & \textbf{Retículo derivado do modelo} \\
+\midrule
+Clínico & \texttt{dose} &
+$\{0\} \cup \{$doses nomeadas$\} \cup \{k \cdot \text{degrau}\}$, limitado pelo
+\texttt{limite\_leve} da bomba ou pela \texttt{dose maxima}. Por decisão:
+degrau para \texttt{AUMENTAR/REDUZIR/AJUSTAR}, dose inicial para
+\texttt{INICIAR}, $0.0$ para o que não movimenta a bomba. \\
+\addlinespace
+Agrícola & \texttt{vazao} &
+$\{0\} \cup \{$dose recomendada, dose máxima$\}$, mais as versões multiplicadas
+pelos fatores de área (\texttt{ajusta X fator 0.5}). $0.0$ para
+\texttt{AGUARDAR\_JANELA}, \texttt{SUSPENDER}, \texttt{BLOQUEAR}. \\
+\addlinespace
+Arbitragem & \texttt{minuto} &
+o minuto da leitura corrente (e o regulamentar, quando há acréscimo). Não é
+escolha do árbitro: é o cronômetro. Um único literal. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Estado de curso: o fato que faltava}
+
+O contexto sempre soube o que estava em curso; a gramática, nunca. Cada domínio
+declara duas listas em \texttt{PapeisDominio}:
+
+\begin{lstlisting}[language=tsx,caption={Declaração do estado de curso (domínio clínico).}]
+decisoesQueIniciam:   ['INICIAR_INFUSAO'],
+decisoesQueContinuam: ['AUMENTAR_VAZAO','REDUZIR_VAZAO','MANTER_VAZAO','SUSPENDER','AJUSTAR_DOSE']
+\end{lstlisting}
+
+Item já em curso perde as decisões de início; item fora de curso perde as de
+continuação. O domínio da arbitragem não declara nenhuma das duas: uma infração
+não ``está em andamento'' como uma infusão, e o mecanismo simplesmente não
+incide.
+
+\subsection{Efeito medido no caso relatado}
+
+A gramática resultante para o cenário da Seção~1 é a da listagem abaixo, e a
+Tabela~\ref{tab:espaco} quantifica o encolhimento do espaço de geração.
+
+\begin{lstlisting}[language=bnf,caption={Trecho de $\hat{G}$ especializada para o cenário da Seção~1.}]
+plano ::= "plano" identificador "para" protocolo "{" "esquema_referencia" esquema
+          "paciente" "'PT-2026-4001'" "sequencia" "[" conduta plano_g1* "]"
+          plano_g2* plano_g3* "auditoria" texto "}"
+protocolo ::= "Choque_Septico"
+ordem ::= ordem_noradrenalina | ordem_adrenalina | ordem_vasopressina | ...
+ordem_noradrenalina ::= "ordem" "Noradrenalina" "decisao" "AUMENTAR_VAZAO"
+                        "dose" "0.05" "mcg/kg/min" "via" via_noradrenalina
+                        "justificativa" texto
+                      | "ordem" "Noradrenalina" "decisao" "MANTER_BLOQUEADO"
+                        "dose" "0.0" "mcg/kg/min" "via" via_noradrenalina
+                        "justificativa" texto
+                      | ...
+ordem_vasopressina  ::= "ordem" "Vasopressina" "decisao" "INICIAR_INFUSAO"
+                        "dose" "0.01" "U/min" "via" via_vasopressina
+                        "justificativa" texto
+                      | ...
+\end{lstlisting}
+
+\begin{table}[h]
+\centering
+\small
+\caption{Espaço de cláusulas deriváveis para o cenário da Seção~1 (domínio clínico,
+12 itens no foco).}
+\label{tab:espaco}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+& \textbf{Antes} & \textbf{Depois} \\
+\midrule
+Vocabulários enviados ao motor & 12 itens, 11 decisões, 4 meios & política de 12 itens \\
+Combinações item $\times$ decisão $\times$ meio & 528 & 153 \\
+Valores numéricos admissíveis & livres ($\mathbb{R}^{+}$) & finitos, do modelo \\
+Cláusulas deriváveis & $528 \times \infty$ & $153$ \\
+Regras em $\hat{G}$ & 18 (= $G$) & 37 \\
+Alternativas em $\hat{G}$ & 61 (= $G$) & 130 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Há um detalhe revelador nessa medição: neste cenário a união das decisões
+admissíveis cobria \emph{todas} as onze do esquema, a dos itens cobria os doze
+fármacos e a dos meios, as quatro vias. Ou seja, $\hat{G}$ era \textbf{idêntica}
+a $G$ --- a poda não removeu uma única alternativa, e a garantia formal ``a saída
+pertence a $L(\hat{G})$'' continuava verdadeira e inteiramente vazia.
+
+Note ainda que a gramática especializada é \emph{maior} (37 regras contra 18) e
+a linguagem que ela gera é \emph{menor}. Não há paradoxo: o crescimento é a
+materialização, em produções distintas, de combinações que antes ficavam
+implícitas num produto cartesiano --- e é ao explicitá-las que se torna possível
+remover as inválidas.
+
+O plano relatado na Seção~1 é derivável na $\hat{G}$ antiga e é
+\textbf{rejeitado pelo parser} na $\hat{G}$ especializada, enquanto o plano
+correto permanece derivável --- comparação reproduzida no
+teste~[7] de \texttt{src/python\_engine/test\_grammar.py}.
+
+% =============================================================================
+\section{Camada 3: contrato do artefato e decodificação semântica}
+% =============================================================================
+
+\subsection{O que uma gramática livre de contexto não expressa}
+
+Quatro propriedades do artefato dependem de \emph{relações entre cláusulas} e
+não cabem numa CFG sem explosão combinatória:
+
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+\item \textbf{Unicidade.} ``No máximo uma decisão por item'' exigiria uma
+produção por subconjunto de itens.
+\item \textbf{Concordância sequência\,$\leftrightarrow$\,cláusulas.} O cabeçalho
+declara condutas; as cláusulas declaram decisões; o \texttt{esquema\_dados} liga
+as duas. Verificar a correspondência é um teste de igualdade entre conjuntos
+construídos em pontos distintos da derivação.
+\item \textbf{Escalonamento atendido.} Se o grafo disparou um escalonamento,
+alguma cláusula precisa materializá-lo.
+\item \textbf{Identidade do sujeito e do contexto.} Resolvida na camada 2 por
+literal --- mas a verificação permanece, para o caso de artefatos vindos de fora
+(uma \emph{baseline} sem máscara, por exemplo).
+\end{enumerate}
+
+\subsection{Verificação cláusula a cláusula}
+
+O contrato é derivado do mesmo material que gerou a política --- nenhuma regra é
+reimplementada --- e é cobrado na ordem de geração. A verificação
+\textbf{para na primeira violação}: as cláusulas seguintes foram escritas sob
+uma premissa que já caiu, e reprová-las em bloco poluiria o reparo.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Verificações do contrato e reparo associado.}
+\label{tab:contrato}
+\begin{tabular}{@{}p{3.6cm}p{7.0cm}p{4.0cm}@{}}
+\toprule
+\textbf{Tipo} & \textbf{Condição} & \textbf{Reparo} \\
+\midrule
+\texttt{item\_fora\_da\_poda} & item não está entre os liberados & retira o item \\
+\texttt{decisao\_inadmissivel} & decisão não está na política do item & retira o par (item, decisão) \\
+\texttt{meio\_inadmissivel} & via/modo/reinício fora da lista do item & retira o item \\
+\texttt{valor\_inadmissivel} & valor fora do retículo daquela decisão & retira o item \\
+\texttt{item\_repetido} & duas cláusulas para o mesmo item & retira o item \\
+\texttt{sujeito\_incorreto} & identificador diferente do cenário & --- (reprompt) \\
+\texttt{contexto\_fora\_do\_foco} & protocolo/cultura/lance não recuperado & --- (reprompt) \\
+\texttt{sequencia\_incoerente} & conduta declarada sem cláusula, ou vice-versa & --- (reprompt) \\
+\texttt{escalonamento\_ignorado} & escalonamento disparado sem cláusula & --- (reprompt) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{A realimentação: por que a gramática encolhe}
+
+O laço em \texttt{src/inference/decodificacao.ts} não se limita a reprovar:
+
+\begin{equation*}
+\hat{G}_{t+1} \;=\; \text{especializa}\bigl(\text{podar}(\Pi_t,\; \text{reparos}(v_t))\bigr)
+\qquad\text{com}\qquad L(\hat{G}_{t+1}) \subsetneq L(\hat{G}_t)
+\end{equation*}
+
+onde $\Pi_t$ é a política da tentativa $t$ e $v_t$ as violações observadas. Como
+a linguagem da tentativa seguinte é estritamente menor, o mesmo erro deixa de
+ser exprimível --- não é um pedido educado ao modelo para não repetir, é a
+retirada da possibilidade. Quando a violação é do artefato e não há par a
+retirar (linhas ``reprompt'' da Tabela~\ref{tab:contrato}), o laço injeta o
+relatório de violações no Prompt Semântico e refaz a tentativa com a mesma
+gramática --- gastar uma geração idêntica sem nenhuma mudança seria desperdício.
+
+\begin{lstlisting}[language=tsx,caption={Núcleo do laço (simplificado).}]
+for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
+    const saida = await chamarMotor({ comando, contexto, subgrafo_regras: subgrafo });
+    const veredito = verificarContrato(contrato, saida.resultado);
+    if (veredito.conforme) return { ...saida, tentativas: tentativa, conforme: true };
+
+    const menor = podarPorViolacoes(subgrafo, veredito.violacoes);
+    if (encolheu(menor, subgrafo)) {
+        subgrafo = menor;                              // G_hat menor na proxima volta
+        contrato = { ...contrato, politicas: indexar(menor.politicas) };
+    }
+    contexto = promptOriginal + relatorioDeViolacoes(veredito.violacoes);
+}
+\end{lstlisting}
+
+\subsection{Decodificação incremental: um elemento por vez}
+\label{sec:incremental}
+
+A verificação descrita acima julga o artefato depois de pronto. Isso deixa um
+custo escondido: uma cláusula ruim invalida a geração inteira, mesmo que as
+outras estivessem corretas. O modo \textbf{incremental} --- padrão desde esta
+revisão --- monta o artefato \emph{elemento a elemento}, e cada elemento é
+validado no grafo antes de ser aceito. Uma proposta reprovada é descartada e a
+mesma posição é refeita; nenhuma proposta inválida sobrevive até o artefato.
+
+O motor ganhou um endpoint para isso: \texttt{POST /generate-fragment} gera
+\emph{um} não-terminal qualquer (uma cláusula, uma conduta, um alerta) tendo o
+artefato parcial como prefixo, sob a gramática que as validações anteriores
+deixaram de pé. A orquestração fica na camada simbólica, onde está o grafo.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=5mm and 12mm]
+
+\node[caixa, text width=40mm] (id) {\textbf{1. Identificador}\\ \texttt{simbolo=identificador}};
+
+\node[novo, below=8mm of id, text width=46mm] (seq)
+  {\textbf{2. Sequência, conduta a conduta}\\
+   admissíveis $=$ condutas \emph{realizáveis}\\ menos as já listadas};
+\node[decisao, right=16mm of seq] (vseq) {realizável?};
+\node[alerta, below=7mm of vseq, text width=40mm] (dseq)
+  {descarta e refaz\\ \textit{(a conduta sai do vocabulário do passo)}};
+
+\node[novo, below=20mm of seq, text width=46mm] (ord)
+  {\textbf{3. Uma cláusula por conduta}\\
+   decisões restritas às que\\ \emph{realizam} aquela conduta};
+\node[decisao, right=16mm of ord] (vord) {contrato?};
+\node[alerta, below=7mm of vord, text width=40mm] (dord)
+  {descarta e repoda\\ \textit{(o par (item, decisão) sai de $\hat{G}$)}};
+
+\node[caixa, below=20mm of ord, text width=46mm] (fim)
+  {\textbf{4. Alertas, auditoria e montagem}\\
+   conduta sem cláusula sai da sequência};
+\node[grafo, below=7mm of fim, text width=46mm] (final)
+  {\textbf{5. Contrato completo}\\ última conferência sobre o artefato inteiro};
+
+\draw[seta] (id) -- (seq);
+\draw[setanovo] (seq) -- (vseq);
+\draw[setaloop] (vseq) -- node[rot] {não} (dseq);
+\draw[setaloop] (dseq.west) -- ++(-6mm,0) |- (seq.east);
+\draw[setanovo] (vseq.north) |- node[rot, pos=0.75] {sim: aceita} ($(seq.north)+(0,4mm)$);
+\draw[seta] (seq) -- node[rot] {fecha} (ord);
+\draw[setanovo] (ord) -- (vord);
+\draw[setaloop] (vord) -- node[rot] {viola} (dord);
+\draw[setaloop] (dord.west) -- ++(-6mm,0) |- (ord.east);
+\draw[setanovo] (vord.north) |- node[rot, pos=0.75] {sim: aceita} ($(ord.north)+(0,4mm)$);
+\draw[seta] (ord) -- (fim);
+\draw[seta] (fim) -- (final);
+
+\end{tikzpicture}
+\caption{Decodificação incremental. Cada elemento proposto pelo modelo passa
+pelo contrato antes de entrar no artefato; ao ser reprovado, sai do vocabulário
+(conduta) ou da política (cláusula) daquele passo, de modo que a repetição do
+mesmo erro deixa de ser exprimível na tentativa seguinte.}
+\label{fig:incremental}
+\end{figure}
+
+A ordem dos passos resolve por construção a concordância que antes precisava ser
+verificada no fim: a sequência é escrita primeiro, e cada cláusula é gerada com
+as decisões restritas às que \emph{realizam} a conduta daquela posição. Escrever
+uma cláusula que não cumpre o que o cabeçalho prometeu deixa de ser possível.
+A Tabela~\ref{tab:elementos} detalha o que é cobrado de cada elemento e o que a
+reprovação retira da gramática do passo.
+
+\begin{table}[h]
+\centering
+\small
+\caption{O que é validado em cada elemento, e o que a reprovação retira.}
+\label{tab:elementos}
+\begin{tabular}{@{}p{2.6cm}p{6.4cm}p{5.6cm}@{}}
+\toprule
+\textbf{Elemento} & \textbf{Validação} & \textbf{Efeito da reprovação} \\
+\midrule
+Conduta da sequência &
+existe item disponível cuja política admite alguma decisão que a realiza; não
+está repetida &
+a conduta sai do vocabulário do passo e a posição é refeita \\
+\addlinespace
+Cláusula &
+item liberado, decisão admissível para o item, meio na lista, valor no retículo
+daquela decisão, item não repetido, decisão coerente com a conduta declarada &
+o par (item, decisão) sai da política e a posição é refeita sob $\hat{G}$ menor \\
+\addlinespace
+Conduta sem cláusula &
+--- &
+a conduta é retirada da sequência: promessa no cabeçalho sem realização no corpo
+é a própria incoerência que o contrato reprova \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Demonstração: o segundo caso relatado}
+
+Reexecutando as propostas exatas de um plano defeituoso de produção
+--- PAM 58, FC 138, noradrenalina em curso --- sob o modo incremental, a trilha
+de montagem fica assim (dublê no lugar do modelo, propondo o que o motor
+propôs):
+
+\begin{lstlisting}[caption={Trilha de montagem: sete propostas descartadas, duas cláusulas aceitas.}]
+[ACEITO  ] (identificador) Plano_Choque_Refratario
+[ACEITO  ] (sequencia)     Iniciar_Vasopressor
+[DESCARTA] (sequencia)     Titular_Vasopressor
+             motivo: nao e realizavel neste contexto: nenhum item disponivel
+                     admite alguma das decisoes que a materializam (AUMENTAR_VAZAO)
+[ACEITO  ] (sequencia)     Manter_Bloqueio
+[ACEITO  ] (sequencia)     Acionar_Equipe
+[DESCARTA] (clausula)      ordem Vasopressina decisao INICIAR_INFUSAO dose 0.3 U/min ...
+             motivo: 0.3 U/min esta fora do que o modelo declara para
+                     Vasopressina com INICIAR_INFUSAO: 0.01 U/min
+[DESCARTA] (clausula)      ordem Vancomicina decisao INICIAR_INFUSAO dose 15 mg/kg/h ...
+             motivo: 15 mg/kg/h esta fora do que o modelo declara para
+                     Vancomicina com INICIAR_INFUSAO: 25.0 mg/kg, 15.0 mg/kg
+[ACEITO  ] (clausula)      ordem Vancomicina decisao INICIAR_INFUSAO dose 25.0 mg/kg ...
+[DESCARTA] (clausula)      ordem Noradrenalina decisao MANTER_BLOQUEADO dose 2.0 ...
+             motivo: 2.0 mcg/kg/min esta fora do que o modelo declara para
+                     Noradrenalina com MANTER_BLOQUEADO: 0.0 mcg/kg/min
+[ACEITO  ] (clausula)      ordem Noradrenalina decisao MANTER_BLOQUEADO dose 0.0 ...
+\end{lstlisting}
+
+Cada linha \texttt{DESCARTA} é um erro que, no modo anterior, teria chegado ao
+plano final. Nenhum deles aparece no artefato montado.
+
+\subsection{Por que não token a token dentro do amostrador}
+
+Resta a pergunta: por que não consultar o grafo a cada \emph{token}? A razão é
+de arquitetura, não de desempenho. O amostrador está em Python e a avaliação
+determinística das regras, na camada simbólica; consultar o grafo por token
+exigiria uma chamada por token, ou reimplementar as regras dentro do motor ---
+a \emph{segunda fonte de verdade} que a arquitetura existe para eliminar.
+
+A granularidade escolhida é a do \emph{elemento}, e ela é suficiente porque as
+duas outras granularidades já estão cobertas:
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item \textbf{token}: o mascaramento de logits sobre a $\hat{G}$ especializada é,
+literalmente, validação a cada token --- só que sem consulta externa, porque a
+restrição já foi compilada para dentro da gramática;
+\item \textbf{elemento}: o contrato, entre uma geração e a seguinte
+(Figura~\ref{fig:incremental});
+\item \textbf{artefato}: a conferência final, que também roda no modo
+incremental.
+\end{itemize}
+
+Um token isolado, no meio de uma cláusula, não é sequer decidível contra o
+grafo: só a cláusula inteira tem significado clínico, agronômico ou disciplinar.
+Validar antes disso seria validar um fragmento sem sentido.
+
+
+% =============================================================================
+\section{Genericidade: papéis, não nomes}
+% =============================================================================
+
+Nenhum dos módulos introduzidos menciona fármaco, produto ou infração. Todos
+falam em \emph{papéis} (Tabela~\ref{tab:papeis}), e cada domínio declara como os
+nomeia --- o mesmo padrão que o motor já usava no seu mapa de poda.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Papéis da gramática de saída nos três domínios implementados.}
+\label{tab:papeis}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Papel} & \textbf{Clínico} & \textbf{Agrícola} & \textbf{Arbitragem} \\
+\midrule
+Artefato (símbolo inicial) & \texttt{plano} & \texttt{missao} & \texttt{arbitragem} \\
+Cláusula & \texttt{ordem} & \texttt{aplicacao} & \texttt{marcacao} \\
+Item & \texttt{farmaco} (12) & \texttt{produto} (9) & \texttt{infracao} (10) \\
+Decisão & \texttt{decisao} & \texttt{decisao} & \texttt{decisao} \\
+Meio & \texttt{via} & \texttt{modo} & \texttt{reinicio} \\
+Campo quantitativo & \texttt{dose} & \texttt{vazao} & \texttt{minuto} \\
+Sujeito & \texttt{paciente} & \texttt{talhao} & \texttt{partida} \\
+Contexto & \texttt{protocolo} & \texttt{cultura} & \texttt{lance} \\
+Decisão de escalonamento & \texttt{ESCALAR\_EQUIPE} & \texttt{ACIONAR\_AGRONOMO} & \texttt{ACIONAR\_VAR} \\
+Estado de curso & sim & sim & não se aplica \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Um quarto domínio entra declarando essa tabela e um mapa
+\texttt{decisão $\rightarrow$ conduta} extraído do seu \texttt{esquema\_dados}.
+Nada nos módulos genéricos precisa mudar --- é a mesma promessa que o módulo de
+foco semântico já cumpria.
+
+% =============================================================================
+\section{Verificação}
+% =============================================================================
+
+\subsection{O que foi testado}
+
+A Tabela~\ref{tab:testes} resume as duas suítes acrescentadas por esta revisão.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Suítes de teste, todas offline (sem Neo4j, sem GPU, sem LLM).}
+\label{tab:testes}
+\begin{tabular}{@{}p{5.2cm}p{2.0cm}p{7.4cm}@{}}
+\toprule
+\textbf{Suíte} & \textbf{Casos} & \textbf{Cobre} \\
+\midrule
+\texttt{src/test/contrato.test.ts} & 17 &
+política por item, estado de curso, retículo por decisão, constantes,
+as nove verificações do contrato, repoda, e a mesma maquinaria nos três domínios \\
+\addlinespace
+\texttt{python\_engine/test\_grammar.py} \texttt{[7]} & 7 &
+$\hat{G}$ especializada aceita o par declarado e rejeita: iniciar item em curso,
+dose fora do degrau, valor acima do limite rígido, decisão que não cabe ao item,
+sujeito copiado do exemplar, contexto fora do foco \\
+\addlinespace
+\texttt{src/test/incremental.test.ts} & 9 &
+decodificação elemento a elemento com dublê no lugar do modelo: conduta
+irrealizável descartada, cláusula com dose inválida descartada e refeita, repoda
+entre tentativas, restrição das decisões à conduta declarada, coerência final \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Ambas foram encadeadas em \texttt{npm test}, junto com as suítes já existentes
+(tipos, validação da DSL, exportação da BNF, Earley, avaliação e foco
+semântico). O conjunto completo passa.
+
+\subsection{Compatibilidade com o gabarito existente}
+
+As políticas ficaram estritamente mais restritas, o que levanta a pergunta
+natural: o gabarito de referência continua válido? Reavaliando as 500 linhas de
+\texttt{ground\_truth\_med.jsonl} contra as políticas novas,
+\textbf{nenhuma das ordens esperadas ficou fora da política} --- o aperto
+eliminou apenas cadeias que o gabarito nunca considerou corretas.
+
+\subsection{O que ainda não foi exercitado}
+
+O laço de repoda não foi executado contra um modelo de linguagem real: o motor
+com pesos e o Neo4j não estavam disponíveis no ambiente em que a revisão foi
+implementada. Foram exercitadas todas as suas partes determinísticas ---
+especialização, verificação, repoda, compilação de $\hat{G}$ nos dois formatos
+de máscara (GBNF do llama.cpp e Lark do Outlines). A primeira execução com o
+motor no ar é o teste que falta.
+
+% =============================================================================
+\section{Mapa de implementação}
+% =============================================================================
+
+A Tabela~\ref{tab:arquivos} lista o que foi criado e o que foi alterado.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Arquivos e responsabilidades.}
+\label{tab:arquivos}
+\begin{tabular}{@{}p{5.6cm}p{1.5cm}p{7.6cm}@{}}
+\toprule
+\textbf{Arquivo} & \textbf{Estado} & \textbf{Responsabilidade} \\
+\midrule
+\texttt{src/knowledge/politica.ts} & novo &
+tipos genéricos (\texttt{PoliticaItem}, \texttt{PapeisDominio}), retículo de
+valores, escalonamento por fator, montagem do payload \\
+\addlinespace
+\texttt{src/knowledge/contrato.ts} & novo &
+leitura do artefato pelos papéis, verificação incremental, repoda por violação,
+relatório legível \\
+\addlinespace
+\texttt{src/inference/decodificacao.ts} & novo &
+os dois modos: laço monolítico (gerar, verificar, repodar, regerar) e
+decodificação incremental (um elemento por vez, validado no grafo) \\
+\addlinespace
+\texttt{src/test/incremental.test.ts} & novo & suíte de 9 casos com dublê do motor \\
+\addlinespace
+\texttt{src/test/contrato.test.ts} & novo & suíte de 17 casos \\
+\addlinespace
+\texttt{src/knowledge/graphrag*.ts} & alterado &
+política por item com valores e estado de curso; papéis do domínio; mapa
+decisão\,$\rightarrow$\,conduta; payload novo \\
+\addlinespace
+\texttt{src/inference/*-client.ts} & alterado &
+montam contrato e delegam ao laço; bloco \texttt{[CENARIO]} no Prompt Semântico \\
+\addlinespace
+\texttt{python\_engine/grammar\_from\_kg.py} & alterado &
+fase 0: especialização por (item, decisão), literais do cenário, contexto
+restrito, vocabulário de condutas restrito passo a passo \\
+\addlinespace
+\texttt{python\_engine/main.py} & alterado &
+\texttt{POST /generate-fragment} (gera um não-terminal qualquer sobre um
+prefixo) e a marca \texttt{especializada} na resposta \\
+\addlinespace
+\texttt{python\_engine/test\_grammar.py} & alterado & sete casos novos \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Parâmetros de operação}
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+\item \texttt{SPC\_CML\_DECODIFICACAO} (padrão \texttt{incremental}):
+\texttt{monolitica} volta ao modo de artefato inteiro, útil para comparar os dois
+na avaliação.
+\item \texttt{SPC\_CML\_MAX\_TENTATIVAS} (padrão 3): tetos de geração por
+cenário no modo monolítico. Cada tentativa custa uma decodificação inteira; três
+cobre o caso típico --- uma violação, uma repoda, um acerto --- sem transformar
+um cenário patológico em lote travado.
+\item \texttt{SPC\_CML\_MAX\_TENTATIVAS\_ELEMENTO} (padrão 3),
+\texttt{SPC\_CML\_MAX\_CONDUTAS} (5) e \texttt{SPC\_CML\_MAX\_ALERTAS} (2):
+tetos do modo incremental, por posição e por lista.
+\item As três chaves legadas do payload continuam sendo emitidas, então um motor
+não atualizado poda como antes: a migração dos dois lados não precisa ser
+simultânea. Para que isso não passe despercebido, a resposta do motor traz a
+marca \texttt{especializada}, e o cliente falha alto quando envia políticas e
+recebe \texttt{false} --- sintoma de processo antigo ainda no ar, que faz uma
+correção já aplicada parecer sem efeito.
+\end{itemize}
+
+% =============================================================================
+\section{Limitações e próximos passos}
+% =============================================================================
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+\item \textbf{Avaliação ainda não ancorada no grafo.} O julgamento semântico
+mais amplo (``o plano atende ao pedido?'') continua sendo feito por um modelo de
+linguagem sem acesso ao grafo. No caso que motivou esta revisão, esse julgamento
+apontou como erro uma decisão que o modelo do especialista permite (vancomicina
+por acesso periférico) e não viu duas violações reais. Com o contrato pronto, o
+caminho natural é alimentá-lo com as violações determinísticas e restringir o
+LLM ao que só ele pode julgar.
+
+\item \textbf{Granularidade do retículo.} O mapeamento de valores por decisão
+codifica uma convenção lida do plano de referência do próprio modelo (o degrau
+para titular, a dose inicial para iniciar, zero para o resto). É uma
+interpretação defensável e explícita, mas é uma interpretação: se um domínio
+quiser outra, ela precisa ser declarada, não deduzida.
+
+\item \textbf{Unicidade como regra fixa.} O contrato assume no máximo uma
+cláusula por item. Domínios em que duas decisões sobre o mesmo item façam
+sentido (por exemplo, marcar duas infrações distintas do mesmo jogador)
+precisarão declarar isso.
+
+\item \textbf{Custo do modo incremental.} Cada elemento é uma chamada ao motor:
+um plano com três cláusulas custa da ordem de dez gerações curtas, contra uma
+longa no modo monolítico. Em troca, nenhuma proposta inválida sobrevive e o
+descarte fica registrado. A comparação de custo e de qualidade entre os dois
+modos, com o motor no ar, é a medição que falta.
+
+\item \textbf{Execução ponta a ponta.} O laço foi exercitado com um dublê no
+lugar do modelo, que reproduz as propostas defeituosas observadas em produção.
+Falta rodá-lo com o motor real e medir quantos elementos são descartados por
+cenário --- número que, por si só, mede o quanto ainda sobra fora da máscara.
+
+\item \textbf{Reinício do serviço.} A especialização vive no processo Python: um
+\texttt{uvicorn} que ficou no ar desde antes da mudança continua podando pelo
+esquema antigo. A marca \texttt{especializada} na resposta passou a denunciar
+isso, mas o cuidado operacional permanece.
+\end{enumerate}
+
+% =============================================================================
+\appendix
+\section{Cadeias que deixaram de existir}
+% =============================================================================
+
+Todas as cadeias abaixo eram deriváveis na versão anterior e não pertencem mais
+a $L(\hat{G})$ para o cenário da Seção~1. Cada uma corresponde a um caso do
+teste~[7] de \texttt{test\_grammar.py}.
+
+\begin{lstlisting}[language=bnf,caption={Cadeias agora inexprimíveis.}]
+ordem Noradrenalina decisao INICIAR_INFUSAO dose 0.2 mcg/kg/min via ACESSO_CENTRAL ...
+    -> o farmaco ja esta em infusao: a producao nao existe
+
+ordem Noradrenalina decisao AUMENTAR_VAZAO dose 0.4 mcg/kg/min via ACESSO_CENTRAL ...
+    -> o degrau declarado e 0.05: nenhum outro valor acompanha esta decisao
+
+ordem Vasopressina decisao INICIAR_INFUSAO dose 0.1 U/min via ACESSO_CENTRAL ...
+    -> acima do limite leve (0.03) e do rigido (0.04) da bomba
+
+ordem Vasopressina decisao MANTER_BLOQUEADO dose 0.0 U/min via ACESSO_CENTRAL ...
+    -> a vasopressina nao esta bloqueada neste contexto
+
+plano ... paciente 'PT-2026-0031' ...
+    -> o sujeito do cenario e literal na gramatica
+
+plano ... para Controle_Glicemico_UTI ...
+    -> o contexto recuperado pelo foco foi Choque_Septico
+\end{lstlisting}
+
+\vspace{4mm}
+\noindent\rule{\linewidth}{0.4pt}\\[1mm]
+{\footnotesize Documento gerado a partir do estado do repositório após a
+implementação descrita. As figuras são desenhadas em TikZ e não dependem de
+imagens externas.}
+
+\end{document}

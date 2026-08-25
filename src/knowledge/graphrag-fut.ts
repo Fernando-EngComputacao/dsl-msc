@@ -162,6 +162,7 @@ export const PAPEIS_FUT: PapeisDominio = {
     campoQuantidade: 'minuto',
     campoSujeito: 'partida',
     contexto: 'lance',
+    conduta: 'conduta',
     // Uma sancao mais grave e o analogo do incremento: expoe mais o jogador.
     decisoesDeIncremento: ['CARTAO_AMARELO', 'CARTAO_VERMELHO', 'EXPULSAR', 'PENALTI'],
     decisaoDeEscalonamento: 'ACIONAR_VAR'
@@ -169,6 +170,11 @@ export const PAPEIS_FUT: PapeisDominio = {
 };
 
 /** decisao -> conduta declarada no `esquema_dados`. */
+/** Nome do `esquema_dados` do modelo — o cabecalho do artefato o cita. */
+export function esquemaDeDadosFut(model: FutModel): string | undefined {
+    return model.elements.filter(isFutSchemaDef)[0]?.name;
+}
+
 export function condutasPorDecisaoFut(model: FutModel): Record<string, string> {
     const schema = model.elements.filter(isFutSchemaDef)[0];
     const mapa: Record<string, string> = {};

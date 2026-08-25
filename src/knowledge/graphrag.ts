@@ -260,6 +260,7 @@ export const PAPEIS_MED: PapeisDominio = {
     campoQuantidade: 'dose',
     campoSujeito: 'paciente',
     contexto: 'protocolo',
+    conduta: 'conduta',
     decisoesDeIncremento: ['INICIAR_INFUSAO', 'AUMENTAR_VAZAO', 'AJUSTAR_DOSE'],
     decisaoDeEscalonamento: 'ESCALAR_EQUIPE',
     decisoesQueIniciam: ['INICIAR_INFUSAO'],
@@ -268,6 +269,11 @@ export const PAPEIS_MED: PapeisDominio = {
 
 /** decisao -> conduta declarada no `esquema_dados`, para o contrato ligar a
  *  `sequencia` do cabecalho as clausulas emitidas. */
+/** Nome do `esquema_dados` do modelo — o cabecalho do artefato o cita. */
+export function esquemaDeDadosMed(model: MedicalModel): string | undefined {
+    return model.elements.filter(isDataSchemaDef)[0]?.name;
+}
+
 export function condutasPorDecisaoMed(model: MedicalModel): Record<string, string> {
     const schema = model.elements.filter(isDataSchemaDef)[0];
     const mapa: Record<string, string> = {};

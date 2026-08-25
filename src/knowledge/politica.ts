@@ -80,6 +80,8 @@ export interface PapeisDominio {
     campoSujeito: string;
     /** Vocabulario do contexto do artefato: protocolo | cultura | lance. */
     contexto: string;
+    /** Vocabulario das condutas listadas na `sequencia` do cabecalho. */
+    conduta: string;
     /** Decisoes que aumentam a exposicao — usadas pelo contrato. */
     decisoesDeIncremento: string[];
     /** Decisao que materializa um escalonamento disparado, se o dominio tiver uma. */
@@ -105,6 +107,12 @@ export interface ConstantesCenario {
     sujeito?: string;
     /** Contextos (protocolo/cultura/lance) que o foco deixou em pe. */
     contextos: string[];
+    /**
+     * Condutas ainda admissiveis para a `sequencia`. Muda a cada passo da
+     * decodificacao incremental: o que ja foi listado sai, e o fecho do vetor so
+     * entra quando nao ha conduta obrigatoria pendente.
+     */
+    condutas?: string[];
 }
 
 /**

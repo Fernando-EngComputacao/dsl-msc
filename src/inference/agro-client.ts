@@ -18,12 +18,13 @@ import * as path from 'node:path';
 
 import { loadAgroModel } from '../database/neo4j-agro.js';
 import { montarContrato } from '../knowledge/contrato.js';
-import { decodificarSobContrato, type ResultadoDecodificacao } from './decodificacao.js';
+import { decodificar, type ResultadoDecodificacao } from './decodificacao.js';
 import type { AgroModel } from '../generated/ast.js';
 import {
     retrieveAgroConstraints,
     agroPruningPayload,
     condutasPorDecisaoAgro,
+    esquemaDeDadosAgro,
     type AgroContext,
     type RetrievedAgroConstraints
 } from '../knowledge/graphrag-agro.js';
@@ -166,10 +167,11 @@ export async function gerarMissaoRestrita(
     const contrato = montarContrato(
         subgrafo,
         model ? condutasPorDecisaoAgro(model) : {},
-        constraints.escalonamentos.map(e => `${e.destino}: ${e.detalhe}`)
+        constraints.escalonamentos.map(e => `${e.destino}: ${e.detalhe}`),
+        model ? esquemaDeDadosAgro(model) : undefined
     );
 
-    return decodificarSobContrato({
+    return decodificar({
         comando: contexto.intencao ?? '',
         contexto: montarPromptSemanticoAgro(constraints, contexto),
         subgrafo,

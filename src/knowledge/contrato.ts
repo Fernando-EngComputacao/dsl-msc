@@ -45,12 +45,15 @@ export interface ContratoArtefato {
     escalonamentos: string[];
     /** No maximo uma clausula por item. */
     unicidade: boolean;
+    /** Nome do `esquema_dados`, necessario para montar o cabecalho do artefato. */
+    esquema?: string;
 }
 
 export function montarContrato(
     subgrafo: SubgrafoPodado,
     condutaPorDecisao: Record<string, string>,
-    escalonamentos: string[]
+    escalonamentos: string[],
+    esquema?: string
 ): ContratoArtefato {
     return {
         papeis: subgrafo.papeis,
@@ -59,7 +62,8 @@ export function montarContrato(
         contextos: subgrafo.constantes.contextos,
         condutaPorDecisao,
         escalonamentos,
-        unicidade: true
+        unicidade: true,
+        esquema
     };
 }
 
@@ -204,7 +208,7 @@ export function verificarClausulas(
                 clausula: c.indice,
                 tipo: 'meio_inadmissivel',
                 mensagem: `${c.meio} nao esta entre os meios de ${c.item}: ${politica.meios.join(', ')}`,
-                reparo: { item: c.item }
+                reparo: { item: c.item, decisao: c.decisao }
             }];
         }
 
@@ -223,7 +227,9 @@ export function verificarClausulas(
                         `${c.valor} ${c.unidade} esta fora do que o modelo declara para ` +
                         `${c.item} com ${c.decisao}: ` +
                         admissiveis.map(v => `${v.valor} ${v.unidade}`).join(', '),
-                    reparo: { item: c.item }
+                    // Valor errado invalida o PAR (item, decisao), nao o item: o
+                    // mesmo item com outra decisao pode continuar licito.
+                    reparo: { item: c.item, decisao: c.decisao }
                 }];
             }
         }
@@ -369,6 +375,209 @@ export function podarPorViolacoes(
         farmacos_liberados: politicas.map(p => p.item),
         vias_disponiveis: [...meios]
     };
+}
+
+// =============================================================================
+// 5) Decodificacao incremental: validacao elemento a elemento
+// =============================================================================
+
+/**
+ * O que ja foi aceito na montagem incremental do artefato. Cada elemento novo e
+ * julgado contra este estado, e nao apenas contra o contrato: unicidade e
+ * concordancia so existem em relacao ao que ja esta escrito.
+ */
+export interface EstadoIncremental {
+    sequencia: string[];
+    clausulas: ClausulaLida[];
+}
+
+export function estadoVazio(): EstadoIncremental {
+    return { sequencia: [], clausulas: [] };
+}
+
+/** Le UMA clausula isolada (o fragmento recem-gerado), sem exigir artefato. */
+export function lerClausula(texto: string, papeis: PapeisDominio): ClausulaLida | undefined {
+    const clausulas = lerArtefato(texto, papeis).clausulas;
+    return clausulas[0];
+}
+
+/**
+ * Decisoes que realizam uma conduta declarada na sequencia. E o inverso do mapa
+ * `condutaPorDecisao` do `esquema_dados` — a sequencia fala em condutas, as
+ * clausulas falam em decisoes, e a decodificacao incremental precisa ir de uma
+ * ponta a outra.
+ */
+export function decisoesDaConduta(contrato: ContratoArtefato, conduta: string): string[] {
+    return Object.entries(contrato.condutaPorDecisao)
+        .filter(([, c]) => c === conduta)
+        .map(([d]) => d);
+}
+
+/**
+ * Condutas que o contexto AINDA permite realizar: existe pelo menos um item cuja
+ * politica admite alguma decisao que mapeia para ela. Uma conduta que nenhum
+ * item pode realizar nao deve nem entrar na sequencia — e este e o conjunto que
+ * a gramatica do proximo elemento vai admitir.
+ */
+export function condutasRealizaveis(
+    contrato: ContratoArtefato,
+    estado: EstadoIncremental
+): string[] {
+    const itensLivres = [...contrato.politicas.values()].filter(
+        p => !contrato.unicidade || !estado.clausulas.some(c => c.item === p.item)
+    );
+
+    const realizaveis = new Set<string>();
+    for (const politica of itensLivres) {
+        for (const decisao of politica.decisoes) {
+            const conduta = contrato.condutaPorDecisao[decisao];
+            if (conduta) realizaveis.add(conduta);
+        }
+    }
+    for (const ja of estado.sequencia) realizaveis.delete(ja);
+    return [...realizaveis];
+}
+
+/**
+ * Condutas que o artefato e OBRIGADO a conter. Hoje, as que materializam um
+ * escalonamento disparado pelo grafo: se a arquitetura mandou acionar a equipe,
+ * o plano nao pode terminar sem dizer quem foi acionado.
+ */
+export function condutasObrigatorias(contrato: ContratoArtefato): string[] {
+    const escalonar = contrato.papeis.decisaoDeEscalonamento;
+    if (!escalonar || contrato.escalonamentos.length === 0) return [];
+    const conduta = contrato.condutaPorDecisao[escalonar];
+    return conduta ? [conduta] : [];
+}
+
+/**
+ * Verifica UM elemento da sequencia recem-proposto. Devolve a violacao quando o
+ * elemento nao pode ser aceito — o chamador entao o descarta e pede outro, com
+ * a conduta reprovada fora da gramatica.
+ */
+export function verificarConduta(
+    contrato: ContratoArtefato,
+    estado: EstadoIncremental,
+    conduta: string
+): Violacao | undefined {
+    if (estado.sequencia.includes(conduta)) {
+        return {
+            clausula: null,
+            tipo: 'sequencia_incoerente',
+            mensagem: `${conduta} ja consta na sequencia deste artefato`
+        };
+    }
+    if (!condutasRealizaveis(contrato, estado).includes(conduta)) {
+        return {
+            clausula: null,
+            tipo: 'sequencia_incoerente',
+            mensagem:
+                `${conduta} nao e realizavel neste contexto: nenhum item disponivel admite ` +
+                `alguma das decisoes que a materializam (${decisoesDaConduta(contrato, conduta).join(', ') || 'nenhuma'})`
+        };
+    }
+    return undefined;
+}
+
+/**
+ * Verifica UMA clausula recem-gerada contra o grafo e contra o que ja foi
+ * aceito. Reaproveita integralmente `verificarClausulas`: a regra que julga o
+ * elemento isolado e a mesma que julga o artefato inteiro, para nao existirem
+ * dois criterios de correcao.
+ */
+export function verificarClausulaNova(
+    contrato: ContratoArtefato,
+    estado: EstadoIncremental,
+    clausula: ClausulaLida,
+    condutaEsperada?: string
+): Violacao[] {
+    const violacoes = verificarClausulas(contrato, [...estado.clausulas, clausula]);
+
+    if (condutaEsperada) {
+        const realizada = contrato.condutaPorDecisao[clausula.decisao];
+        if (realizada !== condutaEsperada) {
+            violacoes.push({
+                clausula: estado.clausulas.length,
+                tipo: 'sequencia_incoerente',
+                mensagem:
+                    `a clausula usa ${clausula.decisao} (conduta ${realizada ?? 'nenhuma'}), ` +
+                    `mas a sequencia declarou ${condutaEsperada} nesta posicao`,
+                reparo: { item: clausula.item, decisao: clausula.decisao }
+            });
+        }
+    }
+
+    return violacoes;
+}
+
+/**
+ * Restringe a poda as decisoes que realizam uma conduta especifica. Usada no
+ * passo em que a sequencia ja declarou a conduta e falta escrever a clausula
+ * que a cumpre: nesse momento, escrever qualquer outra decisao seria incoerente
+ * — e a gramatica do passo simplesmente nao a gera.
+ */
+export function restringirADecisoes(
+    subgrafo: SubgrafoPodado,
+    decisoes: string[],
+    itensJaUsados: string[] = []
+): SubgrafoPodado {
+    const permitidas = new Set(decisoes);
+    const usados = new Set(itensJaUsados);
+    const politicas = subgrafo.politicas
+        .filter(p => !usados.has(p.item))
+        .map(p => ({ ...p, decisoes: p.decisoes.filter(d => permitidas.has(d)) }))
+        .filter(p => p.decisoes.length > 0);
+
+    const acoes = new Set<string>();
+    const meios = new Set<string>();
+    for (const p of politicas) {
+        for (const d of p.decisoes) acoes.add(d);
+        for (const m of p.meios) meios.add(m);
+    }
+
+    return {
+        ...subgrafo,
+        politicas,
+        acoes_permitidas: [...acoes],
+        farmacos_liberados: politicas.map(p => p.item),
+        vias_disponiveis: [...meios]
+    };
+}
+
+/** Restringe o vocabulario de condutas admissiveis no proximo elemento. */
+export function restringirACondutas(
+    subgrafo: SubgrafoPodado,
+    condutas: string[]
+): SubgrafoPodado {
+    return { ...subgrafo, constantes: { ...subgrafo.constantes, condutas } };
+}
+
+/**
+ * Monta o artefato final a partir do que foi aceito. O gabarito e o mesmo nos
+ * tres dominios --- muda apenas o nome dos papeis ---, e por isso cabe aqui em
+ * vez de num modulo por dominio.
+ */
+export function montarArtefato(
+    contrato: ContratoArtefato,
+    identificador: string,
+    contexto: string,
+    estado: EstadoIncremental,
+    clausulasTexto: string[],
+    alertas: string[],
+    auditoria: string
+): string {
+    const p = contrato.papeis;
+    const partes = [
+        `${p.artefato} ${identificador} para ${contexto} {`,
+        contrato.esquema ? `esquema_referencia ${contrato.esquema}` : '',
+        contrato.sujeito ? `${p.campoSujeito} '${contrato.sujeito}'` : '',
+        `sequencia [ ${estado.sequencia.join(' , ')} ]`,
+        ...clausulasTexto,
+        ...alertas,
+        `auditoria '${auditoria}'`,
+        '}'
+    ];
+    return partes.filter(x => x.length > 0).join(' ');
 }
 
 /** Bloco legivel das violacoes, para reentrar no prompt da proxima tentativa. */
