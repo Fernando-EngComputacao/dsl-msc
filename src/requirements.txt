@@ -14,7 +14,15 @@ transformers==4.44.2
 torch
 pydantic
 lark
-pyairports
+# pyairports NAO entra aqui de proposito. O nome foi reaproveitado no PyPI: a
+# unica versao publicada hoje e a 0.0.1 (25/09/2025, autor "John Doe"), que nao
+# traz modulo `pyairports` nenhum — e o template `sample` do setuptools, com um
+# console_script `byted-wandb` e um setup.py que importa subprocess.check_call e
+# os hooks de install/develop sem usa-los. Instala-lo nao satisfaz o import do
+# outlines (`from pyairports.airports import AIRPORT_LIST` continua falhando):
+# quem resolve isso e o stub de MagicMock em main.py, antes de importar outlines.
+# O outlines 0.0.46 ainda declara pyairports como dependencia, entao o pip o
+# arrasta de qualquer forma — init.sh remove depois do install.
 # Backend padrao de decodificacao restrita: compila a GBNF uma vez e mascara os
 # logits em C++. Substitui o generate.cfg do outlines, que reconstruia um FSM
 # sobre todo o vocabulario a cada terminal (ver SPC_CML_BACKEND em main.py).

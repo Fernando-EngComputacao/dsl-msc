@@ -50,6 +50,10 @@
     ],
     "author": "",
     "license": "ISC",
+    "_comentario_overrides": "O langium-cli ate a 4.3.0 publica langium-config-schema.json sem $id. O jsonschema 1.5.0 monta entao a base do documento como resolveUrl(undefined, '') === '/undefined'; cada $ref vira '/undefined#/$defs/...', e o new URL(ref, 'thismessage::/') interno estoura ERR_INVALID_URL porque 'thismessage::/' tem caminho opaco e nao serve de base para referencia absoluta. Resultado: `langium generate` morre antes de validar nada. O 1.4.1 resolve os mesmos $ref e continua cobrando required e additionalProperties (verificado: rejeita propriedade inventada e obrigatoria faltando). Pin em vez de subir para langium-cli 4.4.0 (que adicionou o $id) porque a 4.4.0 arrasta langium ~4.4.0, e as BNF em src/python_engine/grammar sao reproduzidas byte a byte pelo langium 4.2.x. Remover este bloco ao migrar para o 4.4.",
+    "overrides": {
+        "jsonschema": "1.4.1"
+    },
     "dependencies": {
         "langium": "^4.2.1",
         "neo4j-driver": "^6.0.1",

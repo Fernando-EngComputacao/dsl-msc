@@ -1,0 +1,1005 @@
+% =============================================================================
+%  SPC-CML — Visão geral: arquitetura, fluxo e funcionamento
+%
+%  Compilar com:  pdflatex visao-geral-spc-cml.tex   (duas vezes, pelo sumário)
+%  Sem dependências externas: todas as figuras são TikZ, nenhuma imagem.
+%
+%  Documento COMPANHEIRO de arquitetura-spc-cml.tex, que aprofunda a
+%  especialização gramatical por item e o contrato de artefato. Este aqui
+%  cobre o sistema inteiro, de ponta a ponta.
+%
+%  Nota: os blocos `lstlisting` são mantidos em ASCII de propósito — eles
+%  reproduzem código e gramática, que no repositório não levam acento.
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds,shapes.geometric}
+\usepackage[hidelinks]{hyperref}
+
+% ------------------------------------------------------------------ cores
+\definecolor{corBase}{HTML}{2F3E4E}
+\definecolor{corNovo}{HTML}{1F6FB2}
+\definecolor{corNovoFundo}{HTML}{E7F1FA}
+\definecolor{corGrafo}{HTML}{3B7A57}
+\definecolor{corGrafoFundo}{HTML}{E8F2EC}
+\definecolor{corAlerta}{HTML}{A33A3A}
+\definecolor{corAlertaFundo}{HTML}{F8ECEC}
+\definecolor{corCinza}{HTML}{6B7280}
+\definecolor{corFundo}{HTML}{F4F5F7}
+
+% ------------------------------------------------------------------ listings
+\lstdefinestyle{codigo}{
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{corNovo}\bfseries,
+  commentstyle=\color{corCinza}\itshape,
+  stringstyle=\color{corGrafo},
+  numbers=none,
+  frame=single,
+  rulecolor=\color{corCinza!50},
+  backgroundcolor=\color{corFundo},
+  breaklines=true,
+  breakatwhitespace=true,
+  columns=fullflexible,
+  showstringspaces=false,
+  captionpos=b,
+  xleftmargin=4pt,
+  framexleftmargin=4pt
+}
+\lstset{style=codigo}
+
+\lstdefinelanguage{bnf}{
+  morecomment=[l]{\#},
+  morestring=[b]",
+  literate={::=}{{\textcolor{corNovo}{::=}}}3
+}
+\lstdefinelanguage{dsl}{
+  morekeywords={farmaco,protocolo,populacao,regra_seguranca,regra_global,
+                esquema_dados,conduta,plano,ordem,alerta,auditoria,dose,
+                titulacao,bomba,vias,classe,produto,cultura,infracao,missao,
+                arbitragem,sequencia,decisao,via,justificativa,paciente,
+                decisoes,alertas,alto_risco,interacao,contraindicado,
+                limite_leve,limite_rigido,inicial,maxima,esquema_referencia,
+                bloquear_incremento,se},
+  morecomment=[l]{//},
+  morestring=[b]"
+}
+
+% ------------------------------------------------------------------ caixas
+\newcommand{\destaque}[2]{%
+  \begin{center}
+  \begin{minipage}{0.95\linewidth}
+  \setlength{\fboxsep}{8pt}%
+  \colorbox{corNovoFundo}{%
+    \begin{minipage}{\dimexpr\linewidth-16pt\relax}
+    \textbf{\textcolor{corNovo}{#1}}\\[2pt]#2
+    \end{minipage}}
+  \end{minipage}
+  \end{center}
+}
+\newcommand{\aviso}[2]{%
+  \begin{center}
+  \begin{minipage}{0.95\linewidth}
+  \setlength{\fboxsep}{8pt}%
+  \colorbox{corAlertaFundo}{%
+    \begin{minipage}{\dimexpr\linewidth-16pt\relax}
+    \textbf{\textcolor{corAlerta}{#1}}\\[2pt]#2
+    \end{minipage}}
+  \end{minipage}
+  \end{center}
+}
+
+\newcommand{\arq}[1]{\texttt{\small #1}}
+
+% ------------------------------------------------------------------ estilos TikZ
+\tikzset{
+  bloco/.style={draw=corBase, fill=white, rounded corners=2pt, align=center,
+                font=\footnotesize, inner sep=5pt, minimum height=8mm},
+  blocoN/.style={bloco, draw=corNovo, fill=corNovoFundo},
+  blocoG/.style={bloco, draw=corGrafo, fill=corGrafoFundo},
+  blocoA/.style={bloco, draw=corAlerta, fill=corAlertaFundo},
+  seta/.style={-{Stealth[length=2mm]}, draw=corBase, thick},
+  setaF/.style={-{Stealth[length=2mm]}, draw=corAlerta, thick, dashed},
+  rotulo/.style={font=\scriptsize\itshape, text=corCinza}
+}
+
+\title{\textbf{SPC-CML — Visão geral da arquitetura}\\[2mm]
+       \large Como o sistema é montado, por onde o dado passa e o que decide o quê}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+\begin{center}
+\begin{minipage}{0.88\linewidth}
+\small
+Este documento descreve o SPC-CML por inteiro: as peças, a ordem em que elas
+atuam e a razão de cada uma existir. É autocontido e não pressupõe
+familiaridade com o código.
+
+Para o aprofundamento da camada de especialização gramatical por item e do
+contrato de artefato, ver o documento companheiro
+\arq{docs/arquitetura-spc-cml.tex}.
+\end{minipage}
+\end{center}
+
+\vspace{4mm}
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{O que o sistema é, e o problema que ele ataca}
+% =============================================================================
+
+O SPC-CML (Compilador Semântico de Prompts) é um \textbf{middleware
+neuro-simbólico}. Ele se interpõe entre a fala de um profissional e a ordem que
+um sistema crítico executa, e faz isso com três coisas que não são um modelo de
+linguagem: uma \textbf{DSL formal}, um \textbf{Grafo de Conhecimento} e
+\textbf{decodificação restrita por gramática}.
+
+O ponto de partida é que um LLM que traduz \emph{``a pressão tá despencando,
+sobe a nora e aprofunda o propofol''} numa ordem de bomba de infusão erra de
+duas maneiras que exigem remédios diferentes.
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{2.4cm}p{5.2cm}p{6.2cm}@{}}
+\toprule
+\textbf{Tipo de erro} & \textbf{Exemplo} & \textbf{Mecanismo que o elimina}\\
+\midrule
+\textbf{Sintático} & emitir \texttt{dose 0.1 gotas/min}, ou prosa livre em vez
+da linguagem de ordens & gramática BNF derivada da DSL + decodificação
+restrita\\[3pt]
+\textbf{Semântico} & aumentar Propofol com PAM 52\,mmHg --- sintaticamente
+perfeito, clinicamente perigoso & Grafo de Conhecimento avaliado sobre a
+telemetria, convertido em gramática\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{2mm}
+
+\destaque{A tese operacional}{%
+O segundo tipo de erro pode ser reduzido ao primeiro. Se o grafo determina que
+aumentar Propofol é proibido \emph{agora}, essa cadeia é removida da gramática e
+o decodificador não consegue emiti-la. O erro semântico deixa de ser algo a
+detectar depois e passa a ser \textbf{inexprimível}.}
+
+A consequência arquitetural vale ser dita explicitamente: \textbf{a etapa que
+decide o que é seguro não é neural}. O LLM traduz linguagem natural em
+estrutura; quem decide se o Propofol pode subir é uma comparação numérica
+($52 < 60$) sobre um grafo escrito por especialistas.
+
+\subsection{Três domínios, uma arquitetura}
+
+O sistema é instanciado em três domínios simultâneos, que servem para demonstrar
+que a maquinaria não depende de nenhum deles.
+
+\begin{center}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+& \textbf{Clínico (\texttt{med})} & \textbf{Agrícola (\texttt{agro})} & \textbf{Arbitragem (\texttt{fut})}\\
+\midrule
+Situação  & terapia intensiva     & pulverização por drone  & futebol\\
+Modelo    & \arq{med/uti.dsl}     & \arq{agro/lavoura.agro} & \arq{fut/futebol.fut}\\
+Artefato  & \texttt{plano}        & \texttt{missao}         & \texttt{arbitragem}\\
+Cláusula  & \texttt{ordem}        & \texttt{aplicacao}      & \texttt{decisao}\\
+Item      & \texttt{farmaco} (12) & \texttt{produto} (9)    & \texttt{infracao} (10)\\
+Meio      & \texttt{via}          & \texttt{modo}           & \texttt{reinicio}\\
+Sujeito   & \texttt{paciente}     & \texttt{talhao}         & \texttt{partida}\\
+Contexto  & \texttt{protocolo} (3)& \texttt{cultura} (3)    & \texttt{lance} (4)\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{2mm}
+
+Nenhum módulo do núcleo menciona ``fármaco'', ``produto'' ou ``infração''. Todos
+falam em \textbf{papéis} --- item, decisão, meio, quantidade, sujeito, contexto
+--- e cada domínio declara como nomeia os seus. A seção~\ref{sec:genericidade}
+detalha esse mecanismo.
+
+% =============================================================================
+\section{Panorama: as peças e como se encaixam}
+% =============================================================================
+
+A figura~\ref{fig:macro} mostra a arquitetura inteira. Há dois tempos
+sobrepostos: o \emph{tempo de projeto}, em que a DSL é escrita e dela derivam o
+grafo e a gramática; e o \emph{tempo de execução}, em que cada pedido poda a
+gramática antes de gerar.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=6mm]
+
+\node[blocoN, minimum width=58mm] (dsl)
+  {\textbf{DSL Langium} --- \arq{src/language/*.langium}\\[1pt]
+   \scriptsize fonte única da verdade formal};
+
+\node[bloco, below left=11mm and 4mm of dsl, minimum width=46mm] (ctrl)
+  {\textbf{Esquema de Controle}\\[1pt]
+   \scriptsize o que é verdade no domínio};
+\node[bloco, below right=11mm and 4mm of dsl, minimum width=46mm] (dados)
+  {\textbf{Esquema de Dados}\\[1pt]
+   \scriptsize o que o LLM pode responder};
+
+\draw[seta] (dsl.south) -- ++(0,-4mm) -| (ctrl.north);
+\draw[seta] (dsl.south) -- ++(0,-4mm) -| (dados.north);
+
+\node[blocoG, below=9mm of ctrl, minimum width=46mm] (neo)
+  {\textbf{Grafo de Conhecimento} (Neo4j)\\[1pt]
+   \scriptsize itens, contextos, invariantes, índice vetorial};
+\node[blocoN, below=9mm of dados, minimum width=46mm] (bnf)
+  {\textbf{Gramática $G$} (BNF)\\[1pt]
+   \scriptsize 18 produções por domínio};
+
+\draw[seta] (ctrl) -- (neo) node[midway,right,rotulo] {neo4j*.ts};
+\draw[seta] (dados) -- (bnf) node[midway,right,rotulo] {export-bnf*.ts};
+
+\node[blocoG, below=13mm of neo, minimum width=46mm] (rec)
+  {\textbf{Recuperação}\\[1pt]
+   \scriptsize telemetria + fala $\rightarrow$ subgrafo};
+\node[blocoN, below=13mm of bnf, minimum width=46mm] (ghat)
+  {\textbf{Especialização} $G \rightarrow \hat{G}$\\[1pt]
+   \scriptsize uma produção por item};
+
+\draw[seta] (neo) -- (rec);
+\draw[seta] (bnf) -- (ghat);
+\draw[seta] (rec) -- (ghat) node[midway,above,rotulo] {política};
+
+\node[blocoN, below=12mm of $(rec)!0.5!(ghat)$, minimum width=70mm] (dec)
+  {\textbf{Decodificação restrita}\\[1pt]
+   \scriptsize grammar prompting + mascaramento de logits (llama.cpp)};
+\draw[seta] (ghat.south) |- ($(dec.north)+(12mm,4mm)$) -- ($(dec.north)+(12mm,0)$);
+\draw[seta] (rec.south) |- ($(dec.north)+(-12mm,4mm)$) -- ($(dec.north)+(-12mm,0)$);
+
+\node[blocoA, below=8mm of dec, minimum width=70mm] (contr)
+  {\textbf{Contrato do artefato}\\[1pt]
+   \scriptsize propriedades do artefato inteiro, cláusula a cláusula};
+\draw[seta] (dec) -- (contr);
+
+\node[bloco, below=8mm of contr, minimum width=42mm] (out)
+  {\textbf{Ordem executável}};
+\draw[seta] (contr) -- (out) node[midway,right,rotulo] {aprovado};
+
+\draw[setaF] (contr.east) -- ++(20mm,0) |- (ghat.east)
+  node[pos=0.28,right,rotulo,align=left] {violação:\\repoda\\$\hat{G}' \subsetneq \hat{G}$};
+
+\end{tikzpicture}
+\caption{Arquitetura do SPC-CML. A DSL é a única fonte de verdade; dela derivam
+tanto o grafo quanto a gramática. Em execução, o grafo poda a gramática
+\emph{antes} da geração, e o contrato realimenta a poda \emph{depois} dela.}
+\label{fig:macro}
+\end{figure}
+
+\subsection{O que cada etapa decide}
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{3.4cm}p{5.0cm}p{5.6cm}@{}}
+\toprule
+\textbf{Etapa} & \textbf{Decide} & \textbf{Natureza}\\
+\midrule
+Recuperação no grafo & o que é permitido agora & determinística (comparação numérica)\\
+Foco por embedding   & o que é mostrado no prompt & aproximada (cosseno)\\
+Especialização       & o que é exprimível & determinística (reescrita de gramática)\\
+Decodificação        & qual cadeia admissível sai & neural, sob máscara\\
+Contrato             & se o artefato inteiro fecha & determinística (percurso de cláusulas)\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{2mm}
+
+\aviso{A linha que não se cruza}{%
+O embedding decide apenas \textbf{o que aparece} no Prompt Semântico. Quem
+decide o que é \textbf{permitido} continua sendo a comparação numérica
+determinística. A similaridade nunca ganha autoridade sobre a segurança --- e
+essa separação está escrita no cabeçalho de \arq{src/knowledge/foco.ts}.}
+
+% =============================================================================
+\section{A fonte única de verdade: a DSL}
+% =============================================================================
+
+Cada domínio tem uma gramática Langium (\arq{src/language/}) que é particionada
+em dois esquemas. A partição é o que sustenta a arquitetura inteira: os dois
+artefatos derivados --- o grafo e a BNF --- saem do \emph{mesmo} arquivo, e por
+isso não podem dessincronizar.
+
+\subsection{Esquema de Controle: o conhecimento do domínio}
+
+Alimenta o Grafo de Conhecimento. É escrito pelo especialista --- no caso
+clínico, o intensivista e o farmacêutico clínico.
+
+\begin{lstlisting}[language=dsl]
+farmaco Propofol {
+    classe sedativo
+    rxnorm "8782"          atc "N01AX10"
+    alto_risco sim
+
+    vias [ ACESSO_CENTRAL, ACESSO_PERIFERICO ]
+    dose inicial 0.5 mg/kg/h
+    dose maxima 4.0 mg/kg/h
+    titulacao 0.5 mg/kg/h a_cada 15 min alvo "RASS -2 a 0"
+
+    bomba {                            // limites DERS da bomba inteligente
+        limite_leve   3.0 mg/kg/h      // soft limit: alerta
+        limite_rigido 4.0 mg/kg/h      // hard limit: bloqueio
+    }
+
+    interacao: Midazolam gravidade moderada ("depressao respiratoria aditiva")
+    contraindicado: "hipotensao refrataria com PAM < 60 mmHg"
+}
+
+// Invariante com condicao ESTRUTURADA -- avaliavel por maquina, nao por LLM
+regra_seguranca: bloquear_incremento Propofol se PAM < 60.0 mmHg
+                 ("risco de hipotensao severa e colapso hemodinamico")
+\end{lstlisting}
+
+O detalhe decisivo está na última declaração. A invariante não é uma frase em
+prosa que um modelo precisa interpretar: é uma condição \textbf{estruturada}
+--- parâmetro, operador, limiar, unidade --- que uma comparação avalia. O modelo
+\arq{med/uti.dsl} declara 12 fármacos, 3 protocolos, 4 populações e 6 regras de
+segurança.
+
+\subsection{Esquema de Dados: o universo fechado de respostas}
+
+Delimita exaustivamente o que o LLM pode emitir. \textbf{É esta seção que vira
+BNF.}
+
+\begin{lstlisting}[language=dsl]
+esquema_dados AssistenteUTI_v2 {
+    decisoes [ INICIAR_INFUSAO, AUMENTAR_VAZAO, REDUZIR_VAZAO, MANTER_BLOQUEADO,
+               SUSPENDER, SOLICITAR_EXAME, ESCALAR_EQUIPE, BLOQUEAR_ORDEM ]
+    vias     [ ACESSO_CENTRAL, ACESSO_PERIFERICO, INTRAOSSEO, SC ]
+    alertas  [ INFORMATIVO, ATENCAO, CRITICO, BLOQUEANTE ]
+
+    conduta Manter_Bloqueio {
+        decisao MANTER_BLOQUEADO
+        requer_dupla_checagem sim
+        recurso_fhir "DetectedIssue"
+    }
+}
+
+// A producao que a decodificacao restrita preenche
+plano Plano_Choque_01 para Choque_Septico {
+    esquema_referencia AssistenteUTI_v2
+    paciente 'PT-2026-0031'
+    sequencia [ Manter_Bloqueio, Acionar_Equipe ]
+    ordem Propofol decisao MANTER_BLOQUEADO dose 0.0 mg/kg/h via ACESSO_CENTRAL
+          justificativa 'PAM 52 mmHg abaixo de 60'
+    alerta CRITICO 'hipoperfusao grave' regra 'Choque_Septico/escalonar'
+    auditoria 'plano derivado sob restricao gramatical'
+}
+\end{lstlisting}
+
+As condutas são declaradas \textbf{dentro} de um \texttt{esquema\_dados}, e um
+\texttt{plano} só pode citar condutas do esquema que ele próprio referencia.
+Isso é imposto por um \texttt{ScopeProvider} dedicado
+(\arq{src/language/dsl-module.ts}), de modo que o universo é fechado também na
+resolução de nomes, não apenas na sintaxe.
+
+% =============================================================================
+\section{Derivação da gramática: DSL $\rightarrow$ $G$}
+% =============================================================================
+
+Antes, a BNF era mantida à mão em paralelo à DSL. Duas fontes de verdade para a
+mesma linguagem significam que qualquer evolução do domínio pode dessincronizar
+o decodificador do modelo --- justamente onde a segurança é decidida.
+
+Hoje \arq{src/cli/export-bnf.ts} \textbf{deriva} a BNF de duas fontes locais já
+validadas:
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{5.2cm}p{9.0cm}@{}}
+\toprule
+\textbf{Fonte} & \textbf{O que fornece}\\
+\midrule
+\arq{src/language/dsl.langium} & a \textbf{estrutura} da saída (a regra
+\texttt{PlanCommand} e o que ela alcança) e os vocabulários fechados
+(\texttt{Decision}, \texttt{Route}, \texttt{AlertLevel}, \texttt{Unit}), lidos
+da AST da gramática Langium\\[3pt]
+\arq{src/examples/med/uti.dsl} & as \textbf{instâncias} permitidas --- nomes de
+fármacos, condutas, protocolos --- lidas do modelo do especialista\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{2mm}
+
+O resultado é \arq{src/python\_engine/grammar/advanced\_icu.bnf}, com 18
+produções:
+
+\begin{lstlisting}[language=bnf]
+plano   ::= "plano" identificador "para" protocolo "{" "esquema_referencia" esquema
+            "paciente" texto "sequencia" "[" conduta plano_g1* "]"
+            plano_g2* plano_g3* "auditoria" texto "}"
+ordem   ::= "ordem" farmaco "decisao" decisao "dose" quantidade "via" via
+            "justificativa" texto
+farmaco ::= "Noradrenalina" | "Adrenalina" | "Vasopressina" | "Dobutamina"
+          | "Propofol" | "Midazolam" | "Fentanil" | "Cisatracurio"
+          | "Vancomicina" | "Piperacilina_Tazobactam" | "Heparina"
+          | "Insulina_Regular"
+unidade ::= "mcg/kg/min" | "U/min" | "mg/kg/h" | "mcg/kg/h" | "mg/kg" | "mg"
+          | "UI/kg" | "UI/h"
+\end{lstlisting}
+
+Os 12 fármacos vieram do \arq{uti.dsl}. Citar \texttt{Dopamina} deixa de ser um
+erro semântico a detectar depois: \textbf{não existe na gramática}.
+
+\subsection{Dois estreitamentos deliberados}
+
+A gramática de saída é \emph{mais restrita} que a DSL de autoria, por decisão de
+projeto --- ou seja, $L(G_{\text{saída}}) \subsetneq L(\text{DSL})$:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+\item \texttt{justificativa} e \texttt{regra} passam de opcionais a
+\textbf{obrigatórias}: toda ordem gerada automaticamente carrega
+rastreabilidade;
+\item \texttt{texto} aceita apenas aspas simples, porque o leitor BNF do motor
+Python trata \texttt{|} como separador de alternativas.
+\end{itemize}
+
+Todo plano gerado é um programa válido da DSL; a recíproca não vale.
+
+% =============================================================================
+\section{O Grafo de Conhecimento}
+% =============================================================================
+
+\arq{src/database/neo4j.ts} percorre a AST do modelo e mapeia o Esquema de
+Controle para o Neo4j: um nó por fármaco, protocolo, população e invariante,
+com as arestas que os ligam. Junto com os nós, sincroniza um \textbf{índice
+vetorial}: o documento textual de cada nó é montado em
+\arq{src/knowledge/documentos.ts} a partir da gramática do próprio domínio, e o
+vetor vem do \emph{endpoint} \texttt{/embed} do motor Python.
+
+O banco roda como serviço Docker (\texttt{neo4j:5.15.0}), exposto em
+\texttt{7474} (HTTP) e \texttt{7687} (Bolt).
+
+\aviso{Por que a sincronização vem depois do aquecimento}{%
+Cada nó embutido custa uma chamada a \texttt{/embed}. Com o motor frio, a
+primeira dessas chamadas esperaria a carga inteira do modelo. Por isso o
+\arq{init.sh} aquece os motores (passo 5) \emph{antes} de sincronizar os grafos
+(passo 6), e não o contrário.}
+
+% =============================================================================
+\section{Recuperação: da telemetria ao subgrafo}
+% =============================================================================
+
+Esta é a etapa em que o sistema decide o que é permitido. Ela tem duas metades
+com naturezas diferentes, deliberadamente não misturadas.
+
+\subsection{Metade determinística: o que é permitido}
+
+\arq{src/knowledge/graphrag.ts} avalia a telemetria contra o modelo e produz uma
+\textbf{política por fármaco}.
+
+\begin{lstlisting}
+PAM=52  FC=145  lactato=4.8  RASS=2  TFG=28  plaquetas=45  glicemia=210
+        |
+        v
+Protocolos ativados:  Choque_Septico (lactato 4.8 > 2), Sedacao_VM (RASS 2 > 0),
+                      Controle_Glicemico_UTI (glicemia 210 > 180)
+Bloqueios:            Propofol (PAM 52 < 60), Noradrenalina (FC 145 > 130),
+                      Cisatracurio (RASS 2 > -4), Heparina (plaquetas 45 < 50)
+Vetos:                Dobutamina (protocolo), Midazolam (protocolo)
+Ajustes:              Vancomicina x0.5, Fentanil x0.75, Midazolam x0.5 (TFG 28)
+Escalonamentos:       TIME_RESPOSTA_RAPIDA, INTENSIVISTA
+\end{lstlisting}
+
+Uma regra de decisão importante: invariantes cujo parâmetro \textbf{não está
+presente} na telemetria são ignoradas. Ausência de medida não é evidência de
+normalidade, mas também não autoriza bloquear.
+
+\subsection{Metade aproximada: o que é mostrado}
+
+\arq{src/knowledge/foco.ts} decide, a partir do texto digitado, quais nós o
+pedido alcança --- por similaridade de cosseno contra o índice vetorial --- e
+quantos deles sobrevivem, por um corte \emph{relativo} ao melhor candidato.
+Quando o pedido não nomeia nada, o módulo escolhe de que lado partir pelo índice
+que se compromete mais com a própria resposta.
+
+Esse módulo é agnóstico de domínio por construção: não carrega lista de palavras
+de domínio nenhum nem constante calibrada para um modelo específico. Tudo o que
+sabe, lê do modelo carregado e do índice vetorial.
+
+\subsection{O que atravessa o fio}
+
+O resultado viaja para o motor Python em três partes
+(\arq{src/knowledge/politica.ts}):
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{3.0cm}p{11.2cm}@{}}
+\toprule
+\texttt{politicas} & por item: decisões, meios, unidades e \textbf{valores}
+admissíveis (o reticulado de dose derivado do próprio modelo)\\[3pt]
+\texttt{papeis}    & como este domínio nomeia item, decisão, meio, quantidade,
+sujeito e contexto\\[3pt]
+\texttt{constantes}& sujeito e contextos em foco --- são \emph{dado}, não
+decisão, e por isso viram literal na gramática, não campo a preencher\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% =============================================================================
+\section{Especialização: $G \rightarrow \hat{G}$}
+% =============================================================================
+
+\arq{src/python\_engine/grammar\_from\_kg.py} converte a política em gramática.
+O ganho central é a especialização \textbf{por item}: em vez de podar três
+vocabulários independentes, o motor emite \textbf{uma produção por item}.
+
+\begin{lstlisting}[language=bnf]
+ordem ::= ordem_noradrenalina | ordem_propofol | ordem_vasopressina | ...
+
+ordem_propofol   ::= "ordem" "Propofol" "decisao" decisao_propofol
+                     "dose" quantidade_propofol "via" via_propofol
+                     "justificativa" texto
+decisao_propofol ::= "REDUZIR_VAZAO" | "MANTER_VAZAO" | "MANTER_BLOQUEADO"
+                   | "SUSPENDER" | "SUBSTITUIR" | "SOLICITAR_EXAME"
+                   | "ESCALAR_EQUIPE" | "BLOQUEAR_ORDEM"
+unidade_propofol ::= "mg/kg/h"
+via_propofol     ::= "ACESSO_CENTRAL" | "ACESSO_PERIFERICO"
+\end{lstlisting}
+
+\texttt{AUMENTAR\_VAZAO} desapareceu de \texttt{decisao\_propofol}. Note também
+que \texttt{unidade\_propofol} admite só \texttt{mg/kg/h} --- trocar a unidade de
+um vasopressor pela de um sedativo, erro clássico de medicação, também se torna
+inexprimível.
+
+\destaque{Por que ``por item'' é a diferença material}{%
+Com uma lista global de decisões, \texttt{Propofol + AUMENTAR\_VAZAO}
+continuaria gramatical, porque \emph{algum} fármaco admite aumentar. A regra
+\texttt{ordem} é um produto cartesiano; achatar nela a política por item perde
+exatamente a informação que decidia algo.}
+
+Este é o ponto em que o documento companheiro
+\arq{docs/arquitetura-spc-cml.tex} entra em detalhe: o algoritmo de
+especialização, a origem dos valores e o efeito medido.
+
+% =============================================================================
+\section{Decodificação restrita}
+% =============================================================================
+
+Com $\hat{G}$ em mãos, o motor monta o prompt e gera sob máscara.
+
+\subsection{Grammar prompting}
+
+\arq{prompt\_builder.py} monta o prompt no formato $(x_i, G[y_i], y_i)$ para
+cada exemplar \emph{few-shot}, seguido do $x$ de teste. O Prompt Semântico vindo
+do grafo entra como bloco de contexto factual.
+
+Há uma diferença deliberada em relação a Wang et al.\ (2023). No grammar
+prompting original, o LLM primeiro \emph{prediz} $G[y]$ e só então gera $y$. No
+SPC-CML essa etapa não cabe ao modelo: $\hat{G}$ vem da poda no grafo --- e essa
+substituição é a contribuição da arquitetura. As regras são \textbf{dadas}, não
+pedidas.
+
+\subsection{Mascaramento de logits}
+
+O \arq{bnf.py} compila $\hat{G}$ para GBNF, e o \texttt{llama.cpp} mascara os
+logits em C++. A gramática é compilada \emph{uma vez} por requisição.
+
+\begin{center}
+\small
+\begin{tabular}{@{}llp{7.6cm}@{}}
+\toprule
+\textbf{Backend} & \textbf{Variável} & \textbf{Característica}\\
+\midrule
+\texttt{llamacpp} & padrão & GBNF compilada uma vez, mascaramento em C++\\
+\texttt{outlines} & \texttt{SPC\_CML\_BACKEND} & CFG incremental em Python;
+reconstrói um FSM sobre todo o vocabulário a cada terminal, o que nesta
+gramática não termina em tempo útil. Mantido para comparação de desempenho\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Verificação independente}
+
+Mesmo com mascaramento, a saída é \textbf{reparseada} contra $\hat{G}$ antes de
+sair do serviço (\texttt{parser\_hat.parse}, em \arq{main.py}). A resposta
+carrega \texttt{valido}, \texttt{regras\_em\_g\_hat} e uma marca
+\texttt{especializada} que diz se a especialização por item chegou a rodar ---
+sem ela, um processo antigo ainda no ar podaria só pelos três vocabulários e
+devolveria um plano com aparência normal.
+
+\subsection{Parâmetros de operação}
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Variável} & \textbf{Padrão} & \textbf{Razão}\\
+\midrule
+\texttt{SPC\_CML\_N\_CTX}          & 8192   & prompt completo + exemplares $\approx$ 3800 \emph{tokens}; 4096 estourava\\
+\texttt{SPC\_CML\_MAX\_TOKENS}     & 1024   & 512 truncava o plano no meio\\
+\texttt{SPC\_CML\_MAX\_ITENS}      & 4      & teto por lista; sem ele o modelo repete a mesma ordem\\
+\texttt{SPC\_CML\_REPEAT\_PENALTY} & 1{,}15 & a máscara não impede repetir item admissível\\
+\texttt{SPC\_CML\_TEMPERATURA}     & 0{,}3  & ---\\
+\texttt{SPC\_CML\_N\_GPU\_LAYERS}  & $-1$   & todas as camadas na GPU; ignorado em \emph{build} só-CPU\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{2mm}
+
+O modelo padrão é o \texttt{Qwen2.5-7B-Instruct} em GGUF Q4\_K\_M
+($\approx$ 4{,}7\,GB), e o \emph{embedder} é o \texttt{bge-m3} Q8\_0, que roda em
+CPU de propósito --- a VRAM fica inteira para o modelo de geração.
+
+\aviso{Ordem de carga que não é arbitrária}{%
+O \texttt{get\_embedder()} carrega o LLM principal \emph{primeiro}, de propósito.
+O \texttt{llama.cpp} inicializa um contexto CUDA mesmo para
+\texttt{n\_gpu\_layers=0}, e reservar esse custo antes dos 4{,}7\,GB de pesos
+faz o \texttt{cudaMalloc} falhar por pouco. Um \texttt{RLock} serializa toda
+chamada real ao \texttt{llama.cpp}: o \emph{binding} não é seguro para uso
+concorrente sobre o mesmo dispositivo.}
+
+% =============================================================================
+\section{O contrato do artefato e a realimentação}
+% =============================================================================
+
+A especialização por item torna inexprimível tudo o que depende de \emph{uma}
+cláusula isolada. O que sobra são propriedades do artefato \textbf{inteiro}, e
+essas nenhuma gramática livre de contexto expressa sem explodir:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+\item o mesmo item aparecer duas vezes com decisões que se cancelam
+(\texttt{INICIAR\_INFUSAO} seguido de \texttt{AUMENTAR\_VAZAO} para o mesmo
+fármaco);
+\item a \texttt{sequencia} declarada no cabeçalho não corresponder às cláusulas
+emitidas;
+\item um escalonamento que o grafo disparou não virar cláusula nenhuma;
+\item o identificador do sujeito não ser o do cenário.
+\end{itemize}
+
+O \arq{src/knowledge/contrato.ts} verifica essas propriedades \textbf{cláusula a
+cláusula}, na ordem em que foram geradas. A primeira violação devolve um
+\texttt{reparo}: o par (item, decisão) que deve sair da política antes da
+próxima tentativa.
+
+\destaque{A propriedade que fecha o ciclo}{%
+A gramática da tentativa seguinte é \textbf{estritamente menor} que a da
+anterior. O mesmo erro deixa de ser exprimível --- a verificação semântica
+\emph{realimenta a poda}, em vez de só reprovar no fim.}
+
+% =============================================================================
+\section{O caminho sem máscara: Earley e reparo}
+% =============================================================================
+
+O mascaramento de logits só é possível com modelo local. Nenhum provedor de API
+(Claude, GPT, Gemini) expõe a máscara, e a arquitetura é explícita em ser
+agnóstica de provedor. Para esse caminho vale a estratégia do Algoritmo 1 de
+Wang et al.\ (2023): decodificar livremente, parsear, e em caso de falha extrair
+o maior prefixo válido.
+
+O \arq{src/grammar/earley.ts} implementa um reconhecedor de Earley
+\textbf{sem \emph{scanner}} --- sobre caracteres, não sobre \emph{tokens} --- que
+fornece as três quantidades necessárias: se $y \in L(\hat{G})$, o maior prefixo
+válido $y_{\text{prefix}}$, e o conjunto $\Sigma[y_{\text{prefix}}]$ de terminais
+que podem continuar.
+
+A ausência de \emph{scanner} é deliberada: um \emph{lexer} separado decidiria,
+por exemplo, que \texttt{Noradrenalina} é palavra reservada antes de o
+\emph{parser} dizer se ali cabia um identificador livre, e a análise de prefixo
+herdaria esse erro.
+
+\begin{lstlisting}
+ordem Noradrenalina decisao AUMENTAR_VAZAO dose 0.1 mcg/kg/min ...
+                            ^
+              rejeitado exatamente aqui (offset 173 de 512)
+
+Sigma[y_prefix] = "REDUZIR_VAZAO" | "MANTER_VAZAO" | "MANTER_BLOQUEADO"
+                | "SUSPENDER" | "SUBSTITUIR" | "SOLICITAR_EXAME"
+                | "ESCALAR_EQUIPE" | "BLOQUEAR_ORDEM"
+\end{lstlisting}
+
+O \textbf{reparo determinístico} completa o programa escolhendo, a cada passo, o
+terminal que minimiza o número de terminais ainda necessários para fechar a
+derivação inteira --- incluindo o fechamento de toda a pilha de produções
+pendentes.
+
+\aviso{Por que o critério precisa ser global}{%
+Um critério guloso local nunca fecha uma lista. Diante de
+\texttt{sequencia [ Manter\_Bloqueio}, o símbolo \texttt{,} pertence a uma
+produção curta e parece mais barato que \texttt{]}, e o reparo repetiria conduta
+indefinidamente.}
+
+Por construção o reparo termina e o resultado é aceito por $\hat{G}$. É a rede
+de segurança que sustenta a garantia mesmo quando o LLM nunca converge.
+
+% =============================================================================
+\section{Genericidade: papéis, não nomes}
+\label{sec:genericidade}
+% =============================================================================
+
+O núcleo nunca menciona um nome de domínio. Cada \arq{graphrag-*.ts} declara os
+papéis do seu:
+
+\begin{lstlisting}
+export const PAPEIS_MED: PapeisDominio = {
+    artefato: 'plano',      clausula: 'ordem',    item: 'farmaco',
+    decisao: 'decisao',     meio: 'via',          quantidade: 'quantidade',
+    campoQuantidade: 'dose', campoSujeito: 'paciente', contexto: 'protocolo',
+    decisoesDeIncremento: ['INICIAR_INFUSAO', 'AUMENTAR_VAZAO', 'AJUSTAR_DOSE'],
+    decisaoDeEscalonamento: 'ESCALAR_EQUIPE'
+};
+
+export const PAPEIS_AGRO: PapeisDominio = {
+    artefato: 'missao',     clausula: 'aplicacao', item: 'produto',
+    decisao: 'decisao',     meio: 'modo',          quantidade: 'quantidade',
+    campoQuantidade: 'vazao', campoSujeito: 'talhao', contexto: 'cultura',
+    decisoesDeIncremento: ['INICIAR_APLICACAO', 'AUMENTAR_VAZAO'],
+    decisaoDeEscalonamento: 'ACIONAR_AGRONOMO'
+};
+\end{lstlisting}
+
+Do lado Python, o \arq{grammar\_from\_kg.py} mantém um \texttt{MAPA\_PODA} que
+liga o nome da regra na BNF ao papel correspondente no subgrafo. Os três
+domínios convivem no mesmo mapa, porque uma BNF só traz os nomes do seu próprio
+domínio.
+
+\textbf{Acrescentar um quarto domínio} exige: escrever a \arq{.langium},
+escrever o modelo de instâncias, declarar os papéis e acrescentar as entradas do
+\texttt{MAPA\_PODA}. Nada no núcleo --- foco, contrato, especialização, Earley
+--- precisa ser tocado.
+
+% =============================================================================
+\section{Topologia de execução}
+% =============================================================================
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=5mm]
+
+\node[bloco, minimum width=32mm] (chat) {\textbf{Chat Vue} (vite)\\[1pt]
+  \scriptsize \texttt{localhost:5173}};
+\node[bloco, below=9mm of chat, minimum width=32mm] (api)
+  {\textbf{API web} (\texttt{node:http})\\[1pt]
+   \scriptsize \texttt{localhost:4000}};
+\draw[seta] (chat) -- (api) node[midway,right,rotulo] {/api/*};
+
+\node[blocoN, below left=13mm and 12mm of api, minimum width=26mm] (m1)
+  {motor \textbf{médico}\\[1pt]\scriptsize \texttt{127.0.0.1:8000}};
+\node[blocoN, below=13mm of api, minimum width=26mm] (m2)
+  {motor \textbf{agro}\\[1pt]\scriptsize \texttt{127.0.0.1:8001}};
+\node[blocoN, below right=13mm and 12mm of api, minimum width=26mm] (m3)
+  {motor \textbf{fut}\\[1pt]\scriptsize \texttt{127.0.0.1:8002}};
+
+\draw[seta] (api) -- (m1);
+\draw[seta] (api) -- (m2);
+\draw[seta] (api) -- (m3);
+
+\node[blocoG, right=16mm of api, minimum width=30mm] (neo)
+  {\textbf{Neo4j} (Docker)\\[1pt]\scriptsize \texttt{7474} / \texttt{7687}};
+\draw[seta] (api) -- (neo);
+
+\node[bloco, below=10mm of m2, minimum width=56mm, draw=corCinza] (gguf)
+  {\scriptsize pesos GGUF compartilhados por \texttt{mmap}};
+\draw[seta, draw=corCinza] (m1) -- (gguf);
+\draw[seta, draw=corCinza] (m2) -- (gguf);
+\draw[seta, draw=corCinza] (m3) -- (gguf);
+
+\end{tikzpicture}
+\caption{Processos em execução local. São três motores porque o \arq{main.py}
+fixa a gramática na importação do módulo.}
+\label{fig:topologia}
+\end{figure}
+
+\subsection{Por que três motores}
+
+O \arq{main.py} lê \texttt{SPC\_CML\_DOMINIO} na importação e fixa ali a
+gramática, os exemplares e a persona do prompt. Os três domínios que o chat
+oferece lado a lado não cabem num processo só.
+
+O custo de RAM não triplica: os pesos são os \emph{mesmos arquivos} GGUF nos três
+processos, e o \texttt{llama.cpp} os mapeia com \texttt{mmap} --- as páginas do
+modelo são compartilhadas pelo cache do sistema operacional.
+
+\subsection{Interfaces}
+
+\begin{center}
+\small
+\begin{tabular}{@{}llp{7.8cm}@{}}
+\toprule
+\textbf{Serviço} & \textbf{Rota} & \textbf{Função}\\
+\midrule
+Motor Python & \texttt{GET /health}   & estado, domínio, regras em $G$, se o modelo está carregado\\
+             & \texttt{GET /grammar}  & a gramática $G$ em uso\\
+             & \texttt{POST /verify}  & $y \in L(G)$?\\
+             & \texttt{POST /embed}   & vetor de um texto (índice do Neo4j)\\
+             & \texttt{POST /generate-constrained} & geração sob $\hat{G}$\\
+             & \texttt{POST /generate-fragment}    & decodificação incremental, um elemento por vez\\
+             & \texttt{POST /validar-plano}        & juízo semântico pela LLM (avaliação)\\
+\midrule
+API web      & \texttt{GET /api/dominios} & domínios disponíveis\\
+             & \texttt{POST /api/comando} & sorteio de cenário + grafo + foco + geração\\
+             & \texttt{GET|POST|PUT /api/chats} & persistência das conversas\\
+             & \texttt{POST /api/avaliar} & avaliação de um lote contra o grafo\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% =============================================================================
+\section{Como executar}
+% =============================================================================
+
+\subsection{Pré-requisitos}
+
+Node.js 18+, Docker (para o Neo4j) e \textbf{Python 3.10 a 3.12}.
+
+\aviso{O teto do Python é real}{%
+O \texttt{outlines 0.0.46} exige \texttt{numpy<2.0.0}, e o último numpy 1.x
+(1.26.4) só publica \emph{wheel} até \texttt{cp312}. Em Python 3.13+ o
+\texttt{pip install} falha na resolução. Crie o ambiente com
+\texttt{py -3.12 -m venv venv}.
+
+No Windows, o \texttt{llama-cpp-python} não tem \emph{wheel} \texttt{win\_amd64}
+no PyPI --- use o índice pré-compilado
+(\texttt{-{}-extra-index-url}, ver \arq{init.sh}). Sem isso o pip tenta compilar o
+\emph{sdist} e estoura o limite de 260 caracteres de caminho do Windows.}
+
+\subsection{Subida completa}
+
+\begin{lstlisting}
+docker compose up -d neo4j          # so o Neo4j; `up` sem argumento reserva GPU
+bash src/scripts/local/init.sh      # sobe tudo e deixa os modelos quentes
+\end{lstlisting}
+
+O \arq{init.sh} executa sete passos: pré-requisitos, Neo4j, derivação das três
+BNF, subida dos três motores, aquecimento dos modelos, sincronização dos grafos
+e, por fim, API web e chat. Variantes: \texttt{-{}-sem-sync} (subida mais rápida),
+\texttt{-{}-sem-chat} (só infraestrutura), \texttt{-{}-parar}.
+
+\subsection{Inferência em lote}
+
+Depois do \arq{init.sh}, os scripts de \emph{deploy} encontram o motor do
+domínio certo já no ar e vão direto para a inferência:
+
+\begin{lstlisting}
+bash src/scripts/local/deploy-med.sh     # ou deploy-agro.sh / deploy-fut.sh
+\end{lstlisting}
+
+Cada um regenera os artefatos do Langium, compila o TypeScript, deriva a BNF do
+modelo, ancora o modelo no Neo4j e roda o lote de cenários.
+
+% =============================================================================
+\section{Avaliação}
+% =============================================================================
+
+Há dois avaliadores, com finalidades distintas.
+
+O \arq{src/inference/avaliar.ts} compara contra um \textbf{gabarito fixo} e
+produz três métricas: sintaxe correta, semântica correta (toda ordem esperada
+aparece?) e violações (há incremento para item que o grafo bloqueou?). Quando o
+registro já traz um \texttt{valido} booleano --- caso da arquitetura, que
+reparseia contra $\hat{G}$ --- esse valor é usado diretamente, por ser a
+verificação mais autoritativa que existe. Só cai para a checagem estrutural leve
+quando \texttt{valido} não vem, caso esperado do \emph{baseline}, que não passa
+pela decodificação restrita.
+
+O \arq{src/inference/avaliar-grafo.ts} não usa resposta canônica pré-computada.
+Cada registro carrega o sorteio completo do cenário, o que permite refazer a
+recuperação no grafo \textbf{linha a linha} no momento da avaliação. São duas
+fontes de veredito, deliberadamente não misturadas:
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{4.2cm}p{10.0cm}@{}}
+\toprule
+\textbf{Violação de segurança} & \textbf{determinística} --- compara as ordens do
+plano contra os bloqueios e vetos que o grafo retornou para aquele cenário\\[3pt]
+\textbf{Correção semântica ampla} & julgada pela LLM local, via
+\texttt{POST /validar-plano}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{2mm}
+
+Os lotes de referência são \arq{cenarios-200-med.jsonl},
+\arq{cenarios-200-agro.jsonl} e \arq{cenarios-200-fut.jsonl} --- 200 cenários por
+domínio.
+
+% =============================================================================
+\section{Mapa de arquivos}
+% =============================================================================
+
+\begin{lstlisting}
+src/
+  language/          dsl.langium, agrodrone.langium, futebol.langium
+                     *-module.ts  -- servicos Langium + ScopeProvider
+  generated/         gerado por `langium generate` (nao editar)
+  examples/
+    med/ agro/ fut/  modelo do especialista + cenarios + gabarito
+
+  grammar/           -- CAMADA GRAMATICAL --
+    extract-bnf.ts     AST Langium + modelo -> BNF (G)
+    vocabularies*.ts   instancias permitidas por dominio
+    constrain.ts       G + politica do grafo -> G_hat (por item)
+    earley.ts          reconhecedor sem scanner, Sigma[y_prefix] e reparo
+
+  knowledge/
+    graphrag*.ts       telemetria -> subgrafo de restricoes (um por dominio)
+    foco.ts            recuperacao por similaridade (agnostico de dominio)
+    documentos.ts      documento textual de cada no, para o indice vetorial
+    politica.ts        papeis e politica por item -- o que atravessa o fio
+    contrato.ts        propriedades do artefato inteiro
+
+  database/          neo4j.ts, neo4j-agro.ts, neo4j-fut.ts  (AST -> grafo)
+
+  cli/               validate.ts, export-bnf*.ts, pipeline.ts,
+                     inspecionar-foco.ts
+
+  inference/
+    llm-client.ts      Prompt Semantico + chamada ao motor
+    decodificacao.ts   decodificacao sob contrato, com repoda
+    batch-client.ts    bateria de cenarios
+    avaliar*.ts        metricas contra gabarito / contra o grafo
+
+  python_engine/     -- MOTOR DE DECODIFICACAO --
+    bnf.py             BNF -> Lark / GBNF; G[y] especializada
+    grammar_from_kg.py poda de G pelo subgrafo -> G_hat
+    prompt_builder.py  prompt few-shot (x, G[y], y)
+    main.py            API FastAPI
+    grammar/*.bnf      GERADO -- nao editar a mao
+    data/*.jsonl       exemplares few-shot (3 por dominio)
+
+  web/server.ts      ponte HTTP entre o chat Vue e a logica do CLI
+  scripts/           init.sh, deploy-*.sh (local e docker)
+
+web-chat/            front-end Vue (projeto npm separado)
+docs/                este documento e arquitetura-spc-cml.tex
+\end{lstlisting}
+
+% =============================================================================
+\section{Onde aprofundar}
+% =============================================================================
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{5.4cm}p{8.8cm}@{}}
+\toprule
+\textbf{Assunto} & \textbf{Onde}\\
+\midrule
+Especialização por item, contrato de artefato, decodificação incremental &
+\arq{docs/arquitetura-spc-cml.tex}\\[3pt]
+Instalação passo a passo, extensão do modelo clínico, limitações conhecidas &
+\arq{README.md}\\[3pt]
+Razão de cada parâmetro e de cada ordem de carga &
+comentários em \arq{src/python\_engine/main.py}\\[3pt]
+Separação entre o que é mostrado e o que é permitido &
+cabeçalho de \arq{src/knowledge/foco.ts}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{6mm}
+
+\destaque{Em uma frase}{%
+A DSL é a única fonte de verdade; dela saem o grafo e a gramática. O grafo,
+avaliado sobre a telemetria por comparação numérica, poda a gramática antes da
+geração; o contrato, percorrendo o artefato cláusula a cláusula, repoda depois
+dela. O modelo de linguagem opera sempre dentro do que restou --- e o que ele
+não pode dizer, ele não diz.}
+
+\end{document}

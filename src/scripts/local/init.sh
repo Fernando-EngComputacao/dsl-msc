@@ -123,6 +123,19 @@ if [ ! -x "$PY" ]; then
     exit 1
 fi
 
+# O nome pyairports foi reaproveitado no PyPI (o porque esta em
+# src/requirements.txt): a unica versao publicada hoje nao traz o modulo que o
+# outlines importa — e o template `sample` do setuptools, com um console_script
+# alheio e um setup.py que ja importa subprocess.check_call e os hooks de
+# install. Desinstalar nao quebra nada, porque quem sustenta o `import outlines`
+# e o stub de MagicMock em main.py, nao este pacote. A remocao mora aqui e nao
+# no requirements porque o outlines 0.0.46 o declara como dependencia: o pip o
+# arrasta de volta a cada `pip install -r`, entao a limpeza tem de ser posterior.
+if "$PY" -m pip show pyairports > /dev/null 2>&1; then
+    echo "   🧹 removendo pyairports (nome squatted no PyPI — ver src/requirements.txt)"
+    "$PY" -m pip uninstall -y pyairports > /dev/null 2>&1 || true
+fi
+
 # llama_cpp e huggingface_hub sao os que faltam com mais frequencia: nao vem no
 # `pip install fastapi uvicorn` da secao 5 do README, e sem eles o motor sobe mas
 # /embed morre com ImportError — o sintoma vira "no ficara sem vetor", que aponta
