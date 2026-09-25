@@ -242,8 +242,51 @@ def main() -> int:
             falhas += 1
         print(f"      {marca}: {descricao}")
 
+    # ---------------------------------------------------------------- [8]
+    # Politica por item VAZIA nao e ausencia de poda. E o que chega ao motor
+    # quando o foco nao deixa item nenhum: o RAG sem candidato e uma fala que nao
+    # nomeia nada. Lista vazia quer dizer "nenhum item e exprimivel"; a G_hat nao
+    # pode voltar a ser a G inteira, em que a Dobutamina vetada pelo
+    # Choque_Septico ativo volta a poder ser iniciada.
+    subgrafo_vazio = {
+        "acoes_permitidas": [],
+        "farmacos_liberados": [],
+        "vias_disponiveis": [],
+        "politicas": [],
+        "papeis": subgrafo_especializado["papeis"],
+        "constantes": {"sujeito": "PT-2026-0031", "contextos": []},
+    }
+    rules_vazio = parse_bnf(gramatica_do_subgrafo(subgrafo_vazio, rules, inicio="plano"))
+    plano_vetado = (
+        "plano P para Choque_Septico { esquema_referencia AssistenteUTI_v2 "
+        "paciente 'PT-2026-0031' sequencia [ Iniciar_Vasopressor ] "
+        "ordem Dobutamina decisao INICIAR_INFUSAO dose 5.0 mcg/kg/min "
+        "via ACESSO_CENTRAL justificativa 'inotropico' "
+        "auditoria 'plano derivado sob restricao gramatical' }"
+    )
+    def _aceita(regras, programa):
+        try:
+            build_parser(regras, start="plano").parse(programa)
+            return True
+        except Exception:
+            return False
+
+    aceitou_vetado = _aceita(rules_vazio, plano_vetado)
+    casos_vazio = [
+        # Sem isto a recusa abaixo poderia vir de um erro no proprio plano.
+        ("o plano e sintaticamente valido em G", _aceita(rules, plano_vetado)),
+        ("nenhuma clausula exprimivel", "ordem" not in rules_vazio),
+        ("recusa ordem de farmaco vetado", not aceitou_vetado),
+        ("G_hat nao e a G inteira", len(rules_vazio) < len(rules)),
+    ]
+    print("[8] Politica por item vazia (foco sem item nenhum):")
+    for descricao, ok in casos_vazio:
+        if not ok:
+            falhas += 1
+        print(f"      {'ok' if ok else 'FALHA'}: {descricao}")
+
     gbnf = to_gbnf(rules, start="plano")
-    print(f"[8] GBNF exportada para mascaramento de logits: {len(gbnf.splitlines())} regras")
+    print(f"[9] GBNF exportada para mascaramento de logits: {len(gbnf.splitlines())} regras")
 
     print("\nRESULTADO:", "OK" if falhas == 0 else f"{falhas} falha(s)")
     return 0 if falhas == 0 else 1

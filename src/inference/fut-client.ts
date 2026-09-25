@@ -20,7 +20,12 @@ import * as path from 'node:path';
 
 import { loadFutModel } from '../database/neo4j-fut.js';
 import { montarContrato } from '../knowledge/contrato.js';
-import { decodificar, type ResultadoDecodificacao } from './decodificacao.js';
+import { decodificar, type OpcoesDecodificacao, type ResultadoDecodificacao } from './decodificacao.js';
+import {
+    anotarRecomendacao,
+    blocoPoliticaEfetiva,
+    type SubgrafoPodado
+} from '../knowledge/politica.js';
 import type { FutModel } from '../generated/ast.js';
 import {
     retrieveFutConstraints,
@@ -75,7 +80,18 @@ export const TELEMETRIA_PADRAO: FutContext = {
  */
 export function montarPromptSemanticoFut(
     c: RetrievedFutConstraints,
-    contexto?: FutContext
+    contexto?: FutContext,
+    /**
+     * Politica efetivamente vigente para esta geracao. Quando vem, ela e a
+     * AUTORIDADE sobre o que e exprimivel: as recomendacoes que ela nao permite
+     * mais sao anotadas, e um bloco final declara o que resta admissivel.
+     *
+     * Ausente: o prompt sai exatamente como sempre saiu. Isso importa porque
+     * varios chamadores nao podem mudar de comportamento - a geracao de gabarito
+     * (scripts/gerar-ground-truth-*.ts) e a avaliacao em lote julgam contra um
+     * texto que precisa permanecer estavel.
+     */
+    politicaVigente?: SubgrafoPodado
 ): string {
     const bloco: string[] = [];
 
@@ -150,7 +166,10 @@ export function montarPromptSemanticoFut(
     if (c.recomendados.length > 0) {
         bloco.push('\n[RECOMENDADOS PELO LANCE]');
         for (const r of c.recomendados) {
-            bloco.push(`- ${r.infracao}: ${r.indicacao} (${r.lance})`);
+            // A recomendacao continua sendo um fato; o que se acrescenta e que
+            // ela pode ja nao ser realizavel.
+            const nota = politicaVigente ? anotarRecomendacao(politicaVigente, r.infracao) : undefined;
+            bloco.push(`- ${r.infracao}: ${r.indicacao} (${r.lance})` + (nota ? ` ${nota}` : ''));
         }
     }
 
@@ -159,15 +178,36 @@ export function montarPromptSemanticoFut(
         bloco.push(`- [${r.severidade}] ${r.descricao}`);
     }
 
+    // Por ultimo, e de proposito: o modelo le os fatos primeiro e fecha com o
+    // que de fato pode decidir.
+    if (politicaVigente) bloco.push(...blocoPoliticaEfetiva(politicaVigente));
+
     return bloco.join('\n');
 }
 
-export async function gerarArbitragemRestrita(
+/**
+ * Monta o que a decodificacao recebe, SEM gerar. Pura e exportada de proposito:
+ * e o unico ponto em que se pode conferir, sem rede e sem GPU, qual subgrafo de
+ * fato chega ao gerador.
+ *
+ * `subgrafoRefinado` e o resultado de `refinarPolitica` (ver
+ * `knowledge/recuperacao-politica.ts`) no modo hibrido. Quando vem, e ele que
+ * vale e a poda NAO e recalculada — recalcular descartaria em silencio o
+ * refinamento que o Cypher justificou. Quando nao vem, a poda e feita aqui como
+ * sempre foi, e o caminho legado fica intacto.
+ *
+ * Esta funcao nao confere `apenasEstreitou`: quem produz o subgrafo refinado e
+ * `refinarPolitica`, e e la que a nao-ampliacao e barrada com excecao, com as
+ * duas politicas em maos. Repetir a checagem aqui exigiria recalcular a poda,
+ * que e justamente o que este parametro existe para evitar.
+ */
+export function montarEntradaGeracaoFut(
     contexto: FutContext,
     constraints: RetrievedFutConstraints,
-    model?: FutModel
-): Promise<ResultadoDecodificacao> {
-    const subgrafo = futPruningPayload(constraints, contexto);
+    model?: FutModel,
+    subgrafoRefinado?: SubgrafoPodado
+): OpcoesDecodificacao {
+    const subgrafo = subgrafoRefinado ?? futPruningPayload(constraints, contexto);
     const contrato = montarContrato(
         subgrafo,
         model ? condutasPorDecisaoFut(model) : {},
@@ -175,14 +215,25 @@ export async function gerarArbitragemRestrita(
         model ? esquemaDeDadosFut(model) : undefined
     );
 
-    return decodificar({
+    return {
         comando: contexto.intencao ?? '',
-        contexto: montarPromptSemanticoFut(constraints, contexto),
+        // O prompt recebe a MESMA politica que vira gramatica e contrato.
+        contexto: montarPromptSemanticoFut(constraints, contexto, subgrafo),
         subgrafo,
         contrato,
         endpoint: ENDPOINT,
         timeoutMs: TIMEOUT_MS
-    });
+    };
+}
+
+export async function gerarArbitragemRestrita(
+    contexto: FutContext,
+    constraints: RetrievedFutConstraints,
+    model?: FutModel,
+    /** Poda ja refinada pelo caminho hibrido. Ausente: comportamento de sempre. */
+    subgrafoRefinado?: SubgrafoPodado
+): Promise<ResultadoDecodificacao> {
+    return decodificar(montarEntradaGeracaoFut(contexto, constraints, model, subgrafoRefinado));
 }
 
 function carregarCenarios(filePath: string): FutContext[] {

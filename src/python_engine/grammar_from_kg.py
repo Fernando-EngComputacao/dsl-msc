@@ -241,9 +241,15 @@ def gramatica_do_subgrafo(subgrafo: dict, rules: dict[str, Rule], inicio: str = 
     a compilar no parser.
     """
     # --------------------------------------------- 0. especializacao por item
+    # `politicas` PRESENTE, mesmo vazia, e politica por item: lista vazia quer
+    # dizer que nenhum item e exprimivel, e a clausula sai da gramatica. So a
+    # AUSENCIA da chave (cliente que ainda nao a envia) cai na poda pelos tres
+    # vocabularios. Tratar as duas coisas igual fazia a politica vazia — foco sem
+    # item nenhum, como quando o RAG nao devolve candidato e a fala nao nomeia
+    # nada — voltar a G inteira, com toda decisao exprimivel.
     politicas = subgrafo.get("politicas")
     papeis = subgrafo.get("papeis")
-    if politicas and papeis:
+    if politicas is not None and papeis:
         rules = especializar_por_item(
             rules, politicas, papeis, subgrafo.get("constantes", {}), inicio
         )

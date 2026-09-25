@@ -2,7 +2,7 @@
 
 Middleware neuro-simbólico que interpõe uma **DSL formal**, um **Grafo de Conhecimento** e **decodificação restrita por gramática** entre a fala de um profissional e a ordem que um sistema crítico executa.
 
-**Domínio de instanciação:** terapia intensiva — segurança na prescrição e titulação de fármacos em bomba de infusão.
+**Domínios instanciados:** terapia intensiva (`med`), pulverização aérea por drone (`agro`) e arbitragem de futebol (`fut`). A mesma maquinaria serve aos três; só os modelos do especialista mudam.
 
 O problema que a arquitetura ataca é específico. Um LLM que traduz *"a pressão tá despencando, sobe a nora e aprofunda o propofol"* em uma ordem de bomba erra de duas maneiras distintas, que exigem remédios distintos:
 
@@ -13,605 +13,1036 @@ O problema que a arquitetura ataca é específico. Um LLM que traduz *"a pressã
 
 A tese operacional do projeto é que o segundo pode ser reduzido ao primeiro: **se o grafo determina que aumentar Propofol é proibido agora, essa cadeia é removida da gramática e o decodificador não consegue emiti-la.** O erro semântico deixa de ser algo a detectar depois e passa a ser inexprimível.
 
+> **Sobre este documento.** Ele descreve o que o código faz hoje, verificado contra os arquivos e a suíte de testes (última conferência: 2026-09-24, ver §18). Onde há distância entre a arquitetura pretendida e a implementada, isso está marcado como **PROPOSTA** ou **PARCIAL**. Trechos assim não descrevem comportamento existente.
+
 ---
 
 ## Índice
 
-1. [Arquitetura](#1-arquitetura)
-2. [Os dois esquemas da DSL](#2-os-dois-esquemas-da-dsl)
-3. [Como as peças se conectam](#3-como-as-peças-se-conectam)
-4. [Mapa de arquivos](#4-mapa-de-arquivos)
-5. [Instalação](#5-instalação)
-6. [Como rodar](#6-como-rodar)
-7. [Como validar](#7-como-validar)
-8. [Os dois caminhos de decodificação](#8-os-dois-caminhos-de-decodificação)
-9. [Estendendo o modelo](#9-estendendo-o-modelo)
-10. [Limitações conhecidas](#10-limitações-conhecidas)
-11. [Referências](#11-referências)
+1. [Fluxo de execução real](#1-fluxo-de-execução-real)
+2. [Arquitetura em camadas](#2-arquitetura-em-camadas)
+3. [Os dois esquemas da DSL](#3-os-dois-esquemas-da-dsl)
+4. [Recuperação determinística](#4-recuperação-determinística)
+5. [Recuperação híbrida: RAG + Cypher](#5-recuperação-híbrida-rag--cypher)
+6. [VETA, PROIBE e AJUSTA](#6-veta-proibe-e-ajusta)
+7. [Refinamento seguro da política](#7-refinamento-seguro-da-política)
+8. [Prompt Semântico](#8-prompt-semântico)
+9. [Grammar Prompting e geração restrita](#9-grammar-prompting-e-geração-restrita)
+10. [Validação, reparo e contrato](#10-validação-reparo-e-contrato)
+11. [Auditoria e rastreabilidade](#11-auditoria-e-rastreabilidade)
+12. [Política por Item (PI)](#12-política-por-item-pi)
+13. [Modos de execução](#13-modos-de-execução)
+14. [API e endpoints](#14-api-e-endpoints)
+15. [Variáveis de ambiente](#15-variáveis-de-ambiente)
+16. [Instalação](#16-instalação)
+17. [Como rodar](#17-como-rodar)
+18. [Testes](#18-testes)
+19. [Mapa de rastreabilidade](#19-mapa-de-rastreabilidade)
+20. [Limitações e divergências conhecidas](#20-limitações-e-divergências-conhecidas)
+21. [Referências](#21-referências)
 
 ---
 
-## 1. Arquitetura
+## 1. Fluxo de execução real
 
-```
-                         ┌──────────────────────────────┐
-                         │   src/language/dsl.langium   │
-                         │      (fonte única da          │
-                         │       verdade formal)         │
-                         └───────────┬──────────────────┘
-                                     │
-                  ┌──────────────────┴───────────────────┐
-                  │                                      │
-        ESQUEMA DE CONTROLE                    ESQUEMA DE DADOS
-     (o que é verdade no domínio)          (o que o LLM pode responder)
-                  │                                      │
-                  v                                      v
-        ┌──────────────────┐                  ┌──────────────────────┐
-        │  Grafo (Neo4j)   │                  │  BNF gerada  (G)     │
-        │  farmacos,       │                  │  advanced_icu.bnf    │
-        │  protocolos,     │                  │  18 regras           │
-        │  invariantes     │                  └──────────┬───────────┘
-        └────────┬─────────┘                             │
-                 │                                       │
-   Telemetria ──>│  BUSCA NO GRAFO (GraphRAG)            │
-   PAM 52        │  avaliação determinística             │
-   FC 145        │  "PAM 52 < 60 → Propofol bloqueado"   │
-   lactato 4.8   │                                       │
-                 ├──────────────┬────────────────────────┤
-                 v              v                        v
-        ┌────────────────┐  ┌─────────────────────────────────┐
-        │ Prompt         │  │  Ĝ  — gramática podada          │
-        │ Semântico      │  │  (regra `ordem_<fármaco>`       │
-        │ (bloco factual)│  │   por fármaco)                  │
-        └───────┬────────┘  └────────────┬────────────────────┘
-                │                        │
-                └────────┬───────────────┘
-                         v
-        ┌────────────────────────────────────────┐
-        │      GRAMMAR PROMPTING + DECODIFICAÇÃO │
-        │      RESTRITA                          │
-        │  few-shot (x, G[y], y) + Ĝ             │
-        └────────────────┬───────────────────────┘
-                         v
-        ┌────────────────────────────────────────┐
-        │  VERIFICAÇÃO — o plano ∈ L(Ĝ) e ∈ L(DSL)│
-        └────────────────┬───────────────────────┘
-                         v
-                  Ordem executável
+Esta é a seção central do documento: o que efetivamente acontece quando uma entrada percorre o sistema. Cada passo indica arquivo, função, entrada, saída e se a decisão é **determinística** (comparação numérica ou estrutural) ou **generativa** (LLM).
+
+O caminho descrito é o do servidor web, que é o pipeline produtivo. Os outros pontos de entrada (§13) montam o cenário por conta própria e reaproveitam só parte do caminho: a CLI, os passos 3, 6 (sem sinal vetorial), 7, 8, 12 e 13; os clientes de lote, 3, 8, 12 e 13, sem foco. Nenhum deles passa pelo modo híbrido (5, 9) nem pela política efetiva do servidor (10).
+
+### 1.1 Passo a passo
+
+```text
+ 1. ENTRADA HTTP                                                 [obrigatório]
+    arquivo:  src/web/server.ts
+    rota:     POST /api/comando  (resposta em SSE)
+    entrada:  { dominio: 'med'|'agro'|'fut', texto: string, contexto?: {...} }
+    saída:    despacha para processarMed | processarAgro | processarFut
+         ↓
+ 2. MONTAGEM DO CENÁRIO                                          [obrigatório]
+    arquivo:  src/web/server.ts
+    função:   processarMed(texto, estagio, contextoForcado?)
+    entrada:  texto + contexto do lote, OU sorteio de
+              src/examples/med/pacientes.jsonl + telemetrias.jsonl
+    saída:    ClinicalContext { telemetria, paciente, populacoes,
+                                farmacosEmUso, intencao }
+    decisão:  determinística (leitura de arquivo / sorteio)
+         ↓
+ 3. RECUPERAÇÃO DETERMINÍSTICA                                   [obrigatório]
+    arquivo:  src/knowledge/graphrag.ts
+    função:   retrieveConstraints(model, contexto)
+    entrada:  AST da DSL (uti.dsl) + ClinicalContext
+    saída:    RetrievedConstraints { protocolosAtivos, bloqueios, vetados,
+                                     ajustes, recomendados, escalonamentos,
+                                     interacoes, regrasGlobais,
+                                     politicas: Map<item,DrugPolicy> }
+    decisão:  DETERMINÍSTICA — compara telemetria com limiares da DSL
+    nota:     lê a AST do Langium, NÃO o Neo4j
+         ↓
+ 4. ESCOLHA DO MODO                                              [obrigatório]
+    arquivo:  src/knowledge/recuperacao-hibrida.ts
+    função:   modoRecuperacao()
+    entrada:  SPC_CML_RECUPERACAO
+    saída:    'deterministica' (PADRÃO) | 'hibrida_rag_cypher'
+         ↓
+ 5. PREPARO HÍBRIDO                                  [condicional: só híbrido]
+    arquivo:  src/knowledge/recuperacao-hibrida.ts
+    função:   prepararHibridoTolerante(dominio, contexto, session)
+    ├─ 5a. construirContextoRecuperacao()        src/knowledge/recuperacao.ts
+    │      saída: ContextoRecuperacao { consultaSemantica, contextoEstruturado }
+    ├─ 5b. recuperarCandidatos()                 src/knowledge/recuperacao-rag.ts
+    │      embedTexto(consultaSemantica) → POST /embed → vetor bge-m3 (1024d)
+    │      db.index.vector.queryNodes(2 índices) → CandidatoRegra[] + escore
+    │      decisão: APROXIMADA (similaridade de cosseno)
+    └─ 5c. validarCandidatos()                   src/knowledge/recuperacao-cypher.ts
+           Cypher avalia parametro/operador/limiar → RegraValidada[]
+           decisão: DETERMINÍSTICA (CASE sobre o operador, no banco)
+    saída:    { sinal: SinalVetorial, validadas: RegraValidada[], auditoria }
+    falha:    degrada para o baseline, motivo em auditoria.degradou
+         ↓
+ 6. FOCO SEMÂNTICO                                               [obrigatório]
+    arquivo:  src/knowledge/graphrag.ts
+    função:   retrieverFoco(session, texto, model, sinal?)
+    entrada:  texto + (no híbrido) o sinal vetorial já calculado no passo 5b
+    saída:    Foco { farmacos, protocolos, origem }
+    decisão:  APROXIMADA — decide o que é MOSTRADO, nunca o que é permitido
+    nota:     com `sinal`, NÃO refaz embedding nem busca vetorial
+    falha:    embedding ou Neo4j fora → segue com o grafo completo (o passo 7
+              não roda), motivo em `focoIndisponivel`
+         ↓
+ 7. FILTRO POR FOCO                                              [obrigatório]
+    arquivo:  src/knowledge/graphrag.ts
+    função:   filtrarPorFoco(constraints, foco, model, contexto)
+    saída:    RetrievedConstraints restrito; políticas RECOMPUTADAS
+    invariante: o foco só TIRA decisões admissíveis, nunca acrescenta
+         ↓
+ 8. MONTAGEM DA POLÍTICA (poda)                                  [obrigatório]
+    arquivo:  src/knowledge/graphrag.ts → src/knowledge/politica.ts
+    função:   poda = pruningPayload(constraints, contexto) → montarSubgrafo(...)
+    saída:    SubgrafoPodado { politicas: PoliticaItem[], papeis,
+                               constantes, + 3 chaves legadas }
+    decisão:  DETERMINÍSTICA
+         ↓
+ 9. REFINAMENTO                             [condicional: validacao não vazia]
+    arquivo:  src/knowledge/recuperacao-politica.ts
+    função:   refinarPolitica(poda, auditoriaRecuperacao.validacao)
+    ├─ classificar(regra) → 6 classes; só `bloqueio_condicional` refina
+    ├─ agruparPorItem(validadas)
+    └─ apenasEstreitou(poda, refinado) → THROW se ampliou (fail-closed)
+    saída:    ReconciliacaoPolitica { subgrafo, ajustes, divergencias, concordam }
+              → subgrafoRefinado = rec.subgrafo
+              → auditoriaRecuperacao.reconciliacaoPolitica (sem o subgrafo)
+    decisão:  DETERMINÍSTICA
+    nota:     `validacao` só tem regras no modo híbrido que não degradou. No
+              determinístico (padrão), ou se o híbrido degradou, este passo
+              não roda e `subgrafoRefinado` fica indefinido
+         ↓
+10. POLÍTICA EFETIVA                                             [obrigatório]
+    arquivo:  src/web/server.ts  (processarMed | processarAgro | processarFut)
+    código:   politicaEfetiva = subgrafoRefinado ?? poda
+    uso:      calculada UMA vez por requisição; a MESMA variável alimenta
+    ├─ auditoriaRecuperacao.politicas ← { item, decisoes, bloqueado } por item
+    ├─ promptSemantico = montarPromptSemantico(constraints, contexto,
+    │                                          politicaEfetiva)
+    ├─ gerarPlanoRestrito(contexto, constraints, model, politicaEfetiva) → 12
+    └─ decisoesAdmissiveis = politicaEfetiva.acoes_permitidas
+    idem:     montarPromptSemanticoAgro|Fut, gerarMissaoRestrita,
+              gerarArbitragemRestrita
+    decisão:  DETERMINÍSTICA (escolha estrutural, sem LLM)
+         ↓
+11. VALIDAÇÃO DO COMANDO           [condicional: SPC_CML_VALIDACAO_ATIVA=true]
+    arquivo:  src/web/server.ts
+    função:   validarComando(texto, promptSemantico, motor)
+              → POST /validar-comando
+    saída:    { compreensivel, motivo }; se recusado, o evento `final` sai com
+              aceito: false, sem decisoesAdmissiveis nem auditoriaRecuperacao,
+              e a geração NÃO acontece
+    decisão:  GENERATIVA (LLM sob gramática fixa)
+    padrão:   desligada
+         ↓
+12. ENTRADA DA GERAÇÃO                                           [obrigatório]
+    arquivo:  src/inference/llm-client.ts  (idem agro-client.ts, fut-client.ts)
+    função:   montarEntradaGeracao(contexto, constraints, model, subgrafoRefinado?)
+              — o servidor passa `politicaEfetiva` como 4º argumento
+    ├─ subgrafo = subgrafoRefinado ?? pruningPayload(constraints, contexto)
+    │     servidor: sempre `politicaEfetiva` — a poda interna NÃO roda
+    │     CLI/lote: argumento ausente — a poda determinística é feita aqui
+    ├─ contrato = montarContrato(subgrafo, condutasPorDecisaoMed(model),
+    │                            escalonamentos, esquemaDeDadosMed(model))
+    └─ prompt   = montarPromptSemantico(constraints, contexto, subgrafo)
+    saída:    OpcoesDecodificacao { comando, contexto: prompt, subgrafo,
+                                    contrato, endpoint, timeoutMs }
+    invariante: prompt, gramática e contrato leem o MESMO subgrafo. No
+              servidor, o prompt enviado ao motor é idêntico ao
+              `promptSemantico` da resposta (mesma função pura, mesmas entradas)
+         ↓
+13. DECODIFICAÇÃO                                                [obrigatório]
+    arquivo:  src/inference/decodificacao.ts
+    função:   decodificar(opts) → SPC_CML_DECODIFICACAO
+    ├─ 'incremental' (PADRÃO) → decodificarIncremental
+    └─ 'monolitica'           → decodificarSobContrato
+         ↓
+14. RESULTADO
+    interno:  ResultadoDecodificacao { resultado, valido, erro, regras_em_g_hat,
+                                       …, violacoes, conforme, tentativas,
+                                       historico }
+    API:      evento SSE `final` com resultado, valido, erroMotor, regrasEmGHat,
+              promptSemantico, decisoesAdmissiveis e auditoriaRecuperacao
+    nota:     violacoes, conforme, tentativas e historico NÃO saem na API (§14)
 ```
 
-O fluxo tem uma propriedade que vale destacar: **a etapa que decide o que é seguro não é neural.** O LLM traduz linguagem; quem decide se o Propofol pode subir é uma comparação numérica (`52 < 60`) sobre um grafo escrito por especialistas.
+### 1.2 Passo 13a — decodificação incremental (padrão)
+
+```text
+decodificarIncremental()            src/inference/decodificacao.ts
+
+ a. identificador   POST /generate-fragment, símbolo `identificador`
+ b. sequência       até MAX_CONDUTAS posições; por posição até 3 tentativas
+                    restringirACondutas(subgrafo, condutasRealizaveis(...))
+                    verificarConduta() reprova → conduta sai da gramática do retry
+ c. cláusulas       UMA por conduta aceita, na ordem da sequência
+                    restringirADecisoes(subgrafo, decisoesDaConduta, itensJaUsados)
+                    lerClausula() → verificarClausulaNova()
+                    violação → podarPorViolacoes() → gramática do retry é MENOR
+ d. alertas         até MAX_ALERTAS
+ e. montarArtefato()  src/knowledge/contrato.ts
+ f. verificarContrato()  veredito final
+```
+
+Cada fragmento é gerado sob a gramática que as validações anteriores deixaram de pé. O prefixo enviado ao motor é o artefato parcial — cabeçalho + sequência + cláusulas já aceitas.
+
+### 1.3 Passo 13b — decodificação monolítica
+
+```text
+decodificarSobContrato()            src/inference/decodificacao.ts
+
+ laço até MAX_TENTATIVAS (3):
+   POST /generate-constrained  → artefato inteiro
+   verificarContrato()
+   conforme? → retorna
+   senão     → podarPorViolacoes() → subgrafo estritamente menor → regera
+               se a poda não encolheu, injeta relatorioDeViolacoes() no prompt
+```
+
+### 1.4 Diagrama do fluxo
+
+```mermaid
+flowchart TD
+    A["POST /api/comando<br/>texto + domínio"] --> B["processarMed/Agro/Fut<br/>ClinicalContext"]
+    B --> C["retrieveConstraints<br/>DETERMINÍSTICO sobre a AST"]
+    C --> M{"SPC_CML_RECUPERACAO"}
+
+    M -->|deterministica<br/>PADRÃO| F["retrieverFoco<br/>embedding próprio"]
+    M -->|hibrida_rag_cypher| H["prepararHibridoTolerante"]
+
+    H --> H1["construirContextoRecuperacao<br/>consultaSemantica + contextoEstruturado"]
+    H1 --> H2["recuperarCandidatos<br/>RAG: APROXIMADO"]
+    H2 --> H3["validarCandidatos<br/>Cypher: DETERMINÍSTICO"]
+    H3 --> F
+
+    F --> G["filtrarPorFoco<br/>só TIRA, nunca acrescenta"]
+    G --> P["pruningPayload<br/>poda"]
+    P --> R{"validacao<br/>não vazia?"}
+    R -->|sim| RF["refinarPolitica<br/>apenasEstreitou ou THROW"]
+    R -->|não| PE["politicaEfetiva =<br/>subgrafoRefinado ?? poda"]
+    RF --> PE
+
+    PE --> PS["promptSemantico<br/>fatos + POLITICA VIGENTE"]
+    PE --> API["decisoesAdmissiveis<br/>auditoria.politicas"]
+    PE --> E["montarEntradaGeracao<br/>subgrafo + contrato + prompt"]
+    PS -.->|SPC_CML_VALIDACAO_ATIVA| VC["validarComando<br/>desligado por padrão"]
+    E --> D{"SPC_CML_DECODIFICACAO"}
+    D -->|incremental<br/>PADRÃO| I["decodificarIncremental"]
+    D -->|monolitica| MO["decodificarSobContrato"]
+    I --> V["verificarContrato"]
+    MO --> V
+    V --> Z["evento SSE final"]
+    PS --> Z
+    API --> Z
+
+    style H2 fill:#fff4e6
+    style C fill:#e6f4ea
+    style H3 fill:#e6f4ea
+    style RF fill:#e6f4ea
+    style PE fill:#e6f4ea
+```
+
+Verde = determinístico. Laranja = aproximado. Tudo que sai de `politicaEfetiva` lê o mesmo objeto (§14).
 
 ---
 
-## 2. Os dois esquemas da DSL
+## 2. Arquitetura em camadas
 
-A DSL (`src/language/dsl.langium`) é particionada segundo a arquitetura CML.
+```mermaid
+flowchart LR
+    subgraph DSL["Modelo do especialista"]
+        EC["Esquema de Controle<br/>invariantes, gatilhos, limiares"]
+        ED["Esquema de Dados<br/>universo fechado de saídas"]
+    end
+    subgraph SIM["Camada simbólica (TypeScript)"]
+        KG["Grafo de Conhecimento<br/>Neo4j"]
+        RD["Recuperação determinística"]
+        POL["PoliticaItem / SubgrafoPodado"]
+    end
+    subgraph GEN["Motor (Python + llama.cpp)"]
+        G["Gramática G (BNF)"]
+        GH["Ĝ especializada"]
+        DEC["Decodificação restrita"]
+    end
+    EC --> KG --> RD --> POL --> GH
+    ED --> G --> GH --> DEC
+    DEC --> ART["Artefato"] --> CT["Contrato"]
+    CT -.->|repoda| GH
+```
 
-### Esquema de Controle — o conhecimento do domínio
+**Toda decisão de segurança acontece na camada simbólica.** O motor apenas não consegue emitir o que a gramática não gera.
 
-Alimenta o Grafo de Conhecimento. Escrito pelo intensivista e pelo farmacêutico clínico.
+### Separação de responsabilidades
 
-```langium
-farmaco Propofol {
-    classe sedativo
-    rxnorm "8782"          atc "N01AX10"
-    alto_risco sim
+| Camada | Decide | Natureza |
+|---|---|---|
+| Foco semântico / RAG | o que é **mostrado** | aproximada |
+| Recuperação determinística | o que é **permitido** | determinística |
+| Especialização de Ĝ | o que é **exprimível** | determinística |
+| Contrato do artefato | o que é **coerente** | determinística |
 
-    diluicao "emulsao lipidica 10 mg/mL"
-    vias [ ACESSO_CENTRAL, ACESSO_PERIFERICO ]
+---
 
-    dose inicial 0.5 mg/kg/h
-    dose maxima 4.0 mg/kg/h
-    titulacao 0.5 mg/kg/h a_cada 15 min alvo "RASS -2 a 0"
+## 3. Os dois esquemas da DSL
 
-    bomba {                            // limites DERS da bomba inteligente
-        limite_leve   3.0 mg/kg/h      // soft limit: alerta
-        limite_rigido 4.0 mg/kg/h      // hard limit: bloqueio
-    }
+A DSL (Langium) é a fonte única de verdade e se parte em dois.
 
-    interacao: Midazolam gravidade moderada ("depressao respiratoria aditiva")
-    contraindicado: "hipotensao refrataria com PAM < 60 mmHg"
+**Esquema de Controle** → alimenta o Grafo de Conhecimento: fármacos, protocolos, populações, invariantes de segurança, gatilhos, limiares, interações.
+
+**Esquema de Dados** → alimenta a gramática: o universo fechado de decisões, vias/meios, unidades e condutas que uma saída pode conter.
+
+| domínio | modelo | gramática gerada | símbolo inicial |
+|---|---|---|---|
+| `med` | [src/examples/med/uti.dsl](src/examples/med/uti.dsl) | `grammar/advanced_icu.bnf` | `plano` |
+| `agro` | [src/examples/agro/lavoura.agro](src/examples/agro/lavoura.agro) | `grammar/agro_drone.bnf` | `missao` |
+| `fut` | [src/examples/fut/futebol.fut](src/examples/fut/futebol.fut) | `grammar/futebol.bnf` | `arbitragem` |
+
+A BNF é **gerada**, nunca editada à mão — [src/cli/export-bnf.ts](src/cli/export-bnf.ts) e irmãos.
+
+### `PoliticaItem` — a unidade normativa
+
+Definida em [src/knowledge/politica.ts](src/knowledge/politica.ts):
+
+```ts
+interface PoliticaItem {
+    item: string;              // fármaco | produto | infração
+    decisoes: string[];        // o que se pode decidir sobre ele
+    meios: string[];           // via | modo | reinício
+    unidades: string[];
+    valores: ValorAdmissivel[];              // retículo derivado do modelo
+    valoresPorDecisao?: Record<string, ValorAdmissivel[]>;  // mais estrito
+    bloqueado: boolean;
+    motivos: string[];         // justificativas legíveis
 }
-
-// Invariante com condição ESTRUTURADA — avaliável por máquina, não por LLM
-regra_seguranca: bloquear_incremento Propofol se PAM < 60.0 mmHg
-                 ("risco de hipotensao severa e colapso hemodinamico")
 ```
 
-Cobre `farmaco`, `protocolo` (gatilhos, etapas, escalonamentos, desmame), `populacao` (gestante, renal crônico, idoso frágil, obeso grave), `regra_seguranca` e `regra_global`.
-
-### Esquema de Dados — o universo fechado de respostas
-
-Delimita exaustivamente o que o LLM pode emitir. **É esta seção que vira BNF.**
-
-```langium
-esquema_dados AssistenteUTI_v2 {
-    decisoes [ INICIAR_INFUSAO, AUMENTAR_VAZAO, REDUZIR_VAZAO, MANTER_BLOQUEADO,
-               SUSPENDER, SOLICITAR_EXAME, ESCALAR_EQUIPE, BLOQUEAR_ORDEM, ... ]
-    vias     [ ACESSO_CENTRAL, ACESSO_PERIFERICO, INTRAOSSEO, SC ]
-    alertas  [ INFORMATIVO, ATENCAO, CRITICO, BLOQUEANTE ]
-
-    conduta Manter_Bloqueio {
-        decisao MANTER_BLOQUEADO
-        requer_dupla_checagem sim
-        recurso_fhir "DetectedIssue"
-    }
-}
-
-// A produção que a decodificação restrita preenche
-plano Plano_Choque_01 para Choque_Septico {
-    esquema_referencia AssistenteUTI_v2
-    paciente 'PT-2026-0031'
-    sequencia [ Manter_Bloqueio, Acionar_Equipe ]
-    ordem Propofol decisao MANTER_BLOQUEADO dose 0.0 mg/kg/h via ACESSO_CENTRAL
-          justificativa 'PAM 52 mmHg abaixo de 60'
-    alerta CRITICO 'hipoperfusao grave' regra 'Choque_Septico/escalonar'
-    auditoria 'plano derivado sob restricao gramatical'
-}
-```
-
-Um detalhe de modelagem: as condutas são declaradas **dentro** de um `esquema_dados`, e um `plano` só pode citar condutas do esquema que ele próprio referencia. Isso é imposto por um `ScopeProvider` dedicado (`src/language/dsl-module.ts`), de modo que o universo é fechado também na resolução de nomes, não só na sintaxe.
+`valoresPorDecisao` é mais estrito que `valores`: o degrau de titulação vale para AUMENTAR, a dose inicial para INICIAR, zero para o que não movimenta a bomba.
 
 ---
 
-## 3. Como as peças se conectam
+## 4. Recuperação determinística
 
-### 3.1 DSL → BNF (fonte única de verdade)
+[`retrieveConstraints`](src/knowledge/graphrag.ts) (e `retrieveAgroConstraints`, `retrieveFutConstraints`) percorre a **AST da DSL** — não o Neo4j — e compara a telemetria com os limiares declarados.
 
-Antes, a BNF era mantida à mão em paralelo à DSL. Duas fontes de verdade para a mesma linguagem significam que qualquer evolução do domínio pode dessincronizar o decodificador do modelo clínico — justamente onde a segurança é decidida.
+A política de cada item nasce **aberta** (todas as decisões do `esquema_dados`) e é estreitada por:
 
-Hoje `src/cli/export-bnf.ts` **deriva** a BNF de duas fontes locais já validadas:
+1. **estado de curso** (`aplicarEstadoDeCurso`) — não se inicia o que já está em curso;
+2. **invariantes** (`BlockRule`) — retiram as decisões de incremento;
+3. **vetos** — reduzem às decisões de retirada;
+4. **ajustes renais** com ação `suspender`/`bloquear` — retiram incrementos;
+5. **ajustes por fator** — reescalam o retículo de valores (§6).
 
-| Fonte | O que fornece |
-|---|---|
-| `src/language/dsl.langium` | a **estrutura** da saída (regra `PlanCommand` e o que ela alcança) e os vocabulários fechados (`Decision`, `Route`, `AlertLevel`, `Unit`) |
-| `src/examples/med/uti.dsl` | as **instâncias** permitidas (nomes de fármacos, condutas, protocolos) e a restrição declarada no `esquema_dados` |
-
-Resultado (`src/python_engine/grammar/advanced_icu.bnf`, gerado):
-
-```bnf
-plano ::= "plano" identificador "para" protocolo "{" "esquema_referencia" esquema
-          "paciente" texto "sequencia" "[" conduta plano_g1* "]"
-          plano_g2* plano_g3* "auditoria" texto "}"
-ordem ::= "ordem" farmaco "decisao" decisao "dose" quantidade "via" via "justificativa" texto
-farmaco ::= "Noradrenalina" | "Adrenalina" | "Vasopressina" | "Dobutamina" | "Propofol"
-          | "Midazolam" | "Fentanil" | "Cisatracurio" | "Vancomicina"
-          | "Piperacilina_Tazobactam" | "Heparina" | "Insulina_Regular"
-unidade ::= "mcg/kg/min" | "U/min" | "mg/kg/h" | "mcg/kg/h" | "mg/kg" | "mg" | "UI/kg" | "UI/h"
-```
-
-Os 12 fármacos vieram do `uti.dsl`. Citar `Dopamina` deixa de ser um erro semântico a detectar depois: não existe na gramática.
-
-**Dois estreitamentos deliberados** — a gramática de saída é mais restrita que a DSL de autoria:
-
-- `justificativa` e `regra` passam de opcionais a **obrigatórias**: toda ordem gerada automaticamente carrega rastreabilidade;
-- `texto` aceita apenas aspas simples (o leitor BNF do motor Python trata `|` como separador de alternativas).
-
-Todo plano gerado é um programa válido da DSL; a recíproca não vale.
-
-### 3.2 Telemetria → subgrafo → Ĝ
-
-`src/knowledge/graphrag.ts` avalia a telemetria contra o modelo e produz uma **política por fármaco**:
-
-```
-PAM=52  FC=145  lactato=4.8  RASS=2  TFG=28  plaquetas=45  glicemia=210
-        │
-        v
-Protocolos ativados:  Choque_Septico (lactato 4.8 > 2), Sedacao_Analgesia_VM (RASS 2 > 0),
-                      Controle_Glicemico_UTI (glicemia 210 > 180)
-Bloqueios:            Propofol (PAM 52 < 60), Noradrenalina (FC 145 > 130),
-                      Cisatracurio (RASS 2 > -4), Heparina (plaquetas 45 < 50)
-Vetos:                Dobutamina (protocolo), Midazolam (protocolo)
-Ajustes:              Vancomicina ×0.5, Fentanil ×0.75, Midazolam ×0.5 (TFG 28)
-Escalonamentos:       TIME_RESPOSTA_RAPIDA, INTENSIVISTA
-```
-
-`src/grammar/constrain.ts` converte essa política em gramática, emitindo **uma produção por fármaco**:
-
-```bnf
-ordem ::= ordem_noradrenalina | ordem_propofol | ordem_vasopressina | ...
-
-ordem_propofol   ::= "ordem" "Propofol" "decisao" decisao_propofol
-                     "dose" quantidade_propofol "via" via_propofol "justificativa" texto
-decisao_propofol ::= "REDUZIR_VAZAO" | "MANTER_VAZAO" | "MANTER_BLOQUEADO"
-                   | "SUSPENDER" | "SUBSTITUIR" | "SOLICITAR_EXAME"
-                   | "ESCALAR_EQUIPE" | "BLOQUEAR_ORDEM"
-unidade_propofol ::= "mg/kg/h"
-via_propofol     ::= "ACESSO_CENTRAL" | "ACESSO_PERIFERICO"
-```
-
-`AUMENTAR_VAZAO` desapareceu de `decisao_propofol`. Note também que `unidade_propofol` admite só `mg/kg/h` — trocar a unidade de um vasopressor pela de um sedativo, erro clássico de medicação, também se torna inexprimível.
-
-Esta é a diferença material em relação a uma poda global de vocabulário: com uma lista única de decisões, `Propofol + AUMENTAR_VAZAO` continuaria gramatical porque *algum* fármaco admite aumentar.
-
-### 3.3 Verificação e reparo
-
-`src/grammar/earley.ts` implementa um reconhecedor de Earley **sem scanner** (sobre caracteres, não tokens) que fornece as três quantidades do Algoritmo 1 de Wang et al.:
-
-- `y ∈ L(Ĝ)`?
-- o **maior prefixo válido** `y_prefix`;
-- **Σ[y_prefix]**, o conjunto de terminais que podem continuar o prefixo.
-
-Diante da saída ingênua do LLM:
-
-```
-ordem Noradrenalina decisao AUMENTAR_VAZAO dose 0.1 mcg/kg/min ...
-                            ^
-              rejeitado exatamente aqui (offset 173 de 512)
-
-Σ[y_prefix] = "REDUZIR_VAZAO" | "MANTER_VAZAO" | "MANTER_BLOQUEADO" | "SUSPENDER"
-            | "SUBSTITUIR" | "SOLICITAR_EXAME" | "ESCALAR_EQUIPE" | "BLOQUEAR_ORDEM"
-```
-
-O **reparo determinístico** completa o programa escolhendo, a cada passo, o terminal que minimiza o número de terminais ainda necessários para fechar a derivação inteira — incluindo o fechamento de toda a pilha de produções pendentes. Sem isso, um critério guloso local nunca fecha uma lista: diante de `sequencia [ Manter_Bloqueio`, o símbolo `,` pertence a uma produção curta e parece mais barato que `]`, e o reparo repete conduta indefinidamente.
-
-Por construção o reparo termina e o resultado é aceito por Ĝ. É a rede de segurança que sustenta a garantia mesmo quando o LLM nunca converge.
+Regras cujo parâmetro não está na telemetria são **ignoradas**: ausência de medida não é evidência de normalidade, mas também não autoriza bloquear.
 
 ---
 
-## 4. Mapa de arquivos
+## 5. Recuperação híbrida: RAG + Cypher
 
-```
-dsl-project/
-├── src/
-│   ├── language/
-│   │   ├── dsl.langium              ← A DSL. Fonte única da verdade formal.
-│   │   └── dsl-module.ts            ← Serviços Langium + ScopeProvider do Esquema de Dados
-│   ├── generated/                   ← Gerado por `langium generate` (não editar)
-│   │
-│   ├── examples/
-│   │   ├── uti.dsl                  ← Modelo clínico institucional (33 elementos)
-│   │   ├── cenarios.jsonl           ← Cenários de leito com telemetria
-│   │   └── prompt.txt               ← Falas soltas (formato legado)
-│   │
-│   ├── grammar/                     ── CAMADA GRAMATICAL ──
-│   │   ├── extract-bnf.ts           ← Langium AST + modelo → BNF (G)
-│   │   ├── vocabularies.ts          ← Extrai instâncias permitidas do modelo
-│   │   ├── constrain.ts             ← G + política do grafo → Ĝ (por fármaco)
-│   │   └── earley.ts                ← Reconhecedor, Σ[y_prefix] e reparo
-│   │
-│   ├── knowledge/
-│   │   └── graphrag.ts              ← Telemetria → subgrafo de restrições
-│   │
-│   ├── database/
-│   │   └── neo4j.ts                 ← Mapeador AST → Grafo de Conhecimento
-│   │
-│   ├── cli/
-│   │   ├── validate.ts              ← Portão de qualidade da DSL
-│   │   ├── export-bnf.ts            ← Gera advanced_icu.bnf
-│   │   └── pipeline.ts              ← Demonstração ponta a ponta (Fig. 5.1)
-│   │
-│   ├── inference/
-│   │   ├── llm-client.ts            ← Prompt Semântico + chamada ao motor
-│   │   └── batch-client.ts          ← Bateria de cenários
-│   │
-│   ├── python_engine/               ── MOTOR DE DECODIFICAÇÃO (modelo local) ──
-│   │   ├── bnf.py                   ← BNF → Lark / GBNF; G[y] especializada
-│   │   ├── grammar_from_kg.py       ← Poda de G pelo subgrafo → Ĝ
-│   │   ├── prompt_builder.py        ← Prompt few-shot (x, G[y], y)
-│   │   ├── main.py                  ← API FastAPI
-│   │   ├── test_grammar.py          ← Validação do motor
-│   │   ├── grammar/advanced_icu.bnf ← GERADO — não editar à mão
-│   │   └── data/exemplos_icu.jsonl  ← Exemplares few-shot
-│   │
-│   └── test/
-│       ├── test.ts                  ← Inspeção do modelo carregado
-│       └── earley.test.ts           ← Detecção + reparo
-└── package.json
+> **Padrão: desligado.** `SPC_CML_RECUPERACAO=deterministica`. O modo híbrido é experimental e se ativa com `hibrida_rag_cypher`.
+
+```mermaid
+flowchart TD
+    CTX["ContextoRecuperacao<br/>recuperacao.ts"] --> SQ["consultaSemantica<br/>texto em prosa"]
+    CTX --> SC["contextoEstruturado<br/>telemetria exata"]
+    SQ --> EMB["embedTexto → POST /embed<br/>bge-m3, 1024d"]
+    EMB --> VS["db.index.vector.queryNodes<br/>2 índices por domínio"]
+    VS --> CAND["CandidatoRegra[]<br/>escore + nodeId + regraId"]
+    CAND --> CY["Cypher: CASE sobre operador"]
+    SC --> CY
+    CY --> RV["RegraValidada[]<br/>aplicavel + condições + evidência"]
+
+    style SQ fill:#fff4e6
+    style EMB fill:#fff4e6
+    style VS fill:#fff4e6
+    style CAND fill:#fff4e6
+    style SC fill:#e6f4ea
+    style CY fill:#e6f4ea
+    style RV fill:#e6f4ea
 ```
 
----
+### 5.1 Contexto de recuperação
 
-## 5. Instalação
+[`construirContextoRecuperacao`](src/knowledge/recuperacao.ts) é uma **projeção** do contexto do pipeline — não uma nova fonte de verdade. Ele separa duas representações da mesma entrada:
 
-**Pré-requisitos:** Node.js 18+, Python 3.10+. Neo4j e GPU são opcionais.
+| | consulta semântica | contexto estruturado |
+|---|---|---|
+| destino | embedding / índice vetorial | Cypher / comparação numérica |
+| forma | prosa | valores exatos |
+| PAM 52 | `"... Sinais do paciente: PAM 52"` | `{ PAM: 52 }` (number) |
+| ID do sujeito | **excluído** (ID interno, ruído) | `sujeito: 'PT-2026-0031'` |
 
-```bash
-cd dsl-project
-npm install
-npm run langium:generate        # gera parser e AST a partir da DSL
+**A consulta semântica não substitui a telemetria estruturada.** Ela cita o número; quem o compara com o limiar é o Cypher.
 
-# Motor de gramática em Python (leve — sem LLM)
-python -m pip install lark fastapi pydantic uvicorn
-```
+Composição da consulta (`montarConsultaSemantica`), por segmentos fixos: fala do usuário → ambiente do domínio → enquadramentos → estado de curso → sinais. Os sinais que o usuário citou pelo nome vêm primeiro; o bloco é limitado por `SPC_CML_RAG_MAX_SINAIS` (8) para não diluir a intenção.
 
-Para o caminho de **modelo local com mascaramento de logits** (opcional, pesado):
+### 5.2 Índices vetoriais
 
-```bash
-python -m pip install -r src/requirements.txt   # outlines, transformers, torch
-```
+Seis índices, dois por domínio, todos `cosine`/1024d, criados por `database/neo4j*.ts`:
 
-Para persistir o grafo (opcional):
+| domínio | índice de item | label | índice de contexto | label |
+|---|---|---|---|---|
+| med | `farmaco_embedding` | `Farmaco` | `protocolo_embedding` | `Protocolo` |
+| agro | `produto_embedding` | `Produto` | `cultura_embedding` | `Cultura` |
+| fut | `infracao_embedding` | `Infracao` | `lance_embedding` | `Lance` |
 
-```bash
-docker run -d --name neo4j -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/'#UFG2026' neo4j:5
-```
+`topK` (`SPC_CML_RAG_TOP_K`, padrão 10) é **por índice**, sem teto global — um corte global deixaria uma família de nós silenciar a outra, o que seria o RAG decidindo.
 
----
-
-## 6. Como rodar
-
-### 6.1 Demonstração completa — comece por aqui
-
-```bash
-npm run pipeline
-```
-
-Executa a Figura 5.1 inteira, **offline**, sem Neo4j nem GPU, e imprime as seis etapas: DSL carregada → telemetria → restrições recuperadas → G e Ĝ → verificação e reparo → garantias finais.
-
-Saída final esperada:
+### 5.3 O escore não é validade
 
 ```
-Aceito por Ĝ (restrições do grafo): sim
-Aceito pela DSL Langium (round-trip): sim
+escore = RELEVÂNCIA SEMÂNTICA da recuperação
 
-RESULTADO: erro sintático 0 — o plano final é válido em Ĝ e na DSL, e nenhuma
-ordem viola as invariantes recuperadas do grafo.
+escore NÃO é validade.   escore NÃO é autorização.
+escore mais alto NÃO é "a regra escolhida".
 ```
 
-### 6.2 Regenerar a BNF depois de editar a DSL
+Auditado em [recuperacao-rag.ts](src/knowledge/recuperacao-rag.ts): as únicas operações sobre `escore` são carregar adiante, reconstruir do cosseno quando ausente, e ordenar para apresentação. Nenhuma comparação, nenhum limiar, nenhum filtro.
 
-```bash
-npm run validate                 # 1. o modelo está íntegro?
-npm run bnf:export               # 2. regenera advanced_icu.bnf
-```
+### 5.4 Validação por Cypher
 
-**Sempre nessa ordem.** O `export-bnf` recusa gerar a partir de um modelo com erro de sintaxe — sem isso, um modelo quebrado silenciosamente produziria uma gramática incompleta.
-
-### 6.3 Recuperação no grafo e Prompt Semântico
-
-```bash
-npm run infer                    # um cenário, com o Prompt Semântico completo
-npm run batch                    # três cenários contrastantes
-```
-
-O `batch` é o mais instrutivo: a mesma frase *"aumenta a sedação"* produz gramáticas diferentes conforme a PAM. Com PAM 78 o Propofol é liberado; com PAM 52 é bloqueado. O sistema não bloqueia por precaução — bloqueia quando a invariante incide.
-
-### 6.4 Persistir o grafo no Neo4j
-
-```bash
-npm run graph:sync               # idempotente (MERGE em tudo)
-```
-
-Consultas úteis no Neo4j Browser:
+[`recuperacao-cypher.ts`](src/knowledge/recuperacao-cypher.ts) executa a comparação **no banco**:
 
 ```cypher
-// Invariantes que bloqueiam incremento
-MATCH (r:RegraSeguranca)-[:BLOQUEIA_INCREMENTO]->(f:Farmaco)
-RETURN f.nome, r.parametro, r.operador, r.limiar, r.razao;
-
-// Interações de alta gravidade
-MATCH (a:Farmaco)-[i:INTERAGE_COM]->(b:Farmaco)
-WHERE i.gravidade IN ['alta','contraindicada']
-RETURN a.nome, b.nome, i.mecanismo, i.conduta;
-
-// Pares LASA
-MATCH (a:Farmaco)-[l:LASA]->(b:Farmaco) RETURN a.nome, b.nome, l.mitigacao;
+MATCH (alvo:`Farmaco` { nome: $nome })
+MATCH (alvo)-[rel]-(regra)
+WHERE regra.parametro IS NOT NULL
+WITH regra, rel, coalesce(regra.limiar, regra.valor) AS esperado,
+     $telemetria[regra.parametro] AS observado
+RETURN ..., CASE WHEN observado IS NULL THEN NULL
+                 WHEN regra.operador = '<' THEN observado < esperado
+                 ... END AS satisfeita
 ```
 
-### 6.5 Motor de decodificação restrita (modelo local)
+O filtro `parametro IS NOT NULL` seleciona exatamente cinco tipos de nó:
+
+| tipo | dono | campo do valor | relação |
+|---|---|---|---|
+| `RegraSeguranca` | item | `limiar` | `BLOQUEIA_INCREMENTO` \| `BLOQUEIA` |
+| `AjusteRenal` | fármaco | `limiar` | `EXIGE_AJUSTE` |
+| `Gatilho` | contexto | `valor` | `DISPARA` |
+| `Escalonamento` | contexto | `valor` | `ESCALONA` |
+| `Limiar` | infração | `valor` | `TEM_LIMIAR` |
+
+**Nós com parâmetro não são toda a política.** Vetos, proibições e ajustes por fator são **arestas sem parâmetro** e nunca aparecem em `RegraValidada[]` — chegam à política por outro caminho determinístico (§6). É por isso que o refinamento estreita em vez de reconstruir.
+
+Quando a telemetria não traz o parâmetro, a condição vira **lacuna**, não falsidade: `aplicavel = false`, `condicoesFalhas` vazio, `lacunas` preenchido.
+
+---
+
+## 6. VETA, PROIBE e AJUSTA
+
+Verificado no grafo e no código:
+
+| relação | de → para | propriedades | transformação na política | depende de |
+|---|---|---|---|---|
+| `VETA` | Protocolo/Cultura/Lance → item | `motivo` | `decisoes = filter(DECISOES_DE_RETIRADA)`, `bloqueado = true` | item + **contexto em foco** |
+| `PROIBE` | Populacao/Area/Contexto → item | `motivo` | idem | item + **estado do sujeito** |
+| `AJUSTA` | Populacao/Area/Contexto → item | `motivo`, **`fator`** | **`escalar(valores, fator)` + `escalarMapa(valoresPorDecisao, fator)`** | item + estado |
+
+Três consequências:
+
+**`AJUSTA` não remove decisão alguma.** Ele reescala o retículo de valores por um fator (0.5, 0.75 no modelo clínico). Descrevê-lo como remoção de decisões seria descrever outra coisa.
+
+**`VETA` depende do foco**; `filtrarPorFoco` só mantém vetos cujo protocolo está em foco. **`PROIBE` depende do estado do sujeito** (população/área), que vem do contexto — ausência de recuperação semântica nunca pode revogá-lo.
+
+**Nenhuma das três é visível ao Cypher de validação**, porque nenhuma é nó com `parametro`.
+
+---
+
+## 7. Refinamento seguro da política
+
+[`recuperacao-politica.ts`](src/knowledge/recuperacao-politica.ts). O refinamento **estreita** a política determinística; nunca a reconstrói.
+
+### 7.1 `classificar()` — seis classes
+
+| classe | origem | refina a política? |
+|---|---|---|
+| `bloqueio_condicional` | `BLOQUEIA`/`BLOQUEIA_INCREMENTO`, ou `EXIGE_AJUSTE` com ação `suspender`/`bloquear` | **SIM** |
+| `ativacao_de_contexto` | `DISPARA`, `EXIGE_AJUSTE` com outra ação | não |
+| `escalonamento` | `ESCALONA` | não |
+| `sancao` | `TEM_LIMIAR` | não |
+| `nao_incidente` | regra cujas condições são falsas | não |
+| `sem_evidencia` | parâmetro não medido | não |
+
+Só a primeira altera a política. As outras cinco existem para registrar que foram **reconhecidas e deliberadamente não aplicadas** — não esquecidas.
+
+### 7.2 `refinarPolitica()` e a não-ampliação
+
+```
+Política refinada ⊆ Política determinística
+```
+
+Verificado por `apenasEstreitou(antes, depois)` sobre **itens e decisões**: nenhum item novo, nenhuma decisão que não estivesse na política original. A garantia roda **em runtime**, não só em teste:
+
+```ts
+if (!apenasEstreitou(subgrafo, refinado)) {
+    throw new Error('refinamento da politica ampliou permissoes: ...');
+}
+```
+
+**Fail-closed:** a exceção sobe até o handler SSE e a geração não acontece. Não há fallback silencioso para a política mais ampla.
+
+Os testes verificam adicionalmente que **meios** e **valores** também não crescem ([recuperacao-politica.test.ts](src/test/recuperacao-politica.test.ts), TESTE 16).
+
+**Onde roda e para onde vai.** Só em `server.ts`, e só quando `auditoriaRecuperacao.validacao` não está vazia — na prática, no modo híbrido sem degradação. O `rec.subgrafo` vira `subgrafoRefinado` e, por meio de `politicaEfetiva` (§1, passo 10), é a política que chega ao prompt, à gramática, ao contrato e à resposta da API. `montarEntradaGeracao*` não repete `apenasEstreitou`: a checagem fica em `refinarPolitica`, o único ponto que tem as duas políticas em mãos. O teste 13 de `test:geracao` verifica que uma decisão retirada pelo refinamento não chega ao gerador nem ao contrato.
+
+### 7.3 Lista vazia ≠ ausência de permissões
+
+`RegraValidada[] = []` significa **"o RAG nada acrescentou"**, não **"nada é permitido"**. A política determinística passa intacta. Interpretar silêncio como proibição daria ao RAG poder de veto por omissão — exatamente o que a arquitetura proíbe.
+
+No servidor, a lista vazia nem chega a chamar `refinarPolitica`: `politicaEfetiva` é a própria poda. Chamada diretamente com `[]`, `refinarPolitica` devolve a poda inalterada (`test:politica`, TESTE 9; `test:geracao`, teste 12).
+
+### 7.4 Divergências
+
+Regras restritivas que incidem sobre item **ausente da política** são registradas como divergência sem alterar nada. A causa mais comum **não é defeito**: é o foco. Medido no cenário de referência, `plaquetas 45 < 50` incide sobre Heparina, que o foco não trouxe. Isso difere de uma regra incidente sobre item **em foco**, que refina de fato.
+
+```mermaid
+flowchart LR
+    P["Política determinística<br/>P"] --> R["refinarPolitica"]
+    V["RegraValidada[]"] --> CL["classificar()"]
+    CL -->|bloqueio_condicional| R
+    CL -->|outras 5 classes| IG["reconhecidas,<br/>não aplicadas"]
+    R --> CK{"apenasEstreitou?"}
+    CK -->|sim| PR["Política refinada ⊆ P"]
+    CK -->|não| TH["THROW<br/>geração interrompida"]
+    style TH fill:#fde7e9
+    style PR fill:#e6f4ea
+```
+
+---
+
+## 8. Prompt Semântico
+
+[`montarPromptSemantico`](src/inference/llm-client.ts) e irmãos montam o bloco factual que o LLM lê. Cada linha saiu de uma comparação numérica, não de suposição.
+
+Blocos factuais, nesta ordem (nomes do domínio `med`; `agro` e `fut` têm equivalentes próprios): `[CENARIO]`, `[PROTOCOLOS EM FOCO]`, `[INCREMENTOS BLOQUEADOS — invariantes de seguranca]`, `[FARMACOS VETADOS NESTE CONTEXTO]`, `[AJUSTES DE DOSE EXIGIDOS]`, `[ESCALONAMENTOS DISPARADOS]`, `[INTERACOES ENTRE FARMACOS EM USO]`, `[RECOMENDADOS PELO PROTOCOLO]`, `[INVARIANTES GLOBAIS]`. `[CENARIO]` só aparece quando o contexto é passado; os demais somem quando vazios, exceto `[INVARIANTES GLOBAIS]`.
+
+### A política vigente no prompt
+
+`montarPromptSemantico*` aceita um terceiro parâmetro opcional: a política efetivamente vigente, um `SubgrafoPodado`. No caminho de geração ele vem **sempre, nos dois modos de recuperação**. `montarEntradaGeracao*` repassa o mesmo `subgrafo` que vira gramática e contrato, e o servidor monta o `promptSemantico` da resposta com `politicaEfetiva` (§1, passos 10 e 12). No modo determinístico, que é o padrão, essa política é a poda. No híbrido com regras validadas, é a refinada.
+
+Com o parâmetro, acontecem duas coisas.
+
+**1. Recomendações são anotadas, nunca apagadas.** Que o protocolo recomende um item continua sendo um fato do domínio; apagá-lo empobreceria o contexto que o modelo usa para justificar a decisão. `anotarRecomendacao` acrescenta, **na mesma linha**, a informação que faltava:
+
+| situação do item na política vigente | anotação |
+|---|---|
+| presente e admite alguma decisão de incremento (`papeis.decisoesDeIncremento`) | nenhuma |
+| presente, sem nenhuma decisão de incremento | `(recomendado, mas sem decisao de incremento admissivel agora)` |
+| ausente (em geral porque o foco não o trouxe) | `(fora da politica vigente neste cenario)` |
+
+**2. Um bloco de autoridade fecha o prompt.** `blocoPoliticaEfetiva` lista cada item com as decisões que restaram e marca `[RESTRITO]` os bloqueados, repetindo os `motivos` só para esses. Fatos primeiro, o que se pode decidir por último. Item sem decisão sai como `(nenhuma decisao admissivel)`; política sem itens não gera bloco.
+
+Saída real, no modo determinístico, para o cenário de referência de [llm-client.ts](src/inference/llm-client.ts) (PT-2026-0031: PAM 52, FC 145; Noradrenalina, Propofol e Vancomicina em curso), sobre o grafo completo, sem o filtro de foco. Trechos:
+
+```
+[RECOMENDADOS PELO PROTOCOLO]
+- Noradrenalina: vasopressor de primeira linha para PAM < 65 mmHg (Choque_Septico) (recomendado, mas sem decisao de incremento admissivel agora)
+- Vasopressina: segunda linha poupadora de catecolamina (Choque_Septico)
+...
+[POLITICA VIGENTE — o que e exprimivel neste cenario]
+(esta lista e a autoridade: a gramatica so gera o que esta aqui)
+- Noradrenalina [RESTRITO]: REDUZIR_VAZAO, MANTER_VAZAO, MANTER_BLOQUEADO, SUSPENDER, SUBSTITUIR, SOLICITAR_EXAME, ESCALAR_EQUIPE, BLOQUEAR_ORDEM
+    motivo: ja em curso: nao cabe iniciar de novo
+    motivo: incremento bloqueado (FC 145 > 130 bpm): risco de taquiarritmia e fibrilacao atrial
+- Adrenalina: INICIAR_INFUSAO, MANTER_BLOQUEADO, SUBSTITUIR, SOLICITAR_EXAME, ESCALAR_EQUIPE, BLOQUEAR_ORDEM
+...
+- Propofol [RESTRITO]: REDUZIR_VAZAO, MANTER_VAZAO, MANTER_BLOQUEADO, SUSPENDER, SUBSTITUIR, SOLICITAR_EXAME, ESCALAR_EQUIPE, BLOQUEAR_ORDEM
+    motivo: ja em curso: nao cabe iniciar de novo
+    motivo: incremento bloqueado (PAM 52 < 60 mmHg): risco de hipotensao severa e colapso hemodinamico
+```
+
+Quando o refinamento estreita um item, o motivo que ele acrescenta vem no formato de `refinarPolitica`, `<tipo> (<parâmetro> <observado> <exigido>): <razão>`, em vez do `incremento bloqueado (...)` da recuperação determinística.
+
+**Sem o parâmetro, o prompt sai exatamente como sempre saiu**, sem anotação e sem bloco. Quem ainda chama assim:
+
+| chamador | por quê |
+|---|---|
+| `scripts/gerar-ground-truth-*.ts` | o gabarito precisa de texto estável |
+| `/api/avaliar` (`avaliarRegistro*` em `server.ts`) | o juiz de `/validar-plano` recebe esse texto, sem `[CENARIO]`, como contexto |
+| exibição no console de `cli.ts`, dos clientes de lote, de `inspecionar-foco.ts` e do `main()` de `llm-client.ts` | só log |
+
+> ⚠️ A CLI e os clientes de lote **imprimem** o prompt legado, mas o que **enviam** ao motor (via `gerar*Restrito` → `montarEntradaGeracao*`) traz a anotação e o bloco, montados com a poda. O log do console não é o texto que o LLM leu.
+
+Helpers em [politica.ts](src/knowledge/politica.ts): `blocoPoliticaEfetiva`, `anotarRecomendacao`, `admiteIncremento`, todos agnósticos de domínio, via `papeis`. Cobertos por `test:geracao` (7 casos no bloco "o Prompt Semantico reflete a politica vigente").
+
+---
+
+## 9. Grammar Prompting e geração restrita
+
+### 9.1 De G para Ĝ
+
+[`grammar_from_kg.py`](src/python_engine/grammar_from_kg.py), quatro fases:
+
+**Fase 0 — `especializar_por_item`.** Reescreve a regra da cláusula em uma produção **por item**, cada uma com as decisões, meios e valores daquele item. Sem ela, `ordem ::= "ordem" farmaco "decisao" decisao ...` é um produto cartesiano e basta um item admitir `INICIAR_INFUSAO` para todos admitirem.
+
+Fixa também como literais o que é **dado** do cenário: sujeito e contextos.
+
+**Fases 1–3.** Poda dos vocabulários fechados (`MAPA_PODA`), remoção de símbolos não geradores, varredura de alcance a partir do símbolo inicial.
+
+### 9.2 Decodificação restrita
+
+Backend padrão `llamacpp`: a Ĝ vira GBNF (`to_gbnf`) e o llama.cpp mascara logits em C++. O backend `outlines` existe para comparação de desempenho — reconstrói um FSM sobre todo o vocabulário a cada terminal, o que nesta gramática não termina em tempo útil.
+
+Chamadas ao llama.cpp são serializadas por `_LLAMA_LOCK` (RLock) em [main.py](src/python_engine/main.py).
+
+---
+
+## 10. Validação, reparo e contrato
+
+| nível | onde | o que verifica |
+|---|---|---|
+| **Sintática** | `/generate-constrained` reparseia com Lark | pertence a L(Ĝ)? |
+| **Sintática (cliente)** | `lerArtefato` / `lerClausula` por regex | os campos são legíveis? |
+| **Semântica local** | `verificarClausulas` | item na poda, decisão admissível, meio, valor no retículo |
+| **Relacional** | `verificarClausulas` acumulado | unicidade por item |
+| **Global** | `verificarArtefato` | sequência ↔ cláusulas, escalonamento coberto, sujeito, contexto, artefato vazio |
+
+> ⚠️ **`/generate-fragment` NÃO reparseia o fragmento.** A garantia sintática ali vem apenas da máscara GBNF; no cliente, a leitura é por regex. Só o caminho monolítico reparseia.
+
+### Reparo
+
+`podarPorViolacoes(subgrafo, violacoes)` devolve um subgrafo **estritamente menor**: o par (item, decisão) que falhou sai da política e, com ele, da gramática. A tentativa seguinte não consegue repetir o erro.
+
+```mermaid
+flowchart LR
+    G["geração"] --> VC["verificarContrato"]
+    VC -->|conforme| OK["artefato"]
+    VC -->|violação| PV["podarPorViolacoes"]
+    PV --> GH["Ĝ estritamente menor"]
+    GH --> G
+    style OK fill:#e6f4ea
+```
+
+---
+
+## 11. Auditoria e rastreabilidade
+
+`AuditoriaRecuperacao` ([recuperacao-hibrida.ts](src/knowledge/recuperacao-hibrida.ts)) acompanha toda resposta aceita de `/api/comando`, nos dois modos. É preenchida em duas etapas:
+
+| campo | quem preenche | quando |
+|---|---|---|
+| `id`, `modo`, `dominio`, `intencao` | `auditoriaVazia` ou `prepararHibrido` | sempre |
+| `consultaSemantica`, `topK`, `indices`, `telemetria`, `candidatos` (com escore), `validacao` (`RegraValidada[]` estruturado) | `prepararHibrido` | só no híbrido que não degradou; fora dele ficam vazios (`''`, `0`, `[]`, `{}`) |
+| `degradou` | `prepararHibridoTolerante` | quando o híbrido falhou e caiu no baseline |
+| `foco` | `server.ts` | quando o foco foi calculado |
+| `politicas` | `server.ts`, a partir de `politicaEfetiva` | sempre |
+| `reconciliacaoPolitica` | `server.ts`, a partir de `refinarPolitica` | só quando `validacao` não está vazia |
+
+`test:rastro` verifica os dez pontos da trilha que `prepararHibrido` produz: id e intenção, consulta semântica, topK e índices, candidato, escore, validação, condições satisfeitas, condições falhas, telemetria e `regraId`. Os campos que só `server.ts` preenche não têm teste direto; `politicas` é conferido em `test:geracao`, que reproduz a composição do servidor.
+
+**Nunca "regra = aceita" sozinho.** `explicarRegra()` produz uma linha como:
+
+```
+Farmaco:Propofol/RegraSeguranca/PAM<60 REJEITADA (escore RAG 0.8244) porque PAM observado 82, exigido < 60 mmHg
+```
+
+Leitores: `regrasAceitas`, `regrasRejeitadas`, `regrasSemEvidencia`, `rastrearRegra(auditoria, regraId)`, `relatorioAuditoria`.
+
+A trilha é **metadado de execução**: não entra no artefato, na DSL nem na saída do usuário.
+
+---
+
+## 12. Política por Item (PI)
+
+### 12.1 Estado real
+
+**PARCIAL.** Existe [`src/knowledge/item-geracao.ts`](src/knowledge/item-geracao.ts) com `ContextoGeracaoItem`, `subgrafoDeItem`, `contextosPorItem`, `ordenarPorOrigem` e `itensQueAdmitem`.
+
+| | estado |
+|---|---|
+| módulo existe | sim |
+| **testes** | **não — nenhum** |
+| **integrado ao fluxo** | **não — nenhum arquivo o importa** |
+| paralelismo físico | **não** |
+
+O módulo é preparação arquitetural sem cobertura nem uso. Não confie nele como comportamento verificado.
+
+### 12.2 O que já é por item, de fato
+
+A especialização da gramática **já é por item** desde `especializar_por_item`. Verificado contra o motor: com uma única política no payload, a BNF sai como `ordem ::= ordem_noradrenalina` e nenhum outro item aparece. **O lado Python não precisa de alteração para gerar por item.**
+
+### 12.3 O que bloqueia a paralelização — PROPOSTA
+
+Três acoplamentos reais no fluxo atual:
+
+1. **Prefixo textual global** — cada `/generate-fragment` recebe o artefato parcial completo;
+2. **Estado acumulado** — `restringirADecisoes(..., estado.clausulas.map(c => c.item))` e `condutasRealizaveis(contrato, estado)`;
+3. **Ordem imposta** — as cláusulas seguem a ordem das condutas declaradas.
+
+E um limite físico: `_LLAMA_LOCK` serializa toda chamada ao motor. Paralelismo lógico não reduz latência sem `n_parallel` ou múltiplos processos.
+
+**Nada disso está implementado.** Não há `Promise.all`, worker ou processo concorrente em nenhum ponto do repositório.
+
+---
+
+## 13. Modos de execução
+
+### Pontos de entrada
+
+| entrada | arquivo | uso |
+|---|---|---|
+| Servidor web (SSE) | [src/web/server.ts](src/web/server.ts) | pipeline produtivo, front Vue |
+| CLI interativa | [src/inference/cli.ts](src/inference/cli.ts) | exploração manual |
+| Lote | [batch-client.ts](src/inference/batch-client.ts), `agro-client`, `fut-client` | experimentos |
+| Demonstração Earley | [src/cli/pipeline.ts](src/cli/pipeline.ts) | caminho sem máscara, isolado |
+
+> `cli.ts` e os clientes de lote usam **somente o modo determinístico**. O modo híbrido, o refinamento e a `politicaEfetiva` estão integrados apenas em `server.ts`. Nos outros pontos, `gerar*Restrito` é chamado sem subgrafo e `montarEntradaGeracao*` faz a poda determinística, que também chega ao prompt enviado ao motor (§8). Os clientes de lote não calculam foco.
+
+### Duas chaves independentes
+
+| variável | valores | padrão |
+|---|---|---|
+| `SPC_CML_RECUPERACAO` | `deterministica` \| `hibrida_rag_cypher` | `deterministica` |
+| `SPC_CML_DECODIFICACAO` | `incremental` \| `monolitica` | `incremental` |
+
+Valor desconhecido em `SPC_CML_RECUPERACAO` cai no padrão em vez de derrubar o serviço.
+
+---
+
+## 14. API e endpoints
+
+### Motor Python (FastAPI)
+
+| método | rota | função |
+|---|---|---|
+| GET | `/health` | estado, domínio, backend, modelo carregado |
+| GET | `/grammar` | G em Lark e GBNF |
+| POST | `/verify` | plano ∈ L(Ĝ)? |
+| POST | `/validar-comando` | filtro prévio (LLM sob gramática fixa) |
+| POST | `/validar-plano` | julgamento de plano gerado (avaliação em lote) |
+| POST | `/embed` | vetor bge-m3 |
+| POST | `/generate-constrained` | artefato inteiro + reparse |
+| POST | `/generate-fragment` | um não-terminal, sobre um prefixo |
+
+### Servidor web (node:http)
+
+| método | rota |
+|---|---|
+| GET | `/api/dominios`, `/api/health`, `/api/chats`, `/api/chats/:id` |
+| POST | `/api/comando` (SSE), `/api/chats`, `/api/avaliar` |
+| PUT | `/api/chats/:id` |
+
+#### Campos de política: uma fonte só
+
+Em `server.ts`, `politicaEfetiva = subgrafoRefinado ?? poda` é calculada **uma vez** por requisição (§1, passo 10) e consumida por **todos**:
+
+```
+politicaEfetiva
+   ├── Prompt Semântico   (anotações + bloco [POLITICA VIGENTE], §8)
+   ├── Gramática Ĝ        (o subgrafo de montarEntradaGeracao*)
+   ├── Contrato           (montarContrato, dentro de montarEntradaGeracao*)
+   ├── decisoesAdmissiveis
+   └── auditoriaRecuperacao.politicas
+```
+
+É a poda determinística, a não ser que o modo híbrido tenha devolvido regras validadas; nesse caso, é a refinada. O `promptSemantico` da resposta é o mesmo texto que vai ao motor: as duas montagens chamam a mesma função pura com as mesmas entradas.
+
+Como ler os campos:
+
+- `decisoesAdmissiveis` é a **união** das decisões de todos os itens (`acoes_permitidas`, uma chave legada). Uma decisão listada ali é admissível para **algum** item, não necessariamente para todos. A visão por item está em `auditoriaRecuperacao.politicas`.
+- Os dois campos descrevem a política **na entrada da decodificação**. A repoda por violações durante a geração (`podarPorViolacoes`, §10) produz subgrafos novos e não os altera.
+
+Nenhum campo de política da resposta anuncia uma decisão que a gramática inicial não admite. Isso é verificado em `test:geracao` (4 casos no bloco "a resposta da API reflete a politica efetiva"), que **reproduz** a composição de `server.ts`: `processarMed` não é exportada e o servidor não tem teste próprio. A reprodução cobre só `med`; `processarAgro` e `processarFut` têm a mesma forma, conferida apenas por leitura do código.
+
+**`POST /api/comando`** — eventos SSE `estagio`, `final`, `erro`:
+
+```jsonc
+// entrada
+{ "dominio": "med", "texto": "PAM 52, sobe a nora", "contexto": { /* opcional */ } }
+
+// event: final
+{ "aceito": true, "sorteio": {...}, "foco": {...}, "promptSemantico": "...",
+  "decisoesAdmissiveis": [...], "resultado": "plano ...", "valido": true,
+  "erroMotor": null, "regrasEmGHat": ...,
+  "auditoriaRecuperacao": { "id": "rec-...", "modo": "...", "validacao": [...],
+                            "politicas": [...], "reconciliacaoPolitica": {...} } }
+```
+
+Com `contexto`, o cenário vem do corpo em vez do sorteio. `focoIndisponivel` aparece quando o foco falhou. Com `SPC_CML_VALIDACAO_ATIVA=true` e o comando recusado, o `final` traz `aceito: false`, `motivoValidacao`, `sorteio`, `foco` e `promptSemantico`, sem `decisoesAdmissiveis` nem `auditoriaRecuperacao`. `violacoes`, `conforme`, `tentativas` e `historico` da decodificação nunca são repassados.
+
+---
+
+## 15. Variáveis de ambiente
+
+### Recuperação e geração
+
+| variável | padrão | efeito |
+|---|---|---|
+| `SPC_CML_RECUPERACAO` | `deterministica` | modo de recuperação |
+| `SPC_CML_DECODIFICACAO` | `incremental` | modo de decodificação |
+| `SPC_CML_RAG_TOP_K` | `10` | candidatos **por índice** |
+| `SPC_CML_RAG_MAX_SINAIS` | `8` | sinais na consulta semântica |
+| `SPC_CML_MAX_TENTATIVAS` | `3` | tentativas no modo monolítico |
+| `SPC_CML_MAX_TENTATIVAS_ELEMENTO` | `3` | tentativas por elemento |
+| `SPC_CML_MAX_CONDUTAS` / `SPC_CML_MAX_ALERTAS` | `5` / `2` | tetos por lista |
+
+### Foco
+
+`SPC_CML_FOCO_COS_MINIMO` (0.3) · `SPC_CML_FOCO_MARGEM` (0.05) · `SPC_CML_FOCO_MAX` (4) · `SPC_CML_FOCO_TOPK_MAX` (10)
+
+### Motor
+
+`SPC_CML_DOMINIO` (`medico`) · `SPC_CML_BACKEND` (`llamacpp`) · `SPC_CML_GGUF_REPO` / `_FILE` · `SPC_CML_EMBED_GGUF_REPO` / `_FILE` · `SPC_CML_N_CTX` (8192) · `SPC_CML_MAX_TOKENS` (1024) · `SPC_CML_MAX_ITENS` (4) · `SPC_CML_N_GPU_LAYERS` (-1) · `SPC_CML_TEMPERATURA` (0.3) · `SPC_CML_REPEAT_PENALTY` (1.15) · `SPC_CML_GRAMMAR` · `SPC_CML_EXAMPLES` · `SPC_CML_INICIO`
+
+### Serviços
+
+`SPC_CML_ENDPOINT` (`http://127.0.0.1:8000`) · `SPC_CML_ENDPOINT_AGRO` · `SPC_CML_ENDPOINT_FUT` · `SPC_CML_TIMEOUT_MS` (600000) · `SPC_CML_WEB_PORT` (4000) · `SPC_CML_WEB_ORIGIN` (`*`) · `SPC_CML_VALIDACAO_ATIVA` (`false`) · `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD`
+
+---
+
+## 16. Instalação
 
 ```bash
-cd src/python_engine
-uvicorn main:app --port 8000
+npm install
+npm run build          # langium generate + tsc
 ```
 
-| Endpoint | Função | Precisa de GPU? |
-|---|---|---|
-| `GET /health` | estado do motor | não |
-| `GET /grammar` | G nos formatos Lark e GBNF | não |
-| `POST /verify` | um plano ∈ L(G) ou L(Ĝ)? | não |
-| `POST /generate-constrained` | geração sob mascaramento de logits | sim |
+Motor Python (venv com **Python 3.12** — 3.14 não tem wheel para as dependências):
 
-O LLM é carregado preguiçosamente: `/health`, `/grammar` e `/verify` funcionam sem GPU.
+```bash
+python -m venv venv
+venv/Scripts/activate          # Windows;  source venv/bin/activate no Linux
+pip install -r src/requirements.txt
+```
 
-**Aceleração por GPU (opcional, recomendado com VRAM dedicada):** a wheel padrão de
-`llama-cpp-python` no `requirements.txt` é CPU-only. Para descarregar as camadas do
-modelo na placa de vídeo (`SPC_CML_N_GPU_LAYERS`, ver `main.py`), rode o motor fora do
-Docker, num venv nativo, e instale a wheel pré-compilada com CUDA:
+Neo4j:
 
-```powershell
-# 1. Confira a versao do driver/CUDA
-nvidia-smi
-
-# 2. Ambiente virtual nativo (fora do container)
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r src\requirements.txt
-
-# 3. Substitui a wheel CPU-only por uma com CUDA (troque cu124 pela sua versao:
-#    cu121/cu122/cu124/cu125 — CUDA 12.1 a 12.5 cobre a maioria dos drivers recentes)
-pip install llama-cpp-python --prefer-binary --force-reinstall --no-deps `
-    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
-
-# 4. Suba so o Neo4j via Docker; o motor Python roda direto no Windows
+```bash
 docker compose up -d neo4j
-
-# 5. Rode o motor nativamente (NEO4J_URI ja cai em bolt://localhost:7687 por padrao)
-cd src\python_engine
-uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Confira em `GET /health` se `modelo_carregado` fica `true` após a primeira chamada a
-`/generate-constrained` (o GGUF baixa do Hugging Face na primeira vez). Se o
-`llama_cpp` não foi compilado com CUDA, `n_gpu_layers` é ignorado silenciosamente — o
-motor continua funcionando, só que em CPU.
-
-```bash
-curl -X POST http://127.0.0.1:8000/verify -H 'Content-Type: application/json' -d '{
-  "plano": "plano P para Choque_Septico { esquema_referencia AssistenteUTI_v2 paciente '\''PT-1'\'' sequencia [ Manter_Bloqueio ] ordem Propofol decisao AUMENTAR_VAZAO dose 1.0 mg/kg/h via ACESSO_CENTRAL justificativa '\''x'\'' alerta CRITICO '\''y'\'' regra '\''z'\'' auditoria '\''a'\'' }",
-  "subgrafo_regras": {"acoes_permitidas":["MANTER_BLOQUEADO"],"farmacos_liberados":["Propofol"],"vias_disponiveis":["ACESSO_CENTRAL"]}
-}'
-# → {"valido": false, ...}
-```
-
-### 6.6 Entrada interativa
-
-```bash
-npm run start
-```
-
-Pergunta o domínio (agrícola ou clínico) e depois a fonte: rodar a bateria de
-cenários prontos do arquivo (mesmo comportamento de `npm run batch` /
-`npm run batch:agro`) ou digitar um comando novo no terminal.
-
-Um comando digitado passa primeiro por `POST /validar-comando`: o próprio LLM
-local julga — sob a mesma decodificação restrita do resto da arquitetura, nunca
-texto livre — se o comando está contraditório, ambíguo ou incompleto demais. Se
-estiver, pede para digitar de novo.
-
-Aceito o comando, a recuperação no grafo passa por um filtro de foco: a intenção
-digitada é convertida em vetor (`POST /embed`, modelo `bge-m3`) e comparada por
-similaridade de cosseno contra o índice vetorial nativo do Neo4j
-(`farmaco_embedding`/`protocolo_embedding`, ou `produto_embedding`/`cultura_embedding`
-no domínio agrícola — populados a cada `graph:sync`). O foco encontrado só decide
-**quais** farmacos/protocolos entram no Prompt Semântico; a avaliação de bloqueio
-em si continua inteiramente determinística — o embedding nunca decide o que é
-permitido, só o que é mostrado. Sem Neo4j/embedder disponíveis, cai de volta no
-grafo completo (mesmo comportamento de antes) com um aviso.
+> `npm run test:grammar` invoca `python` do PATH. Ative o venv antes de `npm test`, ou o passo falha com `ModuleNotFoundError: No module named 'lark'`.
 
 ---
 
-## 7. Como validar
+## 17. Como rodar
+
+### Ambiente completo
 
 ```bash
-npm test
+bash src/scripts/local/init.sh            # Neo4j + 3 motores + API + chat
+bash src/scripts/local/init.sh --sem-sync # sem re-sincronizar os grafos
+bash src/scripts/local/init.sh --parar
 ```
 
-Encadeia cinco verificações. Cada uma isola uma garantia distinta:
+Sobe três motores (8000/8001/8002) porque `main.py` fixa a gramática na importação. Os pesos GGUF são compartilhados por `mmap`.
 
-### 7.1 `npm run typecheck` — integridade estática
-
-Compilação TypeScript sem erros. Como a AST é gerada pelo Langium a partir da DSL, uma mudança na gramática que quebre um consumidor aparece aqui, não em produção.
-
-### 7.2 `npm run validate` — o modelo clínico é íntegro
-
-```
-Sintaxe: OK — 0 erros lexicos, sintaticos e de referencia.
-Elementos no modelo: 33
-```
-
-Cobre léxico, sintaxe **e resolução de referências cruzadas** — é o que impede um `recomenda Dopamina` apontando para fármaco inexistente.
-
-### 7.3 `npm run bnf:export` — a gramática deriva da DSL
-
-```
-18 regras | 12 farmacos | 8 condutas
-```
-
-Confirme que os números batem com o `uti.dsl`. Se você adicionar um fármaco e este contador não mudar, a derivação não está acontecendo.
-
-### 7.4 `npm run test:earley` — erro sintático 0 (caminho de API)
-
-Sete modos de falha reais de LLM, todos detectados e reparados:
-
-```
-farmaco inexistente | decisao inventada | unidade invalida | via nao permitida
-texto em prosa livre | JSON em vez da DSL | truncado no meio
-```
-
-Mais a propriedade de fechamento: **24 prefixos** do plano válido, testados em passos de 17 caracteres, todos convergem para um programa aceito.
-
-### 7.5 `npm run test:grammar` — o motor de gramática (Python)
-
-```
-[3] Plano valido ACEITO por G
-[4] G[y] derivada: 22 alternativas de 61 em G (64% do espaco de geracao eliminado)
-[5] 7 classes de alucinação bloqueadas
-[6] G_hat podada: aceita o seguro, recusa a decisão vetada e o fármaco fora da poda
-```
-
-O passo **[6] reconstrói o parser a partir de Ĝ** e exige aceite/recusa reais. Isso não é zelo excessivo: numa versão anterior o teste apenas verificava se o termo sumia do texto da gramática, e passava mesmo com a poda quebrada — porque a gramática inteira havia sido destruída, e o termo sumira junto.
-
-### 7.6 Validação manual do fechamento semântico
+### Passos isolados
 
 ```bash
-npm run pipeline
+npm run validate           # integridade do modelo
+npm run bnf:export         # DSL → BNF  (idem :agro, :fut)
+npm run graph:sync         # popula o Neo4j  (idem :agro, :fut)
+npm run web:api            # servidor HTTP
+npm start                  # CLI interativa
+npm run batch -- src/examples/med/cenarios.jsonl
+npm run foco:inspecionar -- med "PAM 52, sobe a nora" --todos
 ```
 
-As duas linhas que importam:
+### Modo híbrido
 
-```
-Aceito por Ĝ (restrições do grafo): sim
-Aceito pela DSL Langium (round-trip): sim
+```bash
+SPC_CML_RECUPERACAO=hibrida_rag_cypher npm run web:api
 ```
 
-A segunda é o **round-trip**: o plano gerado sob a gramática derivada é reparseado pela DSL Langium original. É a checagem de que a BNF gerada não divergiu da linguagem de onde saiu.
+Exige Neo4j com índices vetoriais sincronizados e o motor Python no ar (para `/embed`).
 
 ---
 
-## 8. Os dois caminhos de decodificação
+## 18. Testes
 
-A arquitetura é agnóstica de provedor, e isso obriga a dois mecanismos, porque a garantia sintática se obtém de maneiras diferentes:
+`npm test` encadeia typecheck, validação do modelo, exportação da BNF e **14 suítes**, ligadas por `&&`: a primeira que falha interrompe as seguintes.
 
-| | **Modelo local** | **API (Claude, GPT, Gemini)** |
+A coluna "casos" conta as chamadas `teste(...)` de cada suíte; cada caso reúne várias asserções. As suítes marcadas "—" usam outro formato e terminam em `RESULTADO: OK`.
+
+**Conferência de 2026-09-24** (venv com Python 3.12 ativo, Neo4j no ar, motor Python **fora**):
+
+- `typecheck`, `validate` e `bnf:export`: OK, sem alterar as BNF versionadas;
+- as 10 suítes offline com contagem: **172 casos, 0 falhas**;
+- `test:earley`, `test:avaliar` e `test:grammar`: `RESULTADO: OK`;
+- `test:foco`: os 11 casos offline passaram; os 8 de "foco ponta a ponta" não rodaram (`fetch failed` em `/embed`) e a suíte saiu com código 1;
+- `test:equivalencia`: 3/3, com os números abaixo reproduzidos.
+
+Somadas, as contagens dão 191 casos; os 8 de `test:foco` que dependem do motor não foram reexecutados nesta conferência.
+
+| comando | casos | cobre |
 |---|---|---|
-| Mecanismo | mascaramento de logits (Outlines) | gerar → verificar → reparar |
-| Base | `python_engine/` | `src/grammar/earley.ts` |
-| Garantia | token inválido nunca é emitido | saída inválida nunca escapa |
-| Custo | GPU | chamadas extras de API |
-| Referência | Wang et al., §3.2 | Wang et al., Algoritmo 1 |
+| `npm run test:foco` | 19 (11 offline + 8 com Neo4j e motor) | casamento lexical, corte por margem, expansão; foco ponta a ponta |
+| `npm run test:recuperacao` | 16 | contexto de recuperação, telemetria preservada |
+| `npm run test:consulta` | 16 | consulta semântica: determinismo, sensibilidade |
+| `npm run test:rag` | 17 | candidatos, escore, top-K, três domínios |
+| `npm run test:cypher` | 20 | validação determinística, escore ≠ validade |
+| `npm run test:hibrida` | 16 | integração dos dois modos |
+| `npm run test:rastro` | 13 | os dez pontos da trilha de `prepararHibrido` |
+| `npm run test:politica` | 25 | refinamento, não-ampliação, VETA/PROIBE/AJUSTA |
+| `npm run test:geracao` | 23 | subgrafo fornecido chega ao gerador e ao contrato (10); Prompt Semântico com política vigente (7); campos de política da API (4); `agro` e `fut` (2) |
+| `npm run test:contrato` | 17 | contrato do artefato, repoda |
+| `npm run test:incremental` | 9 | decodificação elemento a elemento |
+| `npm run test:earley` | — | 7 modos de falha + fechamento por prefixos |
+| `npm run test:avaliar` | — | métricas e pareamento |
+| `npm run test:grammar` | — | G, G[y], Ĝ, especialização por item (Python) |
+| `npm run test:equivalencia` | 3 | AST × Cypher (fora de `npm test`; exige Neo4j) |
+| `npm run test:model` | — | inspeção do modelo clínico: imprime a AST, sem asserções (fora de `npm test`) |
 
-Nenhum provedor de API expõe a máscara de logits, e a arquitetura é explícita em não depender de um fornecedor. Por isso o caminho de verificação existe: ele obtém a mesma garantia observável (nenhuma saída inválida sai do sistema) por um mecanismo diferente.
+Nenhuma exige GPU. Quase todas rodam **offline**, com dublês ou o modelo da DSL — **exceto**:
 
-Sobre o **grammar prompting** propriamente dito (Wang et al., 2023): cada exemplar few-shot é a tripla `(x, G[y], y)` — a fala, a gramática especializada mínima que gera aquela saída, e a saída. `G[y]` é derivada automaticamente parseando `y` e coletando as produções usadas — nunca escrita à mão. Para o plano de referência, `G[y]` reduz `farmaco` de 12 alternativas para 2 e `decisao` de 11 para 2, eliminando 64% do espaço de geração.
+| suíte | depende de | comportamento sem o serviço |
+|---|---|---|
+| `test:foco` | Neo4j **e** motor Python (`/embed`) | o bloco "foco ponta a ponta" aborta com `fetch failed` e a suíte sai com código 1 |
+| `test:equivalencia` | Neo4j sincronizado | **pula com aviso** e sai 0 — por isso **não** integra `npm test` |
 
----
+`test:foco` é a razão pela qual `npm test` não é inteiramente offline, e ela não degrada com elegância. Como é a terceira suíte da cadeia, com o motor fora `npm test` para ali e as 11 seguintes nem chegam a rodar. Nesse caso, rode-as individualmente.
 
-## 9. Estendendo o modelo
+### `npm run test:equivalencia` — os dois avaliadores determinísticos
 
-### Adicionar um fármaco
+Compara, cenário a cenário, `retrieve*Constraints` (AST) contra `recuperacao-cypher.ts` (grafo), usando como candidatos todos os nós indexados de cada domínio. Os cenários são **gerados a partir dos limiares reais do grafo**, com valores de borda (igual ao limiar, ±1, ±0,01), mais um cenário sem telemetria. Resultado, reproduzido na conferência de 2026-09-24:
 
-Edite `src/examples/med/uti.dsl` e rode:
+```
+med:  440/440 concordam | 21 cenarios |  8 parametros
+agro: 238/240 concordam | 16 cenarios | 10 parametros
+fut:  180/180 concordam | 11 cenarios | 11 parametros
+TOTAL: 48 cenarios, 860 comparacoes, 858 concordancias
 
-```bash
-npm run validate && npm run bnf:export
+[diferencas de escopo conhecidas]
+  ESCALONA: 2 ocorrencias — a AST escopa por ativacao de contexto; o Cypher avalia por no
+  TEM_LIMIAR: 70 ocorrencias — a AST nao avalia Limiar (graphrag-fut.ts le apenas a unidade)
 ```
 
-O fármaco aparece automaticamente na BNF, no grafo e nas políticas por fármaco. Nada mais precisa ser tocado.
+Como ler: as **2 discordâncias** (ambas em `agro`) são da classe `ESCALONA`. `TEM_LIMIAR` **não entra nas 860 comparações**: a AST não avalia essa relação, e as 70 ocorrências são contadas à parte, como regras não avaliadas. Regras sem dado (lacuna) também ficam de fora, porque nenhum dos lados afirma nada sobre elas. Ver §20, item 3.
 
-### Adicionar uma invariante de segurança
+A suíte falha se aparecer discordância fora de `ESCALONA`, regra não avaliada fora de `TEM_LIMIAR`/`ESCALONA`, ou se a cobertura cair para 500 comparações ou menos (ou 30 cenários ou menos).
 
-```langium
-regra_seguranca: bloquear_incremento Fentanil se FR < 10.0 irpm
-                 ("risco de depressao respiratoria")
-```
+### Invariantes cobertos
 
-A condição precisa ser **estruturada** (`parâmetro operador valor unidade`), não texto livre. Em prosa, só uma inferência neural poderia avaliá-la — exatamente onde a arquitetura não deve depender do LLM.
+- escore alto + condição falsa → REJECT (`test:cypher`, `test:politica`)
+- `Política refinada ⊆ Política determinística` (`test:politica` TESTE 16)
+- VETA/PROIBE/AJUSTA preservados no refinamento (`test:politica`)
+- lista vazia de regras ≠ política vazia (`test:politica`, `test:geracao`)
+- decisão retirada pelo refinamento não chega ao gerador nem ao contrato (`test:geracao`, teste 13)
+- o bloco `[POLITICA VIGENTE]` declara exatamente o que a gramática gera, e vem por último (`test:geracao`)
+- recomendação inexprimível é anotada, nunca apagada; sem política, o prompt legado não muda (`test:geracao`)
+- `decisoesAdmissiveis`, `auditoriaRecuperacao.politicas`, prompt e gerador leem a mesma `politicaEfetiva` (`test:geracao`, por reprodução da composição do servidor)
+- AST e Cypher concordam fora das duas diferenças de escopo classificadas (`test:equivalencia`)
+- ID do sujeito não vaza para o embedding (`test:recuperacao`, `test:consulta`)
 
-### Alterar a linguagem de saída
+### Sem cobertura
 
-Edite a regra `PlanCommand` em `dsl.langium` e rode `npm run build && npm run bnf:export`. A BNF, o reconhecedor Earley e o mascaramento de logits acompanham. Se você mudar nomes de regras, confira os mapas de alias no topo de `src/grammar/extract-bnf.ts`.
-
----
-
-## 10. Limitações conhecidas
-
-Registradas por honestidade metodológica — várias são trabalho futuro legítimo.
-
-1. **A poda enviada ao motor Python é mais fraca que a do TypeScript.** O payload `subgrafo_regras` carrega listas planas (`acoes_permitidas`, `farmacos_liberados`, `vias_disponiveis`), que são a *união* sobre todos os fármacos. Como algum fármaco admite `AUMENTAR_VAZAO`, a decisão sobrevive globalmente, e a proibição `Propofol + AUMENTAR_VAZAO` não é capturada nesse caminho. A poda estrita por fármaco existe apenas em `src/grammar/constrain.ts` (caminho TypeScript). Unificar os dois exige estender o contrato para políticas por fármaco.
-
-2. **Sem embeddings nem busca vetorial.** A recuperação é por avaliação determinística de regras sobre a telemetria, não por similaridade semântica. Isso é uma escolha — é o que torna a decisão auditável — mas significa que a desambiguação léxica prevista na arquitetura (mapear *"nora"* → `Noradrenalina`) ainda não está implementada. Hoje a fala do profissional entra no Prompt Semântico como texto e a associação fica a cargo do LLM.
-
-3. **O reparo determinístico produz planos degenerados.** É uma rede de segurança, não o caminho principal: fecha com `dose 0.0` e justificativas genéricas. O caminho correto é devolver Σ[y_prefix] ao LLM para que escolha uma continuação clinicamente sensata (Algoritmo 1, linhas 8–10). Esse laço com LLM no circuito não está implementado no lado TypeScript.
-
-4. **`UnorderedGroup` é aproximado** por sequência ordenada na extração da BNF. A DSL atual não usa `&`, então não há impacto — mas a aproximação é conservadora e passaria a rejeitar entradas válidas se passasse a usar.
-
-5. **Contraindicações e critérios hepáticos são texto livre**, portanto não avaliáveis por máquina. Só entram no Prompt Semântico como contexto. Estruturá-los seria a evolução natural do que já foi feito com `regra_seguranca`.
-
-6. **Não verificado em execução:** o sync com Neo4j e a geração com Outlines/GPU estão escritos e tipados, mas foram exercitados apenas por compilação e pelos endpoints sem GPU (`/health`, `/verify`). Todo o restante do pipeline roda e foi verificado offline.
-
-7. **Limites de dose não são checados numericamente.** A gramática garante que a *unidade* é a correta para o fármaco, mas não que `dose 9.9 mcg/kg/min` respeite o `limite_rigido` de 2.0. Um limite numérico não é expressável em gramática livre de contexto; exigiria uma validação pós-parse sobre a AST — que a DSL já tem informação para fazer.
+- `item-geracao.ts` — **nenhum teste**
+- o caminho `server.ts` ponta a ponta (não há teste de integração HTTP); a composição de `politicaEfetiva` só é exercitada por reprodução, e só para `med`
+- os campos `foco` e `reconciliacaoPolitica` da auditoria, como o servidor os preenche
+- `/generate-fragment` contra motor real
+- modo híbrido ponta a ponta com embedding e Neo4j reais; `test:equivalencia` usa o Neo4j real, mas só a validação Cypher
 
 ---
 
-## 11. Referências
+## 19. Mapa de rastreabilidade
 
-- **Wang, B.; Wang, Z.; Wang, X.; Cao, Y.; Saurous, R. A.; Kim, Y.** *Grammar Prompting for Domain-Specific Language Generation with Large Language Models.* NeurIPS 2023. — gramática especializada `G[y]` (§3.1) e decodificação restrita baseada em Earley (§3.2, Algoritmo 1).
-- **Aycock, J.; Horspool, R. N.** *Practical Earley Parsing.* The Computer Journal, 2002. — correção para regras anuláveis, indispensável porque a conversão EBNF→BNF introduz auxiliares vazios.
-- **Clarisó, R.; Cabot, J.** *Model-Driven Prompt Engineering.* MODELS 2023. — fundamento da engenharia de prompts dirigida por modelos.
-- **ISMP Brasil** — Medicamentos potencialmente perigosos (*high-alert medications*).
-- **Surviving Sepsis Campaign** — bundle de 1 hora, base do protocolo `Choque_Septico`.
-- **DERS** (*Dose Error Reduction Software*) — limites soft/hard de bombas de infusão inteligentes.
+| componente | responsabilidade | arquivo | testes | estado |
+|---|---|---|---|---|
+| DSL → BNF | gramática da fonte única | [src/cli/export-bnf*.ts](src/cli/export-bnf.ts), [src/grammar/extract-bnf.ts](src/grammar/extract-bnf.ts) | `test:grammar` | ✅ |
+| Sincronização do grafo | AST → Neo4j + índices | [src/database/neo4j*.ts](src/database/neo4j.ts) | — | ✅ |
+| Recuperação determinística | telemetria → restrições | [src/knowledge/graphrag*.ts](src/knowledge/graphrag.ts) | `test:foco`, `test:contrato` | ✅ |
+| Foco semântico | o que é mostrado | [src/knowledge/foco.ts](src/knowledge/foco.ts) | `test:foco` | ✅ |
+| Política por item | unidade normativa | [src/knowledge/politica.ts](src/knowledge/politica.ts) | `test:contrato` | ✅ |
+| Contexto de recuperação | consulta ≠ estrutura | [src/knowledge/recuperacao.ts](src/knowledge/recuperacao.ts) | `test:recuperacao`, `test:consulta` | ✅ |
+| RAG | candidatos + escore | [src/knowledge/recuperacao-rag.ts](src/knowledge/recuperacao-rag.ts) | `test:rag` | ✅ |
+| Validação Cypher | incidência determinística | [src/knowledge/recuperacao-cypher.ts](src/knowledge/recuperacao-cypher.ts) | `test:cypher` | ✅ |
+| Refinamento | narrowing + não-ampliação | [src/knowledge/recuperacao-politica.ts](src/knowledge/recuperacao-politica.ts) | `test:politica`, `test:geracao` | ✅ |
+| Equivalência AST × Cypher | auditoria dos dois avaliadores | [src/test/equivalencia.test.ts](src/test/equivalencia.test.ts) | `test:equivalencia` (Neo4j; fora de `npm test`) | ✅ 858/860, 2 de escopo |
+| Orquestração híbrida | modo + auditoria | [src/knowledge/recuperacao-hibrida.ts](src/knowledge/recuperacao-hibrida.ts) | `test:hibrida`, `test:rastro` | ✅ |
+| Política efetiva | uma fonte para prompt, Ĝ, contrato e API | [src/web/server.ts](src/web/server.ts) | `test:geracao` (reprodução, só `med`) | ⚠️ sem teste direto |
+| Prompt Semântico | fatos + política vigente | [src/inference/llm-client.ts](src/inference/llm-client.ts) e irmãos, [src/knowledge/politica.ts](src/knowledge/politica.ts) | `test:geracao` | ✅ |
+| Entrada da geração | subgrafo → Ĝ, contrato e prompt | [src/inference/llm-client.ts](src/inference/llm-client.ts) e irmãos | `test:geracao` | ✅ |
+| Decodificação | incremental + monolítica | [src/inference/decodificacao.ts](src/inference/decodificacao.ts) | `test:incremental` | ✅ |
+| Contrato do artefato | validação global + repoda | [src/knowledge/contrato.ts](src/knowledge/contrato.ts) | `test:contrato` | ✅ |
+| Especialização de Ĝ | por (item, decisão) | [src/python_engine/grammar_from_kg.py](src/python_engine/grammar_from_kg.py) | `test:grammar` | ✅ |
+| Motor | máscara de logits | [src/python_engine/main.py](src/python_engine/main.py) | `test:grammar` (parcial) | ✅ |
+| Servidor web | pipeline produtivo | [src/web/server.ts](src/web/server.ts) | — | ⚠️ sem teste |
+| **Contexto por item** | **preparação PI** | [src/knowledge/item-geracao.ts](src/knowledge/item-geracao.ts) | **—** | **⚠️ órfão** |
+| Earley + reparo | caminho sem máscara | [src/grammar/earley.ts](src/grammar/earley.ts), [constrain.ts](src/grammar/constrain.ts) | `test:earley` | ✅ isolado |
+
+---
+
+## 20. Limitações e divergências conhecidas
+
+### Divergências entre arquitetura pretendida e código
+
+**1. ~~O Prompt Semântico não recebe o refinamento~~ — CORRIGIDO.** O prompt era montado só de `constraints`: uma decisão removida sumia da gramática e do contrato, mas o texto ainda podia recomendá-la. Hoje `montarPromptSemantico*` recebe a política vigente, anota as recomendações que ela não permite mais e fecha com o bloco `[POLITICA VIGENTE]`. Ver §8. A correção vale nos dois modos, então o prompt que o motor recebe mudou **também no modo determinístico** (padrão). Gerações feitas antes dela usaram outro prompt, o que importa ao comparar resultados de antes e depois.
+
+**2. ~~`decisoesAdmissiveis` usa a poda não refinada~~ — CORRIGIDO.** Os campos de política da resposta (`decisoesAdmissiveis` e `auditoriaRecuperacao.politicas`) derivavam da poda anterior ao refinamento. Hoje todos consomem a mesma `politicaEfetiva` que alimenta prompt, gramática e contrato. Verificado por reprodução da composição do servidor em `test:geracao`. Ver §14.
+
+**3. Dois avaliadores determinísticos — AUDITADO, com duas diferenças de escopo legítimas.** O `compare()` de `retrieve*Constraints` (AST) e o `CASE` de `recuperacao-cypher.ts` (grafo) leem a mesma DSL por caminhos diferentes. Medido em 860 comparações sobre 48 cenários de borda nos três domínios: **858 concordâncias** (reproduzido em 2026-09-24). Os operadores são idênticos (`<`, `>`, `<=`, `>=`, `==`, `!=`) e concordam em todos os casos de borda testados, inclusive valor igual ao limiar e decimais.
+
+O que sobra são duas classes de diferença, e nenhuma é erro de avaliação: os dois lados respondem perguntas de escopo diferente. Nenhuma delas afeta a política, porque `classificar()` não deixa `ESCALONA` nem `TEM_LIMIAR` refinarem (§7.1):
+
+| # | diferença | como aparece na medição | classificação | efeito na política |
+|---|---|---|---|---|
+| 3a | **`TEM_LIMIAR` (fut)**: a AST lê apenas a *unidade* do `limiar` ([graphrag-fut.ts](src/knowledge/graphrag-fut.ts), `isLimiarAttr` → `units.add`), nunca avalia a condição; o Cypher a avalia. | 70 regras **não comparadas** (fora das 860) | **E — caso não suportado pela AST** | nenhum (classe `sancao`) |
+| 3b | **Escalonamento de contexto inativo**: a AST só coleta `escalonar` de contextos cujo gatilho disparou; o Cypher avalia o nó independentemente da ativação. | as **2 discordâncias** (ambas em `agro`) | **D — diferença intencional de escopo** | nenhum (classe `escalonamento`) |
+
+Nenhuma das duas foi "corrigida" de propósito: forçar qualquer lado a imitar o outro quebraria a semântica correta dele. A AST continua sendo a referência semântica da DSL; o grafo, uma persistência dela. `npm run test:equivalencia` falha se aparecer discordância fora da classe 3b ou regra não avaliada fora de 3a e 3b.
+
+**4. `item-geracao.ts` é órfão** — sem testes e sem uso.
+
+**5. `PAPEIS_FUT.decisoesDeIncremento` inclui `CARTAO_AMARELO`**, mas o `DECISOES_DE_INCREMENTO` local de `graphrag-fut.ts` não. O refinamento e a anotação de recomendações do Prompt Semântico (`admiteIncremento`) usam o primeiro; a recuperação determinística, o segundo.
+
+**6. Modo híbrido só em `server.ts`.** CLI e lote permanecem no determinístico.
+
+**7. O log da CLI e do lote não é o prompt enviado.** Eles imprimem `montarPromptSemantico*` sem política, mas enviam ao motor o prompt de `montarEntradaGeracao*`, com anotação e bloco `[POLITICA VIGENTE]` (§8). Os clientes de lote imprimem ainda sem o bloco `[CENARIO]`.
+
+**8. Comentários desatualizados no código.** Três comentários ainda descrevem o estado anterior às correções. O comportamento é o descrito neste README:
+
+- [recuperacao-hibrida.ts](src/knowledge/recuperacao-hibrida.ts), doc de `AuditoriaRecuperacao.reconciliacaoPolitica`: diz que a reconciliação "não alimenta a geração" porque `gerarPlanoRestrito` recalcularia o subgrafo. Hoje alimenta (§1, passos 9–12);
+- [recuperacao-hibrida.ts](src/knowledge/recuperacao-hibrida.ts), cabeçalho: diz que, "nesta etapa", o veredito do Cypher entra só como evidência auditável e sinal de foco. Hoje ele também estreita a política, via `refinarPolitica` (§7);
+- [politica.ts](src/knowledge/politica.ts), JSDoc de `anotarRecomendacao`: diz que a função devolve `undefined` para item ausente da política. O código devolve `(fora da politica vigente neste cenario)` (§8).
+
+### Limitações técnicas
+
+- `/generate-fragment` não reparseia o fragmento gerado
+- `_LLAMA_LOCK` serializa todas as chamadas ao motor
+- unicidade por item é regra fixa do contrato
+- o mapeamento de valores por decisão codifica uma convenção lida do plano de referência — é interpretação explícita, não dedução
+- `npm run test:grammar` depende do `python` do PATH
+
+### Não implementado
+
+- **paralelismo físico de PI** — nenhum `Promise.all`, worker ou processo concorrente
+- teste de integração HTTP do `server.ts`
+- comparação experimental entre os modos com dados
+
+### Sem resultados experimentais
+
+Este repositório **não contém medições** que sustentem afirmações de ganho de desempenho, acurácia ou correção do modo híbrido sobre o determinístico. Os cenários em `src/examples/*/cenarios-200-*.jsonl` existem para essa comparação, que ainda não foi conduzida.
+
+---
+
+## 21. Referências
+
+- **Grammar prompting** — Wang et al. (2023), *Grammar Prompting for Domain-Specific Language Generation with Large Language Models*. Cópia em [files/grammar_prompting.pdf](files/grammar_prompting.pdf). O SPC-CML substitui a predição de G[y] pelo próprio LLM por uma derivação determinística a partir do grafo.
+- **Documentação interna** — [docs/arquitetura-spc-cml.tex](docs/arquitetura-spc-cml.tex) e [docs/visao-geral-spc-cml.tex](docs/visao-geral-spc-cml.tex). Descrevem o estado anterior às etapas de recuperação híbrida; onde divergirem deste README, o código é a fonte de verdade.
+- **Langium** — gramática e AST · **Neo4j 5.15** — grafo e índices vetoriais · **llama.cpp / GBNF** — máscara de logits · **bge-m3** — embeddings multilíngues

@@ -237,6 +237,79 @@ export function valoresPorDecisao(
     return mapa;
 }
 
+// =============================================================================
+// Politica efetiva no Prompt Semantico
+// =============================================================================
+
+/**
+ * O item ainda admite alguma decisao que AUMENTA a exposicao?
+ *
+ * `decisoesDeIncremento` e a declaracao publica do dominio sobre o que aumenta
+ * exposicao — a mesma que o contrato usa. Nada aqui conhece farmaco, produto ou
+ * infracao.
+ */
+export function admiteIncremento(politica: PoliticaItem, papeis: PapeisDominio): boolean {
+    const incrementos = new Set(papeis.decisoesDeIncremento ?? []);
+    return politica.decisoes.some(d => incrementos.has(d));
+}
+
+/**
+ * Bloco do Prompt Semantico que declara a POLITICA VIGENTE, item a item.
+ *
+ * Existe porque os dois ramos que saem de `retrieve*Constraints` se separavam e
+ * nunca se reencontravam: um virava gramatica e contrato (e podia ser estreitado
+ * por `refinarPolitica`), o outro virava o texto do prompt. O modelo podia ler
+ * "recomendado: X" enquanto a gramatica ja nao gerava nenhuma ordem de
+ * incremento para X.
+ *
+ * Este bloco e a AUTORIDADE sobre o que e exprimivel. Ele nao substitui os
+ * blocos factuais — telemetria, protocolos, bloqueios, vetos, ajustes,
+ * escalonamentos e interacoes continuam onde estavam, porque o modelo precisa
+ * deles para JUSTIFICAR a decisao. Aqui se diz apenas o que ainda cabe decidir.
+ */
+export function blocoPoliticaEfetiva(subgrafo: SubgrafoPodado): string[] {
+    if (subgrafo.politicas.length === 0) return [];
+
+    const papeis = subgrafo.papeis;
+    const linhas = [
+        '\n[POLITICA VIGENTE — o que e exprimivel neste cenario]',
+        '(esta lista e a autoridade: a gramatica so gera o que esta aqui)'
+    ];
+
+    for (const p of subgrafo.politicas) {
+        const marca = p.bloqueado ? ' [RESTRITO]' : '';
+        linhas.push(`- ${p.item}${marca}: ${p.decisoes.join(', ') || '(nenhuma decisao admissivel)'}`);
+        // O porque so aparece para item restrito: para os livres nao ha o que
+        // justificar, e repetir motivo de item livre so alonga o prompt.
+        if (p.bloqueado) {
+            for (const motivo of p.motivos) linhas.push(`    motivo: ${motivo}`);
+        }
+    }
+
+    return linhas;
+}
+
+/**
+ * Anota uma recomendacao que a politica vigente nao permite mais realizar.
+ *
+ * A recomendacao NAO e removida: que o protocolo/cultura/lance a recomende
+ * continua sendo um fato do dominio, e apagar esse fato empobreceria o contexto.
+ * O que se acrescenta e a informacao que faltava — que ela nao e exprimivel
+ * agora —, para o prompt deixar de contradizer a gramatica.
+ *
+ * `undefined` quando o item nao esta na politica: nesse caso quem decide o que
+ * dizer e o chamador, porque a ausencia pode vir do foco e nao de restricao.
+ */
+export function anotarRecomendacao(
+    subgrafo: SubgrafoPodado,
+    item: string
+): string | undefined {
+    const politica = subgrafo.politicas.find(p => p.item === item);
+    if (!politica) return '(fora da politica vigente neste cenario)';
+    if (admiteIncremento(politica, subgrafo.papeis)) return undefined;
+    return '(recomendado, mas sem decisao de incremento admissivel agora)';
+}
+
 /** Monta o payload completo a partir das politicas ja calculadas. */
 export function montarSubgrafo(
     politicas: PoliticaItem[],

@@ -232,15 +232,30 @@ async function main(): Promise<void> {
                 );
             });
 
-            await teste('nada de Soja ou Milho sobra no prompt', () => {
+            await teste('Soja e Milho nao voltam ao prompt como contexto', () => {
                 const texto = JSON.stringify({
                     culturas: constraints.culturasAtivas,
                     recomendados: constraints.recomendados,
-                    vetados: constraints.vetados,
                     escalonamentos: constraints.escalonamentos
                 });
                 assert.ok(!texto.includes('Soja'), 'Soja vazou para o prompt');
                 assert.ok(!texto.includes('Milho'), 'Milho vazou para o prompt');
+            });
+
+            await teste('o veto do Milho ativo continua valendo fora do foco', () => {
+                // O Milho esta ativo nesta leitura e veta Dois_Quatro_D, que a cana
+                // recomenda. O foco tira o Milho do prompt, mas nao pode apagar o
+                // veto: ele fica na politica e na lista de vetos, que e a linha do
+                // prompt que explica a restricao. Soja e Milho so aparecem ali,
+                // como origem de veto sobre produto em foco.
+                const veto = constraints.vetados.find(v => v.produto === 'Dois_Quatro_D');
+                assert.equal(veto?.cultura, 'Milho', `veio ${JSON.stringify(constraints.vetados)}`);
+                const policy = constraints.politicas.get('Dois_Quatro_D');
+                assert.ok(policy?.bloqueado, 'o veto tem de bloquear a politica');
+                assert.ok(!policy?.decisoes.includes('INICIAR_APLICACAO'), 'o veto ativo virou permissao');
+                for (const v of constraints.vetados) {
+                    assert.ok(foco.produtos.has(v.produto), `veto sobre ${v.produto}, que esta fora do foco`);
+                }
             });
         } finally {
             await session.close();

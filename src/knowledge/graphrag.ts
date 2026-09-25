@@ -61,7 +61,9 @@ import {
     dedup,
     selecionarPorSimilaridade,
     topKParaGrafo,
-    topKPorVetor
+    topKPorVetor,
+    type ItemPontuado,
+    type SinalVetorial
 } from './foco.js';
 
 export interface ClinicalContext {
@@ -587,7 +589,10 @@ function expandirProtocolosParaFarmacos(
 export async function retrieverFoco(
     session: Session,
     intencao: string,
-    model: MedicalModel
+    model: MedicalModel,
+    /** Sinal vetorial ja calculado (modo hibrido). Ausente: o foco
+     *  embute e consulta por conta propria, como sempre fez. */
+    sinal?: SinalVetorial
 ): Promise<Foco> {
     const nomes = nomesMed(model);
     const origem = new Map<string, OrigemFoco>();
@@ -597,16 +602,23 @@ export async function retrieverFoco(
     registrar(origem, lexFarmacos, 'lexical');
     registrar(origem, lexProtocolos, 'lexical');
 
-    const vetor = await embedTexto(intencao);
     // Sequencial, nao Promise.all: uma Session do driver nao roda duas queries
     // concorrentes ("Queries cannot be run directly on a session with an open
     // transaction").
-    const vetFarmacos = selecionarPorSimilaridade(
-        await topKPorVetor(session, 'farmaco_embedding', vetor, topKParaGrafo(nomes.farmacos.length))
-    );
-    const vetProtocolos = selecionarPorSimilaridade(
-        await topKPorVetor(session, 'protocolo_embedding', vetor, topKParaGrafo(nomes.protocolos.length))
-    );
+    let brutoItens: ItemPontuado[];
+    let brutoContextos: ItemPontuado[];
+    if (sinal) {
+        // Modo hibrido: o RAG ja embutiu a consulta semantica e consultou os
+        // dois indices. Repetir aqui seria a mesma busca duas vezes.
+        brutoItens = sinal.itens;
+        brutoContextos = sinal.contextos;
+    } else {
+        const vetor = await embedTexto(intencao);
+        brutoItens = await topKPorVetor(session, 'farmaco_embedding', vetor, topKParaGrafo(nomes.farmacos.length));
+        brutoContextos = await topKPorVetor(session, 'protocolo_embedding', vetor, topKParaGrafo(nomes.protocolos.length));
+    }
+    const vetFarmacos = selecionarPorSimilaridade(brutoItens);
+    const vetProtocolos = selecionarPorSimilaridade(brutoContextos);
 
     const farmacos = new Set(lexFarmacos);
     const protocolos = new Set(lexProtocolos);
@@ -711,10 +723,20 @@ function arestasDoProtocolo(
  * dos protocolos em foco que `retrieveConstraints` deixou de fora por falta de
  * gatilho ativo (ver `arestasDoProtocolo`).
  *
- * INVARIANTE DE SEGURANCA: o foco so pode TIRAR decisoes admissiveis, nunca
- * acrescentar. Os vetos trazidos aqui estreitam a politica do farmaco; nenhum
- * caminho neste arquivo devolve a um farmaco uma decisao que a avaliacao
- * deterministica havia retirado.
+ * O foco e ESCOPO: decide quais farmacos e protocolos o Prompt Semantico mostra
+ * e, com os farmacos, quais continuam exprimiveis. Nunca decide o que e
+ * permitido. Para cada farmaco que continua em foco, as decisoes depois do foco
+ * sao subconjunto das que `retrieveConstraints` deixou (ver
+ * `recomputarPoliticasMed`).
+ *
+ * VETO DE PROTOCOLO ATIVO FORA DO FOCO CONTINUA VALENDO. Quem ativa um protocolo
+ * e a telemetria, e o foco nao tem autoridade para desativa-lo: o paciente
+ * continua em choque septico mesmo que o pedido fale de outra coisa. O protocolo
+ * sai de [PROTOCOLOS EM FOCO], das recomendacoes e dos escalonamentos, mas o veto
+ * dele sobre um farmaco em foco fica — na politica e na lista de vetos, para o
+ * prompt continuar explicando o que a gramatica proibe. Um veto so deixa de
+ * aparecer quando o proprio farmaco sai do foco, e ai o farmaco inteiro fica
+ * inexprimivel, o que e mais restritivo que o veto.
  *
  * Invariantes globais ficam sempre fora do filtro — sao regras que valem
  * independente do que foi pedido, nao "sobre" um farmaco ou protocolo especifico.
@@ -731,8 +753,11 @@ export function filtrarPorFoco(
 
     const protocolosAtivos = [...constraints.protocolosAtivos.filter(p => protocoloNoFoco(p.nome))];
     const recomendados = [...constraints.recomendados];
-    const vetados = [...constraints.vetados];
     const escalonamentos = [...constraints.escalonamentos];
+    // Os unicos vetos que ainda nao estao na politica: os dos protocolos que o
+    // foco trouxe sem gatilho ativo. Todos os outros `retrieveConstraints` ja
+    // aplicou.
+    const vetosDoFoco: RetrievedConstraints['vetados'] = [];
 
     const jaListado = new Set(protocolosAtivos.map(p => p.nome));
     for (const protocol of model.elements.filter(isProtocolDef)) {
@@ -745,10 +770,7 @@ export function filtrarPorFoco(
         const arestas = arestasDoProtocolo(protocol, context.telemetria);
         recomendados.push(...arestas.recomendados);
         escalonamentos.push(...arestas.escalonamentos);
-
-        // A politica nao e estreitada aqui: `recomputarPoliticasMed` a reconstroi
-        // ao final, a partir da lista de vetos que de fato sobreviveu ao filtro.
-        vetados.push(...arestas.vetados);
+        vetosDoFoco.push(...arestas.vetados);
     }
 
     const bloqueiosNoFoco = constraints.bloqueios.filter(b => noFoco(b.farmaco));
@@ -761,10 +783,10 @@ export function filtrarPorFoco(
         recomendados.filter(r => noFoco(r.farmaco) && protocoloNoFoco(r.protocolo)),
         r => `${r.farmaco}|${r.protocolo}`
     );
-    // Vetos de populacao valem pelo paciente, independem do foco; vetos de
-    // protocolo so valem se o protocolo estiver em foco.
+    // Todo veto sobre farmaco em foco: o de populacao, o de protocolo ativo
+    // (esteja o protocolo em foco ou nao) e o de protocolo que o foco trouxe.
     const vetadosNoFoco = dedup(
-        vetados.filter(v => noFoco(v.farmaco) && (!v.protocolo || protocoloNoFoco(v.protocolo))),
+        [...constraints.vetados, ...vetosDoFoco].filter(v => noFoco(v.farmaco)),
         v => `${v.farmaco}|${v.origem}`
     );
 
@@ -780,72 +802,43 @@ export function filtrarPorFoco(
         ),
         interacoes: constraints.interacoes.filter(i => interacaoNoFoco(i.entre)),
         regrasGlobais: constraints.regrasGlobais,
-        politicas: recomputarPoliticasMed(
-            model,
-            constraints.politicas,
-            foco,
-            bloqueiosNoFoco,
-            vetadosNoFoco,
-            ajustesNoFoco
-        )
+        politicas: recomputarPoliticasMed(constraints.politicas, foco, vetosDoFoco)
     };
 }
 
 /**
- * Reconstroi a politica de cada farmaco em foco a partir das restricoes que
- * sobreviveram ao filtro — e nao das que `retrieveConstraints` tinha aplicado
- * sobre o grafo inteiro.
+ * A politica de cada farmaco em foco, derivada da que `retrieveConstraints` ja
+ * calculou — nunca reconstruida a partir do `esquema_dados`.
  *
- * Sem isto, um veto descartado do Prompt Semantico (porque vinha de um protocolo
- * fora do foco) continuava estreitando a gramatica: o modelo recebia uma
- * proibicao sem nenhuma linha no prompt que a justificasse. Aqui o que a
- * gramatica proibe volta a ser exatamente o que o prompt explica.
+ * Tudo o que a avaliacao deterministica retirou chega aqui retirado e continua
+ * assim: estado de curso, bloqueio de incremento, veto de protocolo ativo e de
+ * populacao, ajuste renal que suspende. O foco so acrescenta os vetos dos
+ * protocolos que trouxe sem gatilho ativo, e veto so tira decisao. Por
+ * construcao, as decisoes de cada farmaco em foco sao subconjunto das que ele
+ * tinha antes do foco.
+ *
+ * Reconstruir a partir do esquema aberto e reaplicar so parte das restricoes era
+ * o que devolvia decisoes retiradas: o estado de curso nao era reaplicado, e o
+ * veto de protocolo ativo fora do foco se perdia.
  */
 function recomputarPoliticasMed(
-    model: MedicalModel,
     politicasOriginais: Map<string, DrugPolicy>,
     foco: Foco,
-    bloqueios: RetrievedConstraints['bloqueios'],
-    vetados: RetrievedConstraints['vetados'],
-    ajustes: RetrievedConstraints['ajustes']
+    vetosDoFoco: RetrievedConstraints['vetados']
 ): Map<string, DrugPolicy> {
-    const schema = model.elements.filter(isDataSchemaDef)[0];
     const politicas = new Map<string, DrugPolicy>();
 
     for (const [farmaco, original] of politicasOriginais) {
         if (!foco.farmacos.has(farmaco)) continue;
+        // Listas proprias: o foco nao altera a politica que recebeu.
         politicas.set(farmaco, {
-            farmaco,
-            decisoes: [...schema.decisions],
-            // vias, unidades e doses vem da bula do farmaco: nao dependem de contexto.
-            vias: original.vias,
-            unidades: original.unidades,
-            valores: original.valores,
-            valoresPorDecisao: original.valoresPorDecisao,
-            motivos: [],
-            bloqueado: false
+            ...original,
+            decisoes: [...original.decisoes],
+            motivos: [...original.motivos]
         });
     }
 
-    for (const bloqueio of bloqueios) {
-        const policy = politicas.get(bloqueio.farmaco);
-        if (!policy) continue;
-        policy.decisoes = policy.decisoes.filter(d => !DECISOES_DE_INCREMENTO.has(d));
-        policy.bloqueado = true;
-        policy.motivos.push(`incremento bloqueado (${bloqueio.regra}): ${bloqueio.razao}`);
-    }
-
-    // Ajuste renal que manda suspender ou bloquear tambem retira o incremento.
-    for (const ajuste of ajustes) {
-        if (ajuste.acao !== 'suspender' && ajuste.acao !== 'bloquear') continue;
-        const policy = politicas.get(ajuste.farmaco);
-        if (!policy) continue;
-        policy.decisoes = policy.decisoes.filter(d => !DECISOES_DE_INCREMENTO.has(d));
-        policy.bloqueado = true;
-        policy.motivos.push(`ajuste renal: ${ajuste.detalhe}`);
-    }
-
-    for (const veto of vetados) {
+    for (const veto of vetosDoFoco) {
         const policy = politicas.get(veto.farmaco);
         if (!policy) continue;
         policy.decisoes = policy.decisoes.filter(d => DECISOES_DE_RETIRADA.includes(d));

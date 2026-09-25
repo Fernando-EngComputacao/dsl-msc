@@ -57,7 +57,9 @@ import {
     dedup,
     selecionarPorSimilaridade,
     topKParaGrafo,
-    topKPorVetor
+    topKPorVetor,
+    type ItemPontuado,
+    type SinalVetorial
 } from './foco.js';
 
 export interface AgroContext {
@@ -538,7 +540,10 @@ function expandirCulturasParaProdutos(
 export async function retrieverFocoAgro(
     session: Session,
     intencao: string,
-    model: AgroModel
+    model: AgroModel,
+    /** Sinal vetorial ja calculado (modo hibrido). Ausente: o foco
+     *  embute e consulta por conta propria, como sempre fez. */
+    sinal?: SinalVetorial
 ): Promise<AgroFoco> {
     const nomes = nomesAgro(model);
     const origem = new Map<string, OrigemFoco>();
@@ -548,16 +553,23 @@ export async function retrieverFocoAgro(
     registrar(origem, lexProdutos, 'lexical');
     registrar(origem, lexCulturas, 'lexical');
 
-    const vetor = await embedTexto(intencao);
     // Sequencial, nao Promise.all: uma Session do driver nao roda duas queries
     // concorrentes ("Queries cannot be run directly on a session with an open
     // transaction").
-    const vetProdutos = selecionarPorSimilaridade(
-        await topKPorVetor(session, 'produto_embedding', vetor, topKParaGrafo(nomes.produtos.length))
-    );
-    const vetCulturas = selecionarPorSimilaridade(
-        await topKPorVetor(session, 'cultura_embedding', vetor, topKParaGrafo(nomes.culturas.length))
-    );
+    let brutoItens: ItemPontuado[];
+    let brutoContextos: ItemPontuado[];
+    if (sinal) {
+        // Modo hibrido: o RAG ja embutiu a consulta semantica e consultou os
+        // dois indices. Repetir aqui seria a mesma busca duas vezes.
+        brutoItens = sinal.itens;
+        brutoContextos = sinal.contextos;
+    } else {
+        const vetor = await embedTexto(intencao);
+        brutoItens = await topKPorVetor(session, 'produto_embedding', vetor, topKParaGrafo(nomes.produtos.length));
+        brutoContextos = await topKPorVetor(session, 'cultura_embedding', vetor, topKParaGrafo(nomes.culturas.length));
+    }
+    const vetProdutos = selecionarPorSimilaridade(brutoItens);
+    const vetCulturas = selecionarPorSimilaridade(brutoContextos);
 
     const produtos = new Set(lexProdutos);
     const culturas = new Set(lexCulturas);
@@ -662,10 +674,20 @@ function arestasDaCultura(
  * das culturas em foco que `retrieveAgroConstraints` deixou de fora por falta de
  * gatilho ativo (ver `arestasDaCultura`).
  *
- * INVARIANTE DE SEGURANCA: o foco so pode TIRAR decisoes admissiveis, nunca
- * acrescentar. Os vetos trazidos aqui estreitam a politica do produto; nenhum
- * caminho neste arquivo devolve a um produto uma decisao que a avaliacao
- * deterministica havia retirado.
+ * O foco e ESCOPO: decide quais produtos e culturas o Prompt Semantico mostra
+ * e, com os produtos, quais continuam exprimiveis. Nunca decide o que e
+ * permitido. Para cada produto que continua em foco, as decisoes depois do foco
+ * sao subconjunto das que `retrieveAgroConstraints` deixou (ver
+ * `recomputarPoliticasAgro`).
+ *
+ * VETO DE CULTURA ATIVA FORA DO FOCO CONTINUA VALENDO. Quem ativa uma cultura e a
+ * leitura dos sensores, e o foco nao tem autoridade para desativa-la: num pedido
+ * sobre cana com o Milho ativo, o veto do Milho ao Dois_Quatro_D (deriva hormonal
+ * sobre a cultura vizinha) continua valendo. A cultura sai de [CULTURAS EM FOCO],
+ * das recomendacoes e dos escalonamentos, mas o veto dela sobre um produto em
+ * foco fica — na politica e na lista de vetos, para o prompt continuar
+ * explicando o que a gramatica proibe. Um veto so deixa de aparecer quando o
+ * proprio produto sai do foco, e ai o produto inteiro fica inexprimivel.
  *
  * Invariantes globais ficam sempre fora do filtro — valem independente do que
  * foi pedido.
@@ -682,8 +704,11 @@ export function filtrarPorFocoAgro(
 
     const culturasAtivas = [...constraints.culturasAtivas.filter(c => culturaNoFoco(c.nome))];
     const recomendados = [...constraints.recomendados];
-    const vetados = [...constraints.vetados];
     const escalonamentos = [...constraints.escalonamentos];
+    // Os unicos vetos que ainda nao estao na politica: os das culturas que o foco
+    // trouxe sem gatilho ativo. Todos os outros `retrieveAgroConstraints` ja
+    // aplicou.
+    const vetosDoFoco: RetrievedAgroConstraints['vetados'] = [];
 
     const jaListada = new Set(culturasAtivas.map(c => c.nome));
     for (const culture of model.elements.filter(isCultureDef)) {
@@ -696,10 +721,7 @@ export function filtrarPorFocoAgro(
         const arestas = arestasDaCultura(culture, context.telemetria);
         recomendados.push(...arestas.recomendados);
         escalonamentos.push(...arestas.escalonamentos);
-
-        // A politica nao e estreitada aqui: `recomputarPoliticasAgro` a reconstroi
-        // ao final, a partir da lista de vetos que de fato sobreviveu ao filtro.
-        vetados.push(...arestas.vetados);
+        vetosDoFoco.push(...arestas.vetados);
     }
 
     const bloqueiosNoFoco = constraints.bloqueios.filter(b => noFoco(b.produto));
@@ -711,10 +733,10 @@ export function filtrarPorFocoAgro(
         recomendados.filter(r => noFoco(r.produto) && culturaNoFoco(r.cultura)),
         r => `${r.produto}|${r.cultura}`
     );
-    // Vetos de area valem pelo talhao, independem do foco; vetos de cultura so
-    // valem se a cultura estiver em foco.
+    // Todo veto sobre produto em foco: o de area, o de cultura ativa (esteja a
+    // cultura em foco ou nao) e o de cultura que o foco trouxe.
     const vetadosNoFoco = dedup(
-        vetados.filter(v => noFoco(v.produto) && (!v.cultura || culturaNoFoco(v.cultura))),
+        [...constraints.vetados, ...vetosDoFoco].filter(v => noFoco(v.produto)),
         v => `${v.produto}|${v.origem}`
     );
 
@@ -731,54 +753,42 @@ export function filtrarPorFocoAgro(
         incompatibilidades: constraints.incompatibilidades.filter(i => incompatNoFoco(i.entre)),
         proibicoes: constraints.proibicoes.filter(p => noFoco(p.produto)),
         regrasGlobais: constraints.regrasGlobais,
-        politicas: recomputarPoliticasAgro(model, constraints.politicas, foco, bloqueiosNoFoco, vetadosNoFoco)
+        politicas: recomputarPoliticasAgro(constraints.politicas, foco, vetosDoFoco)
     };
 }
 
 /**
- * Reconstroi a politica de cada produto em foco a partir das restricoes que
- * sobreviveram ao filtro — e nao das que `retrieveAgroConstraints` tinha
- * aplicado sobre o grafo inteiro.
+ * A politica de cada produto em foco, derivada da que `retrieveAgroConstraints`
+ * ja calculou — nunca reconstruida a partir do `esquema_dados`.
  *
- * Sem isto, um veto descartado do Prompt Semantico (porque vinha de uma cultura
- * fora do foco) continuava estreitando a gramatica: o modelo recebia uma
- * proibicao sem nenhuma linha no prompt que a justificasse. Aqui o que a
- * gramatica proibe volta a ser exatamente o que o prompt explica.
+ * Tudo o que a avaliacao deterministica retirou chega aqui retirado e continua
+ * assim: estado de curso, bloqueio de aplicacao, veto de cultura ativa e de area.
+ * O foco so acrescenta os vetos das culturas que trouxe sem gatilho ativo, e
+ * veto so tira decisao. Por construcao, as decisoes de cada produto em foco sao
+ * subconjunto das que ele tinha antes do foco.
+ *
+ * Reconstruir a partir do esquema aberto e reaplicar so parte das restricoes era
+ * o que devolvia decisoes retiradas: o estado de curso nao era reaplicado, e o
+ * veto de cultura ativa fora do foco se perdia.
  */
 function recomputarPoliticasAgro(
-    model: AgroModel,
     politicasOriginais: Map<string, ProductPolicy>,
     foco: AgroFoco,
-    bloqueios: RetrievedAgroConstraints['bloqueios'],
-    vetados: RetrievedAgroConstraints['vetados']
+    vetosDoFoco: RetrievedAgroConstraints['vetados']
 ): Map<string, ProductPolicy> {
-    const schema = model.elements.filter(isAgroSchemaDef)[0];
     const politicas = new Map<string, ProductPolicy>();
 
     for (const [produto, original] of politicasOriginais) {
         if (!foco.produtos.has(produto)) continue;
+        // Listas proprias: o foco nao altera a politica que recebeu.
         politicas.set(produto, {
-            produto,
-            decisoes: [...schema.decisions],
-            modos: [...schema.modes],
-            // unidades vem da bula do produto: nao dependem de contexto nenhum.
-            unidades: original.unidades,
-            valores: original.valores,
-            valoresPorDecisao: original.valoresPorDecisao,
-            motivos: [],
-            bloqueado: false
+            ...original,
+            decisoes: [...original.decisoes],
+            motivos: [...original.motivos]
         });
     }
 
-    for (const bloqueio of bloqueios) {
-        const policy = politicas.get(bloqueio.produto);
-        if (!policy) continue;
-        policy.decisoes = policy.decisoes.filter(d => !DECISOES_DE_INCREMENTO.has(d));
-        policy.bloqueado = true;
-        policy.motivos.push(`aplicacao bloqueada (${bloqueio.regra}): ${bloqueio.razao}`);
-    }
-
-    for (const veto of vetados) {
+    for (const veto of vetosDoFoco) {
         const policy = politicas.get(veto.produto);
         if (!policy) continue;
         policy.decisoes = policy.decisoes.filter(d => DECISOES_DE_RETIRADA.includes(d));

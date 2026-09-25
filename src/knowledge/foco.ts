@@ -20,9 +20,12 @@
  * A expansao pelas arestas — achou o item, traz o contexto dele e vice-versa —
  * fica em cada `graphrag-*.ts`, que e quem conhece a forma do proprio grafo.
  *
- * O foco decide apenas O QUE E MOSTRADO no Prompt Semantico. Quem decide o que e
- * PERMITIDO continua sendo a comparacao numerica deterministica em
- * `retrieve*Constraints` — o embedding nunca ganha autoridade sobre a seguranca.
+ * O foco decide o ESCOPO: o que o Prompt Semantico mostra e, com isso, quais
+ * itens continuam exprimiveis. Ele so estreita. Quem decide o que e PERMITIDO
+ * para cada item que fica continua sendo a comparacao numerica deterministica em
+ * `retrieve*Constraints`, e o foco nunca devolve uma decisao que ela retirou
+ * (ver `filtrarPorFoco*`). O embedding pode estreitar o que e exprimivel, nunca
+ * ampliar o que e permitido.
  */
 
 import neo4j, { type Session } from 'neo4j-driver';
@@ -78,7 +81,10 @@ export function variantesDoNome(nome: string): string {
 // 2) Casamento por nome
 // =============================================================================
 
-function contemPalavra(textoNormalizado: string, palavra: string): boolean {
+/** Exportado para a composicao da consulta semantica (`recuperacao.ts`) decidir
+ *  se o usuario citou um parametro pelo nome, com o mesmo criterio de fronteira
+ *  de palavra que o casamento lexical usa. */
+export function contemPalavra(textoNormalizado: string, palavra: string): boolean {
     // Fronteira de palavra sobre o texto ja normalizado, para um nome curto nao
     // casar por acidente dentro de uma palavra maior.
     return new RegExp(`(^| )${palavra}( |$)`).test(textoNormalizado);
@@ -127,6 +133,34 @@ export interface ItemPontuado {
     nome: string;
     /** Cosseno bruto em [-1, 1], ja desfeita a normalizacao do Neo4j. */
     cosseno: number;
+    /**
+     * Escore como o indice o devolveu, em [0, 1]. Preservado ao lado do cosseno
+     * porque o foco raciocina em cosseno (ver MARGEM_COS) mas quem so quer
+     * repassar o resultado adiante — a recuperacao de candidatos em
+     * `recuperacao-rag.ts` — nao deve ter de desfazer a conversao.
+     */
+    escore?: number;
+    /** `elementId(node)`: a identidade do no no banco, quando disponivel. */
+    nodeId?: string;
+}
+
+/**
+ * Resultado BRUTO dos dois indices vetoriais de um dominio, antes de qualquer
+ * corte. Existe para que o sinal vetorial possa ser calculado UMA VEZ por
+ * requisicao e reaproveitado.
+ *
+ * Sem isto, o modo hibrido (ver `recuperacao-hibrida.ts`) faria duas buscas
+ * equivalentes: o RAG embute a consulta semantica e consulta os dois indices, e
+ * logo em seguida `retrieverFoco*` embutiria de novo e consultaria os mesmos
+ * dois. Passando este sinal, o foco reaproveita o que o RAG ja trouxe — e o
+ * corte por margem (`selecionarPorSimilaridade`) continua acontecendo no foco,
+ * onde sempre aconteceu.
+ */
+export interface SinalVetorial {
+    /** Farmacos | produtos | infracoes. */
+    itens: ItemPontuado[];
+    /** Protocolos | culturas | lances. */
+    contextos: ItemPontuado[];
 }
 
 /**
@@ -147,16 +181,24 @@ export async function topKPorVetor(
 ): Promise<ItemPontuado[]> {
     const resultado = await session.run(
         `CALL db.index.vector.queryNodes($indice, $topK, $vetor) YIELD node, score
-         RETURN node.nome AS nome, score`,
+         RETURN node.nome AS nome, score, elementId(node) AS nodeId`,
         { indice, topK: neo4j.int(Math.max(1, topK)), vetor }
     );
-    return resultado.records.map(r => ({
-        nome: r.get('nome') as string,
-        cosseno: escoreParaCosseno(r.get('score') as number)
-    }));
+    return resultado.records.map(r => {
+        const escore = r.get('score') as number;
+        return {
+            nome: r.get('nome') as string,
+            cosseno: escoreParaCosseno(escore),
+            escore,
+            nodeId: r.get('nodeId') as string
+        };
+    });
 }
 
-function num(bruto: string | undefined, padrao: number): number {
+/** Le um numero de variavel de ambiente, caindo no padrao quando ausente ou
+ *  invalido. Exportado para os demais modulos de recuperacao seguirem a mesma
+ *  convencao de configuracao sem reescrever a leitura. */
+export function numeroDeEnv(bruto: string | undefined, padrao: number): number {
     const valor = Number(bruto);
     return Number.isFinite(valor) ? valor : padrao;
 }
@@ -165,7 +207,7 @@ function num(bruto: string | undefined, padrao: number): number {
  * Piso absoluto de cosseno. Serve so para o caso degenerado em que NADA no grafo
  * tem relacao com o pedido; a discriminacao util e feita pela margem relativa.
  */
-const COS_MINIMO = num(process.env.SPC_CML_FOCO_COS_MINIMO, 0.3);
+const COS_MINIMO = numeroDeEnv(process.env.SPC_CML_FOCO_COS_MINIMO, 0.3);
 
 /**
  * Distancia maxima, em cosseno, entre um candidato e o melhor deles.
@@ -181,13 +223,13 @@ const COS_MINIMO = num(process.env.SPC_CML_FOCO_COS_MINIMO, 0.3);
  * `npm run foco:inspecionar -- <dominio> "<pedido>" --todos`, que imprime o
  * cosseno e a margem de cada no.
  */
-const MARGEM_COS = num(process.env.SPC_CML_FOCO_MARGEM, 0.05);
+const MARGEM_COS = numeroDeEnv(process.env.SPC_CML_FOCO_MARGEM, 0.05);
 
 /** Teto de nos vindos do sinal vetorial, para o foco nao virar o grafo inteiro. */
-const MAX_FOCO_VETORIAL = num(process.env.SPC_CML_FOCO_MAX, 4);
+const MAX_FOCO_VETORIAL = numeroDeEnv(process.env.SPC_CML_FOCO_MAX, 4);
 
 /** Teto de vizinhos pedidos ao indice, para grafos grandes. */
-const TOP_K_MAX = num(process.env.SPC_CML_FOCO_TOPK_MAX, 10);
+const TOP_K_MAX = numeroDeEnv(process.env.SPC_CML_FOCO_TOPK_MAX, 10);
 
 /**
  * Quantos vizinhos pedir ao indice. Pedir mais do que o grafo tem devolve o
