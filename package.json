@@ -34,7 +34,7 @@
         "test:earley": "tsx src/test/earley.test.ts",
         "test:avaliar": "tsx src/test/avaliar.test.ts",
         "test:grammar": "cd src/python_engine && python test_grammar.py",
-        "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:foco-politica && npm run test:foco && npm run test:recuperacao && npm run test:consulta && npm run test:rag && npm run test:cypher && npm run test:hibrida && npm run test:rastro && npm run test:politica && npm run test:restricoes && npm run test:geracao && npm run test:contrato && npm run test:incremental && npm run test:grammar",
+        "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:foco-politica && npm run test:foco && npm run test:recuperacao && npm run test:consulta && npm run test:rag && npm run test:cypher && npm run test:hibrida && npm run test:rastro && npm run test:politica && npm run test:restricoes && npm run test:geracao && npm run test:contrato && npm run test:incremental && npm run test:motor-llm && npm run test:grammar && npm run test:semantico",
         "test:foco-politica": "tsx src/test/foco-politica.test.ts",
         "test:foco": "tsx src/test/foco.test.ts",
         "test:recuperacao": "tsx src/test/recuperacao.test.ts",
@@ -48,7 +48,9 @@
         "test:geracao": "tsx src/test/geracao-refinada.test.ts",
         "test:equivalencia": "tsx src/test/equivalencia.test.ts",
         "test:contrato": "tsx src/test/contrato.test.ts",
-        "test:incremental": "tsx src/test/incremental.test.ts"
+        "test:incremental": "tsx src/test/incremental.test.ts",
+        "test:motor-llm": "tsx src/test/motor-llm.test.ts",
+        "test:semantico": "cd src/python_engine && python test_semantico.py"
     },
     "keywords": [
         "dsl",

@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 from unittest.mock import MagicMock
 
 # outlines 0.0.46 importa pacotes de dominio irrelevantes para este uso e que
@@ -191,6 +192,56 @@ def get_embedder():
 
 def _modelo_carregado() -> bool:
     return (_MODEL if BACKEND == "outlines" else _LLAMA) is not None
+
+
+def _nome_modelo() -> str:
+    return MODEL_ID if BACKEND == "outlines" else f"{GGUF_REPO}/{GGUF_FILE}"
+
+
+# O template de chat acrescenta marcadores de papel ao prompt; a guarda de n_ctx
+# conta o texto cru e reserva esta folga para eles.
+FOLGA_TEMPLATE_CHAT = 64
+
+
+def _gerar_semantico(sistema: str, usuario: str, max_tokens: int, temperatura: float) -> dict:
+    """
+    Geracao SEMANTICA: o modelo propoe o plano em texto livre, SEM gramatica.
+    E a fase em que se quer o raciocinio do modelo, nao a forma do artefato — a
+    forma vem depois, na realizacao sob G_hat (/generate-constrained e
+    /generate-fragment), e o contrato continua decidindo o que passa.
+    """
+    llm = get_llama()
+    n_prompt = len(llm.tokenize((sistema + "\n" + usuario).encode("utf-8"))) + FOLGA_TEMPLATE_CHAT
+    if n_prompt + max_tokens > N_CTX:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Prompt de ~{n_prompt} tokens mais {max_tokens} de saida excede "
+                f"n_ctx={N_CTX}. Aumente SPC_CML_N_CTX ou reduza max_tokens."
+            ),
+        )
+    inicio = time.perf_counter()
+    with _LLAMA_LOCK:
+        saida = llm.create_chat_completion(
+            messages=[
+                {"role": "system", "content": sistema},
+                {"role": "user", "content": usuario},
+            ],
+            max_tokens=max_tokens,
+            temperature=temperatura,
+            repeat_penalty=REPEAT_PENALTY,
+        )
+    escolha = saida["choices"][0]
+    uso = saida.get("usage") or {}
+    return {
+        "texto": (escolha.get("message") or {}).get("content", "").strip(),
+        "modelo": _nome_modelo(),
+        "backend": "llamacpp",
+        "tokens_entrada": uso.get("prompt_tokens"),
+        "tokens_saida": uso.get("completion_tokens"),
+        "motivo_parada": escolha.get("finish_reason"),
+        "latencia_ms": round((time.perf_counter() - inicio) * 1000),
+    }
 
 
 def _gerar(prompt: str, regras_hat: dict, inicio: str | None = None) -> str:
@@ -395,6 +446,15 @@ class ICURequest(BaseModel):
     )
 
 
+class SemanticoRequest(BaseModel):
+    """Geracao semantica: o chamador ja montou os dois textos (ver geracao-semantica.ts)."""
+
+    sistema: str = Field(..., description="Instrucao de sistema: o papel do modelo e o que ele nao pode fazer")
+    usuario: str = Field(..., description="Pedido + contexto: Prompt Semantico, politica efetiva, evidencias")
+    max_tokens: int | None = Field(None, description="Teto de saida; ausente = SPC_CML_MAX_TOKENS")
+    temperatura: float | None = Field(None, description="Ausente = SPC_CML_TEMPERATURA")
+
+
 class VerifyRequest(BaseModel):
     plano: str
     subgrafo_regras: dict = Field(default_factory=dict)
@@ -517,6 +577,26 @@ def embed(req: EmbedRequest):
     return {"vetor": vetor, "dimensoes": len(vetor)}
 
 
+@app.post("/generate-semantic")
+def generate_semantic(req: SemanticoRequest):
+    """
+    Fase de GERACAO SEMANTICA: texto livre, sem gramatica. So no backend
+    llamacpp — o outlines existe aqui para comparar a decodificacao restrita, e
+    nao tem caminho de chat.
+    """
+    if BACKEND != "llamacpp":
+        raise HTTPException(
+            status_code=501,
+            detail=f"Geracao semantica so no backend llamacpp (SPC_CML_BACKEND={BACKEND}).",
+        )
+    return _gerar_semantico(
+        req.sistema,
+        req.usuario,
+        req.max_tokens or MAX_TOKENS,
+        TEMPERATURA if req.temperatura is None else req.temperatura,
+    )
+
+
 @app.post("/generate-constrained")
 def generate_constrained(req: ICURequest):
     regras_hat, g_hat_texto = _gramatica_efetiva(req.subgrafo_regras)
@@ -554,6 +634,7 @@ def generate_constrained(req: ICURequest):
         "especializada": bool(
             req.subgrafo_regras.get("politicas") and req.subgrafo_regras.get("papeis")
         ),
+        "modelo": _nome_modelo(),
     }
 
 
@@ -607,4 +688,5 @@ def generate_fragment(req: FragmentoRequest):
         "especializada": bool(
             req.subgrafo_regras.get("politicas") and req.subgrafo_regras.get("papeis")
         ),
+        "modelo": _nome_modelo(),
     }

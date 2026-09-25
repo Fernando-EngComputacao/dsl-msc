@@ -38,6 +38,9 @@ import {
     type Violacao
 } from '../knowledge/contrato.js';
 import type { SubgrafoPodado } from '../knowledge/politica.js';
+import { criarMotorLLM } from './fabrica-motor-llm.js';
+import { MotorLlamaCpp } from './motor-llamacpp.js';
+import { exigirRealizacaoGramatical, lerConfiguracaoLLM, type MotorLLM } from './motor-llm.js';
 
 const ENDPOINT_PADRAO = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
 const TIMEOUT_PADRAO = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600_000);
@@ -70,42 +73,38 @@ export interface ResultadoDecodificacao extends RespostaMotor {
     conforme: boolean;
 }
 
+/**
+ * `POST /generate-constrained` no motor local. Mantida pela assinatura de
+ * sempre; o transporte agora mora em `MotorLlamaCpp`, com o mesmo corpo e as
+ * mesmas mensagens de erro.
+ */
 export async function chamarMotor(
     payload: { comando_humano: string; contexto_neo4j: string; subgrafo_regras: SubgrafoPodado },
     endpoint: string = ENDPOINT_PADRAO,
     timeoutMs: number = TIMEOUT_PADRAO
 ): Promise<RespostaMotor> {
-    let response: Response;
-    try {
-        response = await fetch(`${endpoint}/generate-constrained`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(timeoutMs)
-        });
-    } catch (error) {
-        const causa =
-            (error as Error).name === 'TimeoutError'
-                ? `sem resposta em ${timeoutMs / 1000}s (ajuste SPC_CML_TIMEOUT_MS)`
-                : (error as Error).message;
-        throw new Error(`${endpoint} inacessivel: ${causa}`);
-    }
+    return realizarArtefato(new MotorLlamaCpp({ endpoint, timeoutMs }), payload);
+}
 
-    if (!response.ok) {
-        throw new Error(`${endpoint} respondeu ${response.status}: ${await response.text()}`);
-    }
-    const dados = (await response.json()) as RespostaMotor;
-
-    // Um motor no ar com codigo antigo poda so pelos tres vocabularios e devolve
-    // um artefato de aparencia normal — a correcao ja aplicada parece nao ter
-    // efeito. Melhor falhar alto do que gerar sob a gramatica errada.
-    if (payload.subgrafo_regras.politicas?.length > 0 && dados.especializada === false) {
-        throw new Error(
-            `${endpoint} ignorou a politica por item: o motor esta desatualizado. ` +
-                'Reinicie o servico (uvicorn) para carregar grammar_from_kg.py atual.'
-        );
-    }
-    return dados;
+/** Realizacao do artefato inteiro por qualquer `MotorLLM` com gramatica. */
+async function realizarArtefato(
+    motor: MotorLLM,
+    payload: { comando_humano: string; contexto_neo4j: string; subgrafo_regras: SubgrafoPodado }
+): Promise<RespostaMotor> {
+    exigirRealizacaoGramatical(motor);
+    const r = await motor.realizarComGramatica({
+        comando: payload.comando_humano,
+        contexto: payload.contexto_neo4j,
+        subgrafo: payload.subgrafo_regras
+    });
+    return {
+        resultado: r.texto,
+        valido: r.valido ?? false,
+        erro: r.erro ?? null,
+        g_hat_utilizada: r.gHat ?? null,
+        regras_em_g_hat: r.regrasEmGHat ?? 0,
+        especializada: r.especializada
+    };
 }
 
 export interface OpcoesDecodificacao {
@@ -117,6 +116,11 @@ export interface OpcoesDecodificacao {
     endpoint?: string;
     timeoutMs?: number;
     maxTentativas?: number;
+    /**
+     * Quem realiza sob a gramatica. Ausente, `decodificar` escolhe pela
+     * configuracao (LLM_BACKEND, padrao llamacpp) no `endpoint` acima.
+     */
+    motorLLM?: MotorLLM;
 }
 
 /**
@@ -139,15 +143,10 @@ export async function decodificarSobContrato(
     let violacoes: Violacao[] = [];
 
     for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
-        ultima = await chamarMotor(
-            {
-                comando_humano: opts.comando,
-                contexto_neo4j: contexto,
-                subgrafo_regras: subgrafo
-            },
-            opts.endpoint,
-            opts.timeoutMs
-        );
+        const payload = { comando_humano: opts.comando, contexto_neo4j: contexto, subgrafo_regras: subgrafo };
+        ultima = opts.motorLLM
+            ? await realizarArtefato(opts.motorLLM, payload)
+            : await chamarMotor(payload, opts.endpoint, opts.timeoutMs);
 
         const veredito = verificarContrato(contrato, ultima.resultado);
         violacoes = veredito.violacoes;
@@ -203,10 +202,22 @@ export async function decodificarSobContrato(
  * `/generate-fragment`.
  */
 export async function decodificar(opts: OpcoesIncremental): Promise<ResultadoDecodificacao> {
+    // Esta e a fase de REALIZACAO GRAMATICAL: so um backend que restringe a
+    // decodificacao pode executa-la. Sem motor injetado, a configuracao escolhe
+    // (LLM_BACKEND, padrao llamacpp) — e um backend sem gramatica, ou ainda nao
+    // implementado, falha aqui em vez de cair em silencio no llama.cpp.
+    const motorLLM =
+        opts.motorLLM ??
+        (opts.motor
+            ? undefined
+            : criarMotorLLM(lerConfiguracaoLLM(), { endpoint: opts.endpoint, timeoutMs: opts.timeoutMs }));
+    if (motorLLM) exigirRealizacaoGramatical(motorLLM);
+
+    const comMotor: OpcoesIncremental = { ...opts, motorLLM };
     const modo = process.env.SPC_CML_DECODIFICACAO ?? 'incremental';
     return modo === 'monolitica'
-        ? decodificarSobContrato(opts)
-        : decodificarIncremental(opts);
+        ? decodificarSobContrato(comMotor)
+        : decodificarIncremental(comMotor);
 }
 
 // =============================================================================
@@ -265,49 +276,30 @@ const MAX_TENTATIVAS_ELEMENTO = Number(process.env.SPC_CML_MAX_TENTATIVAS_ELEMEN
 const MAX_CONDUTAS = Number(process.env.SPC_CML_MAX_CONDUTAS ?? 5);
 const MAX_ALERTAS = Number(process.env.SPC_CML_MAX_ALERTAS ?? 2);
 
-/** Motor padrao: `POST /generate-fragment` no servico Python. */
+/** Motor padrao: `POST /generate-fragment` no servico Python, via `MotorLlamaCpp`. */
 export function motorHttp(
     endpoint: string = ENDPOINT_PADRAO,
     timeoutMs: number = TIMEOUT_PADRAO
 ): MotorFragmento {
-    return async (pedido, ctx) => {
-        let response: Response;
-        try {
-            response = await fetch(`${endpoint}/generate-fragment`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    simbolo: pedido.simbolo,
-                    prefixo: pedido.prefixo,
-                    comando_humano: ctx.comando,
-                    contexto_neo4j: ctx.contexto,
-                    subgrafo_regras: pedido.subgrafo,
-                    encerramento: pedido.encerramento ?? null
-                }),
-                signal: AbortSignal.timeout(timeoutMs)
-            });
-        } catch (error) {
-            const causa =
-                (error as Error).name === 'TimeoutError'
-                    ? `sem resposta em ${timeoutMs / 1000}s (ajuste SPC_CML_TIMEOUT_MS)`
-                    : (error as Error).message;
-            throw new Error(`${endpoint} inacessivel: ${causa}`);
-        }
-        if (!response.ok) {
-            throw new Error(`${endpoint} respondeu ${response.status}: ${await response.text()}`);
-        }
-        const dados = (await response.json()) as RespostaFragmento;
+    return motorFragmentoDe(new MotorLlamaCpp({ endpoint, timeoutMs }));
+}
 
-        // Motor no ar com codigo velho poda so pelos tres vocabularios e devolve
-        // um artefato de aparencia normal. Sem esta checagem, uma correcao ja
-        // aplicada parece nao ter efeito — foi o que aconteceu uma vez.
-        if (pedido.subgrafo.politicas.length > 0 && dados.especializada === false) {
-            throw new Error(
-                `${endpoint} ignorou a politica por item: o motor esta desatualizado. ` +
-                    'Reinicie o servico (uvicorn) para carregar grammar_from_kg.py atual.'
-            );
-        }
-        return dados;
+/** Um elemento por vez, por qualquer `MotorLLM` com gramatica. */
+export function motorFragmentoDe(motor: MotorLLM): MotorFragmento {
+    exigirRealizacaoGramatical(motor);
+    return async (pedido, ctx) => {
+        const r = await motor.realizarComGramatica({
+            comando: ctx.comando,
+            contexto: ctx.contexto,
+            subgrafo: pedido.subgrafo,
+            fragmento: { simbolo: pedido.simbolo, prefixo: pedido.prefixo, encerramento: pedido.encerramento }
+        });
+        return {
+            fragmento: r.texto,
+            encerrou: r.encerrou ?? false,
+            especializada: r.especializada,
+            regras_em_g_hat: r.regrasEmGHat
+        };
     };
 }
 
@@ -334,7 +326,8 @@ export async function decodificarIncremental(
 ): Promise<ResultadoIncremental> {
     const contrato = opts.contrato;
     const papeis = contrato.papeis;
-    const motor = opts.motor ?? motorHttp(opts.endpoint, opts.timeoutMs);
+    const motor =
+        opts.motor ?? (opts.motorLLM ? motorFragmentoDe(opts.motorLLM) : motorHttp(opts.endpoint, opts.timeoutMs));
     const maxTent = opts.maxTentativasPorElemento ?? MAX_TENTATIVAS_ELEMENTO;
     const ctx = { comando: opts.comando, contexto: opts.contexto };
     const passos: PassoIncremental[] = [];
