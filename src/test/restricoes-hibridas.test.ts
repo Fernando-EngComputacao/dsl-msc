@@ -576,18 +576,21 @@ async function main(): Promise<void> {
 
     console.log('\n[premissa: as tres relacoes existem, e o Cypher de validacao nao as devolve]');
 
-    await teste('os tres modelos declaram VETA, PROIBE e AJUSTA', () => {
+    await teste('os modelos declaram VETA, PROIBE e AJUSTA', () => {
+        // Sem arestas, os casos sistematicos abaixo passariam sem ter olhado nada.
+        // Nao se exige cada relacao em cada modelo: o fut, por exemplo, nao
+        // declara AJUSTA, porque la o fator nao tem semantica operacional.
         const contagem = SUITES.map(s => ({
             dominio: s.nome,
             veta: arestasVeta(s.modelo).length,
             proibe: arestasDeGrupo(s.modelo, 'PROIBE').length,
             ajusta: arestasDeGrupo(s.modelo, 'AJUSTA').length
         }));
-        for (const c of contagem) {
-            assert.ok(c.veta > 0 && c.proibe > 0 && c.ajusta > 0, JSON.stringify(c));
-        }
         const soma = (k: 'veta' | 'proibe' | 'ajusta'): number => contagem.reduce((t, c) => t + c[k], 0);
-        console.log(`       VETA ${soma('veta')}, PROIBE ${soma('proibe')}, AJUSTA ${soma('ajusta')}`);
+        for (const k of ['veta', 'proibe', 'ajusta'] as const) {
+            assert.ok(soma(k) > 0, `nenhum modelo declara ${k.toUpperCase()}: ${JSON.stringify(contagem)}`);
+        }
+        console.log(`       ${contagem.map(c => `${c.dominio}: VETA ${c.veta}, PROIBE ${c.proibe}, AJUSTA ${c.ajusta}`).join(' | ')}`);
     });
 
     await teste('no gemeo do grafo, a Dobutamina nao tem regra nenhuma: so o VETA a restringe', () => {

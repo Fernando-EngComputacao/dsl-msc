@@ -355,12 +355,19 @@ async function main(): Promise<void> {
         }
     });
 
-    await teste('fut: o veto do Penalti_Na_Area ativo ao Impedimento sobrevive ao foco', async () => {
-        const partida: FutContext = { ...LEITURA_FUT, intencao: 'foi impedimento' };
+    await teste('fut: o veto do Posicao_Legal_No_Passe ativo ao Impedimento sobrevive ao foco', async () => {
+        // Atacante 0.5 m atras do penultimo adversario: posicao legal, e o lance
+        // que exclui o impedimento fica ativo. O pedido fala de impedimento, e o
+        // foco traz Impedimento_Ataque pela aresta `recomenda`, nao esse lance.
+        const partida: FutContext = {
+            ...LEITURA_FUT,
+            telemetria: { ...LEITURA_FUT.telemetria, distancia_ultimo_defensor: 0.5 },
+            intencao: 'foi impedimento'
+        };
         const constraints = retrieveFutConstraints(fut, partida);
         const foco = await retrieverFocoFut(SEM_SESSAO, partida.intencao!, fut, SEM_SINAL);
-        assert.ok(constraints.lancesAtivos.some(l => l.nome === 'Penalti_Na_Area'), 'pre-condicao: lance ativo');
-        assert.ok(!foco.lances.has('Penalti_Na_Area') && foco.infracoes.has('Impedimento'),
+        assert.ok(constraints.lancesAtivos.some(l => l.nome === 'Posicao_Legal_No_Passe'), 'pre-condicao: lance ativo');
+        assert.ok(!foco.lances.has('Posicao_Legal_No_Passe') && foco.infracoes.has('Impedimento'),
             'pre-condicao: lance que veta fora do foco, infracao dentro');
 
         const antes = futPruningPayload(constraints, partida);
@@ -368,7 +375,7 @@ async function main(): Promise<void> {
         const depois = futPruningPayload(focadas, partida);
         assert.deepEqual(decisoesDe(depois, 'Impedimento'), decisoesDe(antes, 'Impedimento'));
         assert.equal(depois.politicas.find(p => p.item === 'Impedimento')!.bloqueado, true);
-        assert.ok(focadas.vetados.some(v => v.infracao === 'Impedimento' && v.lance === 'Penalti_Na_Area'));
+        assert.ok(focadas.vetados.some(v => v.infracao === 'Impedimento' && v.lance === 'Posicao_Legal_No_Passe'));
     });
 
     console.log('\n[caso 4: nenhum foco amplia, em 200 cenarios por dominio]');
