@@ -25,45 +25,28 @@ import * as http from 'node:http';
 import neo4j, { type Driver } from 'neo4j-driver';
 
 import { loadModel } from '../database/neo4j.js';
-import {
-    retrieveConstraints,
-    pruningPayload,
-    retrieverFoco,
-    filtrarPorFoco,
-    type ClinicalContext
-} from '../knowledge/graphrag.js';
+import { retrieveConstraints, type ClinicalContext } from '../knowledge/graphrag.js';
 import { montarPromptSemantico, gerarPlanoRestrito } from '../inference/llm-client.js';
 
 import { loadAgroModel } from '../database/neo4j-agro.js';
-import {
-    retrieveAgroConstraints,
-    agroPruningPayload,
-    retrieverFocoAgro,
-    filtrarPorFocoAgro,
-    type AgroContext
-} from '../knowledge/graphrag-agro.js';
+import { retrieveAgroConstraints, type AgroContext } from '../knowledge/graphrag-agro.js';
 import { montarPromptSemanticoAgro, gerarMissaoRestrita } from '../inference/agro-client.js';
 
 import { loadFutModel } from '../database/neo4j-fut.js';
-import {
-    retrieveFutConstraints,
-    futPruningPayload,
-    retrieverFocoFut,
-    filtrarPorFocoFut,
-    type FutContext
-} from '../knowledge/graphrag-fut.js';
+import { retrieveFutConstraints, type FutContext } from '../knowledge/graphrag-fut.js';
 import { montarPromptSemanticoFut, gerarArbitragemRestrita } from '../inference/fut-client.js';
 
+import type { AuditoriaRecuperacao } from '../knowledge/recuperacao-hibrida.js';
 import {
-    modoRecuperacao,
-    prepararHibridoTolerante,
-    resumoAuditoria,
-    auditoriaVazia,
-    type AuditoriaRecuperacao
-} from '../knowledge/recuperacao-hibrida.js';
-import type { SinalVetorial } from '../knowledge/foco.js';
-import type { SubgrafoPodado } from '../knowledge/politica.js';
-import { refinarPolitica } from '../knowledge/recuperacao-politica.js';
+    ADAPTADOR_AGRO,
+    ADAPTADOR_FUT,
+    ADAPTADOR_MED,
+    recuperarConhecimento,
+    type EmitirEstagio,
+    type FocoResposta
+} from '../inference/recuperacao-conhecimento.js';
+import { ehResultadoMultiagente, type ResultadoDecodificacao } from '../inference/decodificacao.js';
+import { resumoExecucao, type ResumoExecucao } from '../inference/multiagente.js';
 
 import { textoGerado } from '../inference/avaliar.js';
 import {
@@ -214,14 +197,7 @@ interface RespostaComando {
     aceito: boolean;
     motivoValidacao?: string;
     sorteio?: Record<string, unknown>;
-    foco?: {
-        farmacos?: string[];
-        protocolos?: string[];
-        produtos?: string[];
-        culturas?: string[];
-        infracoes?: string[];
-        lances?: string[];
-    } | null;
+    foco?: FocoResposta | null;
     focoIndisponivel?: string;
     promptSemantico?: string;
     decisoesAdmissiveis?: string[];
@@ -231,19 +207,13 @@ interface RespostaComando {
     regrasEmGHat?: number;
     /** Trilha da recuperacao: modo, consulta semantica, candidatos, vereditos. */
     auditoriaRecuperacao?: AuditoriaRecuperacao;
+    /** So com SPC_CML_DECODIFICACAO=multiagente: status, tentativas do Planner e sequencia candidata. */
+    execucaoMultiagente?: ResumoExecucao;
 }
 
-type EmitirEstagio = (texto: string) => Promise<void>;
-
-/**
- * Lista o foco anotando de onde cada no veio — lexical (o usuario escreveu o
- * nome), vetorial (similaridade no indice) ou grafo (entrou junto pela aresta).
- * E o que permite auditar, na propria interface, se o subgrafo ativado
- * corresponde ao que foi pedido.
- */
-function descreverFoco(nomes: Set<string>, origem: Map<string, string>): string {
-    if (nomes.size === 0) return '—';
-    return [...nomes].map(n => `${n} (${origem.get(n) ?? 'grafo'})`).join(', ');
+/** O campo `execucaoMultiagente`, quando a resposta veio do modo multiagente; nos demais, nada. */
+function execucaoMultiagente(resposta: ResultadoDecodificacao): Pick<RespostaComando, 'execucaoMultiagente'> {
+    return ehResultadoMultiagente(resposta) ? { execucaoMultiagente: resumoExecucao(resposta.execucao) } : {};
 }
 
 /** Etapas locais (sorteio/grafo/embedding) terminam em milissegundos — sem uma
@@ -275,69 +245,12 @@ async function processarMed(
         contexto = { ...paciente, telemetria, intencao: texto };
     }
 
-    await estagio('Buscando regras no grafo de conhecimento…');
-    let constraints = retrieveConstraints(modeloMed, contexto);
-    await estagio(
-        `Regras recuperadas: ${constraints.protocolosAtivos.length} protocolos ativos, ` +
-            `${constraints.bloqueios.length} bloqueios, ${constraints.vetados.length} vetos`
-    );
-
-    let foco: RespostaComando['foco'] = null;
-    let focoIndisponivel: string | undefined;
-
-    // Modo de recuperacao: o padrao continua sendo o caminho deterministico.
-    // No modo hibrido, o RAG embute a consulta semantica e consulta os dois
-    // indices UMA vez; o foco reaproveita esse sinal em vez de buscar de novo.
-    const modo = modoRecuperacao();
-    let auditoriaRecuperacao: AuditoriaRecuperacao = auditoriaVazia(modo, 'med', texto);
-    let sinal: SinalVetorial | undefined;
-
-    await estagio('Calculando foco por embedding no subgrafo…');
-    const session = driver.session();
-    try {
-        if (modo === 'hibrida_rag_cypher') {
-            const hibrido = await prepararHibridoTolerante('med', contexto, session);
-            auditoriaRecuperacao = hibrido.auditoria;
-            sinal = hibrido.preparo?.sinal;
-            await estagio(resumoAuditoria(auditoriaRecuperacao));
-        }
-        const f = await retrieverFoco(session, texto, modeloMed, sinal);
-        constraints = filtrarPorFoco(constraints, f, modeloMed, contexto);
-        auditoriaRecuperacao.foco = { itens: [...f.farmacos], contextos: [...f.protocolos] };
-        foco = { farmacos: [...f.farmacos], protocolos: [...f.protocolos] };
-        await estagio(
-            `Foco recuperado: farmacos [${descreverFoco(f.farmacos, f.origem)}], ` +
-                `protocolos [${descreverFoco(f.protocolos, f.origem)}]`
-        );
-    } catch (error) {
-        focoIndisponivel = (error as Error).message;
-        await estagio('Foco por embedding indisponível — seguindo com o grafo completo');
-    } finally {
-        await session.close();
-    }
-
-    const poda = pruningPayload(constraints, contexto);
-    // Refinamento: as regras que o Cypher confirmou estreitam a politica
-    // deterministica. `refinarPolitica` barra com excecao qualquer resultado que
-    // nao seja subconjunto dela — fail-closed, sem fallback para a politica mais
-    // ampla. A excecao sobe ate o handler SSE e a geracao NAO acontece.
-    let subgrafoRefinado: SubgrafoPodado | undefined;
-    if (auditoriaRecuperacao.validacao.length > 0) {
-        const rec = refinarPolitica(poda, auditoriaRecuperacao.validacao);
-        auditoriaRecuperacao.reconciliacaoPolitica = {
-            concordam: rec.concordam, ajustes: rec.ajustes, divergencias: rec.divergencias
-        };
-        subgrafoRefinado = rec.subgrafo;
-    }
-    // A POLITICA EFETIVA desta requisicao: a que alimenta o prompt, a
-    // gramatica, o contrato e a resposta da API. Uma variavel so, consumida
-    // por todos — sem ela cada consumidor escolhia a sua, e a API chegou a
-    // anunciar decisoes que a geracao ja nao admitia.
-    const politicaEfetiva = subgrafoRefinado ?? poda;
-    auditoriaRecuperacao.politicas = politicaEfetiva.politicas.map(pi => ({
-        item: pi.item, decisoes: pi.decisoes, bloqueado: pi.bloqueado
-    }));
-    const promptSemantico = montarPromptSemantico(constraints, contexto, politicaEfetiva);
+    // Recuperacao, foco, poda, refinamento, politica efetiva e Prompt Semantico:
+    // o bloco comum aos tres dominios, em src/inference/recuperacao-conhecimento.ts.
+    // `politicaEfetiva` e a unica politica da requisicao — prompt, gramatica,
+    // contrato e resposta da API leem esta.
+    const conhecimento = await recuperarConhecimento(ADAPTADOR_MED, modeloMed, contexto, texto, estagio, () => driver.session());
+    const { constraints, foco, focoIndisponivel, auditoriaRecuperacao, politicaEfetiva, promptSemantico } = conhecimento;
     const sorteio = { paciente: contexto.paciente, telemetria, populacoes: contexto.populacoes, farmacosEmUso: contexto.farmacosEmUso };
 
     let motivoValidacao: string | undefined;
@@ -351,7 +264,7 @@ async function processarMed(
     }
 
     await estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
-    const resposta = await gerarPlanoRestrito(contexto, constraints, modeloMed, politicaEfetiva);
+    const resposta = await gerarPlanoRestrito(contexto, constraints, modeloMed, politicaEfetiva, conhecimento);
     await estagio('Plano gerado.');
 
     return {
@@ -366,7 +279,8 @@ async function processarMed(
         valido: resposta.valido,
         erroMotor: resposta.erro,
         regrasEmGHat: resposta.regras_em_g_hat,
-        auditoriaRecuperacao
+        auditoriaRecuperacao,
+        ...execucaoMultiagente(resposta)
     };
 }
 
@@ -394,69 +308,9 @@ async function processarAgro(
         contexto = { ...talhao, telemetria, intencao: texto };
     }
 
-    await estagio('Buscando regras no grafo de conhecimento…');
-    let constraints = retrieveAgroConstraints(modeloAgro, contexto);
-    await estagio(
-        `Regras recuperadas: ${constraints.culturasAtivas.length} culturas ativas, ` +
-            `${constraints.bloqueios.length} bloqueios, ${constraints.vetados.length} vetos`
-    );
-
-    let foco: RespostaComando['foco'] = null;
-    let focoIndisponivel: string | undefined;
-
-    // Modo de recuperacao: o padrao continua sendo o caminho deterministico.
-    // No modo hibrido, o RAG embute a consulta semantica e consulta os dois
-    // indices UMA vez; o foco reaproveita esse sinal em vez de buscar de novo.
-    const modo = modoRecuperacao();
-    let auditoriaRecuperacao: AuditoriaRecuperacao = auditoriaVazia(modo, 'agro', texto);
-    let sinal: SinalVetorial | undefined;
-
-    await estagio('Calculando foco por embedding no subgrafo…');
-    const session = driver.session();
-    try {
-        if (modo === 'hibrida_rag_cypher') {
-            const hibrido = await prepararHibridoTolerante('agro', contexto, session);
-            auditoriaRecuperacao = hibrido.auditoria;
-            sinal = hibrido.preparo?.sinal;
-            await estagio(resumoAuditoria(auditoriaRecuperacao));
-        }
-        const f = await retrieverFocoAgro(session, texto, modeloAgro, sinal);
-        constraints = filtrarPorFocoAgro(constraints, f, modeloAgro, contexto);
-        auditoriaRecuperacao.foco = { itens: [...f.produtos], contextos: [...f.culturas] };
-        foco = { produtos: [...f.produtos], culturas: [...f.culturas] };
-        await estagio(
-            `Foco recuperado: produtos [${descreverFoco(f.produtos, f.origem)}], ` +
-                `culturas [${descreverFoco(f.culturas, f.origem)}]`
-        );
-    } catch (error) {
-        focoIndisponivel = (error as Error).message;
-        await estagio('Foco por embedding indisponível — seguindo com o grafo completo');
-    } finally {
-        await session.close();
-    }
-
-    const poda = agroPruningPayload(constraints, contexto);
-    // Refinamento: as regras que o Cypher confirmou estreitam a politica
-    // deterministica. `refinarPolitica` barra com excecao qualquer resultado que
-    // nao seja subconjunto dela — fail-closed, sem fallback para a politica mais
-    // ampla. A excecao sobe ate o handler SSE e a geracao NAO acontece.
-    let subgrafoRefinado: SubgrafoPodado | undefined;
-    if (auditoriaRecuperacao.validacao.length > 0) {
-        const rec = refinarPolitica(poda, auditoriaRecuperacao.validacao);
-        auditoriaRecuperacao.reconciliacaoPolitica = {
-            concordam: rec.concordam, ajustes: rec.ajustes, divergencias: rec.divergencias
-        };
-        subgrafoRefinado = rec.subgrafo;
-    }
-    // A POLITICA EFETIVA desta requisicao: a que alimenta o prompt, a
-    // gramatica, o contrato e a resposta da API. Uma variavel so, consumida
-    // por todos — sem ela cada consumidor escolhia a sua, e a API chegou a
-    // anunciar decisoes que a geracao ja nao admitia.
-    const politicaEfetiva = subgrafoRefinado ?? poda;
-    auditoriaRecuperacao.politicas = politicaEfetiva.politicas.map(pi => ({
-        item: pi.item, decisoes: pi.decisoes, bloqueado: pi.bloqueado
-    }));
-    const promptSemantico = montarPromptSemanticoAgro(constraints, contexto, politicaEfetiva);
+    // Bloco comum aos tres dominios — ver `recuperarConhecimento`.
+    const conhecimento = await recuperarConhecimento(ADAPTADOR_AGRO, modeloAgro, contexto, texto, estagio, () => driver.session());
+    const { constraints, foco, focoIndisponivel, auditoriaRecuperacao, politicaEfetiva, promptSemantico } = conhecimento;
     const sorteio = { talhao: contexto.talhao, telemetria, areas: contexto.areas, produtosEmUso: contexto.produtosEmUso };
 
     let motivoValidacao: string | undefined;
@@ -470,7 +324,7 @@ async function processarAgro(
     }
 
     await estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
-    const resposta = await gerarMissaoRestrita(contexto, constraints, modeloAgro, politicaEfetiva);
+    const resposta = await gerarMissaoRestrita(contexto, constraints, modeloAgro, politicaEfetiva, conhecimento);
     await estagio('Missão gerada.');
 
     return {
@@ -485,7 +339,8 @@ async function processarAgro(
         valido: resposta.valido,
         erroMotor: resposta.erro,
         regrasEmGHat: resposta.regras_em_g_hat,
-        auditoriaRecuperacao
+        auditoriaRecuperacao,
+        ...execucaoMultiagente(resposta)
     };
 }
 
@@ -513,69 +368,9 @@ async function processarFut(
         contexto = { ...partida, telemetria, intencao: texto };
     }
 
-    await estagio('Buscando regras no grafo de conhecimento…');
-    let constraints = retrieveFutConstraints(modeloFut, contexto);
-    await estagio(
-        `Regras recuperadas: ${constraints.lancesAtivos.length} lances ativos, ` +
-            `${constraints.bloqueios.length} bloqueios, ${constraints.vetados.length} vetos`
-    );
-
-    let foco: RespostaComando['foco'] = null;
-    let focoIndisponivel: string | undefined;
-
-    // Modo de recuperacao: o padrao continua sendo o caminho deterministico.
-    // No modo hibrido, o RAG embute a consulta semantica e consulta os dois
-    // indices UMA vez; o foco reaproveita esse sinal em vez de buscar de novo.
-    const modo = modoRecuperacao();
-    let auditoriaRecuperacao: AuditoriaRecuperacao = auditoriaVazia(modo, 'fut', texto);
-    let sinal: SinalVetorial | undefined;
-
-    await estagio('Calculando foco por embedding no subgrafo…');
-    const session = driver.session();
-    try {
-        if (modo === 'hibrida_rag_cypher') {
-            const hibrido = await prepararHibridoTolerante('fut', contexto, session);
-            auditoriaRecuperacao = hibrido.auditoria;
-            sinal = hibrido.preparo?.sinal;
-            await estagio(resumoAuditoria(auditoriaRecuperacao));
-        }
-        const f = await retrieverFocoFut(session, texto, modeloFut, sinal);
-        constraints = filtrarPorFocoFut(constraints, f, modeloFut, contexto);
-        auditoriaRecuperacao.foco = { itens: [...f.infracoes], contextos: [...f.lances] };
-        foco = { infracoes: [...f.infracoes], lances: [...f.lances] };
-        await estagio(
-            `Foco recuperado: infracoes [${descreverFoco(f.infracoes, f.origem)}], ` +
-                `lances [${descreverFoco(f.lances, f.origem)}]`
-        );
-    } catch (error) {
-        focoIndisponivel = (error as Error).message;
-        await estagio('Foco por embedding indisponível — seguindo com o grafo completo');
-    } finally {
-        await session.close();
-    }
-
-    const poda = futPruningPayload(constraints, contexto);
-    // Refinamento: as regras que o Cypher confirmou estreitam a politica
-    // deterministica. `refinarPolitica` barra com excecao qualquer resultado que
-    // nao seja subconjunto dela — fail-closed, sem fallback para a politica mais
-    // ampla. A excecao sobe ate o handler SSE e a geracao NAO acontece.
-    let subgrafoRefinado: SubgrafoPodado | undefined;
-    if (auditoriaRecuperacao.validacao.length > 0) {
-        const rec = refinarPolitica(poda, auditoriaRecuperacao.validacao);
-        auditoriaRecuperacao.reconciliacaoPolitica = {
-            concordam: rec.concordam, ajustes: rec.ajustes, divergencias: rec.divergencias
-        };
-        subgrafoRefinado = rec.subgrafo;
-    }
-    // A POLITICA EFETIVA desta requisicao: a que alimenta o prompt, a
-    // gramatica, o contrato e a resposta da API. Uma variavel so, consumida
-    // por todos — sem ela cada consumidor escolhia a sua, e a API chegou a
-    // anunciar decisoes que a geracao ja nao admitia.
-    const politicaEfetiva = subgrafoRefinado ?? poda;
-    auditoriaRecuperacao.politicas = politicaEfetiva.politicas.map(pi => ({
-        item: pi.item, decisoes: pi.decisoes, bloqueado: pi.bloqueado
-    }));
-    const promptSemantico = montarPromptSemanticoFut(constraints, contexto, politicaEfetiva);
+    // Bloco comum aos tres dominios — ver `recuperarConhecimento`.
+    const conhecimento = await recuperarConhecimento(ADAPTADOR_FUT, modeloFut, contexto, texto, estagio, () => driver.session());
+    const { constraints, foco, focoIndisponivel, auditoriaRecuperacao, politicaEfetiva, promptSemantico } = conhecimento;
     const sorteio = { partida: contexto.partida, telemetria, contextos: contexto.contextos, infracoesEmUso: contexto.infracoesEmUso };
 
     let motivoValidacao: string | undefined;
@@ -589,7 +384,7 @@ async function processarFut(
     }
 
     await estagio('Iniciando Grammar Prompting (geração restrita por gramática)…');
-    const resposta = await gerarArbitragemRestrita(contexto, constraints, modeloFut, politicaEfetiva);
+    const resposta = await gerarArbitragemRestrita(contexto, constraints, modeloFut, politicaEfetiva, conhecimento);
     await estagio('Decisão gerada.');
 
     return {
@@ -604,7 +399,8 @@ async function processarFut(
         valido: resposta.valido,
         erroMotor: resposta.erro,
         regrasEmGHat: resposta.regras_em_g_hat,
-        auditoriaRecuperacao
+        auditoriaRecuperacao,
+        ...execucaoMultiagente(resposta)
     };
 }
 

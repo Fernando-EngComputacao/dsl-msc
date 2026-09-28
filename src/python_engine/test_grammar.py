@@ -19,7 +19,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
 from bnf import load_bnf, parse_bnf, build_parser, specialize, to_gbnf  # noqa: E402
-from grammar_from_kg import gramatica_do_subgrafo  # noqa: E402
+from grammar_from_kg import (  # noqa: E402
+    INICIO_PI,
+    INICIO_PLANNER,
+    gramatica_do_pi,
+    gramatica_do_planner,
+    gramatica_do_subgrafo,
+)
 
 GRAMMAR_PATH = os.path.join(BASE_DIR, "grammar", "advanced_icu.bnf")
 
@@ -287,6 +293,181 @@ def main() -> int:
 
     gbnf = to_gbnf(rules, start="plano")
     print(f"[9] GBNF exportada para mascaramento de logits: {len(gbnf.splitlines())} regras")
+
+    # ------------------------------------------------------------ Planner
+    # A gramatica do Planner e outra linguagem: pares (item, conduta), sem
+    # decisao, meio, valor nem justificativa. O que ela garante por construcao
+    # e vocabulario e estrutura; a semantica do par fica para o validador.
+    regras_p = gramatica_do_planner(
+        ["Noradrenalina", "Propofol", "Vasopressina"], ["Titular_Vasopressor", "Manter_Bloqueio"], 3
+    )
+    parser_p = build_parser(regras_p, start=INICIO_PLANNER)
+
+    def _aceita_p(programa):
+        try:
+            parser_p.parse(programa)
+            return True
+        except Exception:
+            return False
+
+    valido_p = (
+        "PLANO 1 | Noradrenalina | Titular_Vasopressor | [ ] "
+        "2 | Propofol | Manter_Bloqueio | [ 1 ] FIM"
+    )
+    casos_planner = [
+        ("aceita a sequencia de pares", _aceita_p(valido_p)),
+        ("aceita o mesmo texto com quebras de linha", _aceita_p(valido_p.replace(" 2 |", "\n2 |").replace(" FIM", "\nFIM"))),
+        ("aceita varias dependencias anteriores",
+         _aceita_p("PLANO 1 | Noradrenalina | Titular_Vasopressor | [ ] 2 | Propofol | Manter_Bloqueio | [ 1 ] "
+                   "3 | Vasopressina | Titular_Vasopressor | [ 1 , 2 ] FIM")),
+        ("recusa item inexistente", not _aceita_p(valido_p.replace("Propofol", "Dopamina"))),
+        ("recusa conduta inexistente", not _aceita_p(valido_p.replace("Manter_Bloqueio", "Turbinar_Droga"))),
+        ("recusa dependencia futura", not _aceita_p(valido_p.replace("Titular_Vasopressor | [ ]", "Titular_Vasopressor | [ 2 ]"))),
+        ("recusa dependencia de si mesmo", not _aceita_p(valido_p.replace("[ 1 ]", "[ 2 ]"))),
+        ("recusa posicao fora de ordem", not _aceita_p(valido_p.replace(" 2 |", " 3 |"))),
+        ("recusa plano vazio", not _aceita_p("PLANO FIM")),
+        ("recusa mais posicoes que o teto",
+         not _aceita_p("PLANO " + " ".join(f"{k} | Propofol | Manter_Bloqueio | [ ]" for k in range(1, 5)) + " FIM")),
+        ("recusa campo de acao", not _aceita_p(valido_p.replace("[ 1 ] FIM", "[ 1 ] | AUMENTAR_VAZAO FIM"))),
+        ("recusa justificativa", not _aceita_p(valido_p.replace("[ 1 ] FIM", "[ 1 ] 'porque a PAM caiu' FIM"))),
+        ("recusa texto livre", not _aceita_p("Aqui esta o plano: 1. subir a noradrenalina")),
+        ("nenhuma regra da clausula entra", not any(n in regras_p for n in ("ordem", "decisao", "via", "quantidade"))),
+        ("sem candidatos, sem gramatica", gramatica_do_planner([], ["Manter_Bloqueio"], 3) == {}
+         and gramatica_do_planner(["Propofol"], [], 3) == {}),
+    ]
+    # Restricao progressiva: o item cujo par foi reprovado fica amarrado as
+    # condutas que realiza; os demais continuam livres.
+    regras_r = gramatica_do_planner(
+        ["Noradrenalina", "Propofol", "Vasopressina"], ["Titular_Vasopressor", "Manter_Bloqueio"], 3,
+        {"Propofol": ["Manter_Bloqueio"]},
+    )
+    parser_r = build_parser(regras_r, start=INICIO_PLANNER)
+
+    def _aceita_r(programa):
+        try:
+            parser_r.parse(programa)
+            return True
+        except Exception:
+            return False
+
+    casos_planner += [
+        ("restricao: o par reprovado deixa de ser exprimivel",
+         not _aceita_r("PLANO 1 | Propofol | Titular_Vasopressor | [ ] FIM")),
+        ("restricao: o item segue com as condutas que realiza",
+         _aceita_r("PLANO 1 | Propofol | Manter_Bloqueio | [ ] FIM")),
+        ("restricao: item sem erro continua livre",
+         _aceita_r("PLANO 1 | Noradrenalina | Titular_Vasopressor | [ ] 2 | Noradrenalina | Manter_Bloqueio | [ ] FIM")),
+    ]
+    parser_v = build_parser(
+        gramatica_do_planner(["Propofol", "Vasopressina"], ["Manter_Bloqueio"], 2, {"Propofol": []}),
+        start=INICIO_PLANNER,
+    )
+
+    def _aceita_v(programa):
+        try:
+            parser_v.parse(programa)
+            return True
+        except Exception:
+            return False
+
+    casos_planner.append((
+        "restricao vazia tira o item da gramatica",
+        _aceita_v("PLANO 1 | Vasopressina | Manter_Bloqueio | [ ] FIM")
+        and not _aceita_v("PLANO 1 | Propofol | Manter_Bloqueio | [ ] FIM"),
+    ))
+
+    gbnf_p = to_gbnf(regras_p, start=INICIO_PLANNER)
+    casos_planner.append(("GBNF do Planner exportavel", gbnf_p.startswith("root ::= plano-pi")))
+    try:
+        from llama_cpp import LlamaGrammar  # opcional: so confere se a GBNF compila no llama.cpp
+    except ImportError:
+        LlamaGrammar = None
+    if LlamaGrammar is not None:
+        try:
+            LlamaGrammar.from_string(gbnf_p, verbose=False)
+            LlamaGrammar.from_string(to_gbnf(regras_r, start=INICIO_PLANNER), verbose=False)
+            compila = True
+        except Exception:
+            compila = False
+        casos_planner.append(("GBNF do Planner (com e sem restricao) compila no parser do llama.cpp", compila))
+
+    print("[10] Gramatica do Planner (pares item-conduta, sem acao):")
+    for descricao, ok in casos_planner:
+        if not ok:
+            falhas += 1
+        print(f"      {'ok' if ok else 'FALHA'}: {descricao}")
+
+    # ------------------------------------------------------------ PI Agent
+    # A gramatica do PI e a clausula especializada de UM item, com ordem e
+    # conduta fixadas no cabecalho. O payload e o de um PI: uma politica, ja
+    # restrita as decisoes da conduta (aqui, Titular_Vasopressor -> AUMENTAR_VAZAO).
+    payload_pi = {
+        "papeis": subgrafo_especializado["papeis"],
+        "constantes": subgrafo_especializado["constantes"],
+        "acoes_permitidas": ["AUMENTAR_VAZAO"],
+        "farmacos_liberados": ["Noradrenalina"],
+        "vias_disponiveis": ["ACESSO_CENTRAL"],
+        "politicas": [{
+            "item": "Noradrenalina",
+            "decisoes": ["AUMENTAR_VAZAO"],
+            "meios": ["ACESSO_CENTRAL"],
+            "unidades": ["mcg/kg/min"],
+            "valores": [],
+            "valoresPorDecisao": {
+                "AUMENTAR_VAZAO": [{"valor": "0.05", "unidade": "mcg/kg/min"}, {"valor": "0.1", "unidade": "mcg/kg/min"}]
+            },
+            "bloqueado": False,
+            "motivos": [],
+        }],
+    }
+    regras_pi = gramatica_do_pi(payload_pi, rules, 2, "Titular_Vasopressor")
+    parser_pi = build_parser(regras_pi, start=INICIO_PI)
+
+    def _aceita_pi(programa):
+        try:
+            parser_pi.parse(programa)
+            return True
+        except Exception:
+            return False
+
+    valido_pi = (
+        "PI 2 | Titular_Vasopressor | ordem Noradrenalina decisao AUMENTAR_VAZAO dose 0.05 mcg/kg/min "
+        "via ACESSO_CENTRAL justificativa 'PAM 52 abaixo de 65 no Choque_Septico' FIM"
+    )
+    casos_pi = [
+        ("aceita a clausula do PI", _aceita_pi(valido_pi)),
+        ("aceita outro valor admissivel da decisao", _aceita_pi(valido_pi.replace("dose 0.05", "dose 0.1"))),
+        ("recusa outra ordem", not _aceita_pi(valido_pi.replace("PI 2 |", "PI 1 |"))),
+        ("recusa outra conduta", not _aceita_pi(valido_pi.replace("| Titular_Vasopressor |", "| Manter_Bloqueio |"))),
+        ("recusa outro item", not _aceita_pi(valido_pi.replace("ordem Noradrenalina", "ordem Vasopressina"))),
+        ("recusa decisao fora da conduta", not _aceita_pi(valido_pi.replace("AUMENTAR_VAZAO", "MANTER_BLOQUEADO"))),
+        ("recusa valor fora do reticulo da decisao", not _aceita_pi(valido_pi.replace("dose 0.05", "dose 0.4"))),
+        ("recusa meio fora do item", not _aceita_pi(valido_pi.replace("via ACESSO_CENTRAL", "via ACESSO_PERIFERICO"))),
+        ("recusa duas acoes", not _aceita_pi(valido_pi.replace(" FIM", " ordem Noradrenalina decisao AUMENTAR_VAZAO dose 0.1 mcg/kg/min via ACESSO_CENTRAL justificativa 'x' FIM"))),
+        ("recusa segundo PI", not _aceita_pi(valido_pi + " " + valido_pi)),
+        ("recusa texto livre", not _aceita_pi("Aqui esta a acao: subir a noradrenalina")),
+        ("recusa sem FIM", not _aceita_pi(valido_pi[: -len(" FIM")])),
+        ("nenhuma regra do artefato entra (sem prefixo, sem cabecalho de plano)",
+         not any(n in regras_pi for n in ("plano", "sequencia", "conduta", "alerta"))),
+        ("payload sem politica unica, sem gramatica",
+         gramatica_do_pi({**payload_pi, "politicas": []}, rules, 1, "Titular_Vasopressor") == {}
+         and gramatica_do_pi({**payload_pi, "politicas": subgrafo_especializado["politicas"]}, rules, 1, "Titular_Vasopressor") == {}),
+    ]
+    gbnf_pi = to_gbnf(regras_pi, start=INICIO_PI)
+    casos_pi.append(("GBNF do PI exportavel", gbnf_pi.startswith("root ::= resultado-pi")))
+    if LlamaGrammar is not None:
+        try:
+            LlamaGrammar.from_string(gbnf_pi, verbose=False)
+            compila_pi = True
+        except Exception:
+            compila_pi = False
+        casos_pi.append(("GBNF do PI compila no parser do llama.cpp", compila_pi))
+
+    print("[11] Gramatica do PI Agent (uma clausula, ordem e conduta fixas):")
+    for descricao, ok in casos_pi:
+        if not ok:
+            falhas += 1
+        print(f"      {'ok' if ok else 'FALHA'}: {descricao}")
 
     print("\nRESULTADO:", "OK" if falhas == 0 else f"{falhas} falha(s)")
     return 0 if falhas == 0 else 1

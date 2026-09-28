@@ -439,6 +439,24 @@ export function condutasRealizaveis(
 }
 
 /**
+ * Condutas que UM item pode realizar: as do `esquema_dados` para as quais a
+ * politica dele admite alguma decisao. E o recorte por item de
+ * `condutasRealizaveis`, com o mesmo criterio — a uniao disto sobre os itens da
+ * politica e aquele conjunto (sem estado incremental).
+ */
+export function condutasDoItem(contrato: ContratoArtefato, item: string): string[] {
+    const politica = contrato.politicas.get(item);
+    if (!politica) return [];
+    return [
+        ...new Set(
+            politica.decisoes
+                .map(d => contrato.condutaPorDecisao[d])
+                .filter((c): c is string => Boolean(c))
+        )
+    ];
+}
+
+/**
  * Condutas que o artefato e OBRIGADO a conter. Hoje, as que materializam um
  * escalonamento disparado pelo grafo: se a arquitetura mandou acionar a equipe,
  * o plano nao pode terminar sem dizer quem foi acionado.

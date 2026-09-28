@@ -34,7 +34,7 @@
         "test:earley": "tsx src/test/earley.test.ts",
         "test:avaliar": "tsx src/test/avaliar.test.ts",
         "test:grammar": "cd src/python_engine && python test_grammar.py",
-        "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:foco-politica && npm run test:foco && npm run test:recuperacao && npm run test:consulta && npm run test:rag && npm run test:cypher && npm run test:hibrida && npm run test:rastro && npm run test:politica && npm run test:restricoes && npm run test:geracao && npm run test:contrato && npm run test:incremental && npm run test:grammar",
+        "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:foco-politica && npm run test:foco && npm run test:recuperacao && npm run test:consulta && npm run test:rag && npm run test:cypher && npm run test:hibrida && npm run test:rastro && npm run test:politica && npm run test:restricoes && npm run test:geracao && npm run test:contrato && npm run test:incremental && npm run test:recuperacao-conhecimento && npm run test:multiagente && npm run test:planner && npm run test:validacao-sequencia && npm run test:planner-retry && npm run test:decompositor && npm run test:pi-agent && npm run test:pi-scheduler && npm run test:validacao-global && npm run test:grammar",
         "test:foco-politica": "tsx src/test/foco-politica.test.ts",
         "test:foco": "tsx src/test/foco.test.ts",
         "test:recuperacao": "tsx src/test/recuperacao.test.ts",
@@ -48,7 +48,17 @@
         "test:geracao": "tsx src/test/geracao-refinada.test.ts",
         "test:equivalencia": "tsx src/test/equivalencia.test.ts",
         "test:contrato": "tsx src/test/contrato.test.ts",
-        "test:incremental": "tsx src/test/incremental.test.ts"
+        "test:incremental": "tsx src/test/incremental.test.ts",
+        "test:recuperacao-conhecimento": "tsx src/test/recuperacao-conhecimento.test.ts",
+        "test:multiagente": "tsx src/test/multiagente.test.ts",
+        "test:planner": "tsx src/test/planner.test.ts",
+        "test:validacao-sequencia": "tsx src/test/validacao-sequencia.test.ts",
+        "test:planner-retry": "tsx src/test/planner-retry.test.ts",
+        "test:decompositor": "tsx src/test/decompositor.test.ts",
+        "test:pi-agent": "tsx src/test/pi-agent.test.ts",
+        "test:pi-scheduler": "tsx src/test/pi-scheduler.test.ts",
+        "test:validacao-global": "tsx src/test/validacao-global.test.ts",
+        "smoke:planner": "tsx src/cli/smoke-planner.ts"
     },
     "keywords": [
         "dsl",

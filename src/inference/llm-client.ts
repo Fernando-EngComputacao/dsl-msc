@@ -22,6 +22,7 @@ import {
     pruningPayload,
     condutasPorDecisaoMed,
     esquemaDeDadosMed,
+    esquemaDeclaradoMed,
     type ClinicalContext,
     type RetrievedConstraints
 } from '../knowledge/graphrag.js';
@@ -32,6 +33,7 @@ import {
     type SubgrafoPodado
 } from '../knowledge/politica.js';
 import type { MedicalModel } from '../generated/ast.js';
+import type { ConhecimentoRecuperado } from './recuperacao-conhecimento.js';
 
 const ENDPOINT = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
 
@@ -190,7 +192,9 @@ export function montarEntradaGeracao(
     contexto: ClinicalContext,
     constraints: RetrievedConstraints,
     model?: MedicalModel,
-    subgrafoRefinado?: SubgrafoPodado
+    subgrafoRefinado?: SubgrafoPodado,
+    /** A recuperacao inteira da requisicao. So o modo multiagente a le; sem ela, a entrada e a de sempre. */
+    conhecimento?: ConhecimentoRecuperado<RetrievedConstraints>
 ): OpcoesDecodificacao {
     const subgrafo = subgrafoRefinado ?? pruningPayload(constraints, contexto);
     const contrato = montarContrato(
@@ -209,7 +213,10 @@ export function montarEntradaGeracao(
         subgrafo,
         contrato,
         endpoint: ENDPOINT,
-        timeoutMs: TIMEOUT_MS
+        timeoutMs: TIMEOUT_MS,
+        ...(conhecimento
+            ? { execucao: { dominio: 'med' as const, contexto, conhecimento, ...(model ? { esquema: esquemaDeclaradoMed(model) } : {}) } }
+            : {})
     };
 }
 
@@ -218,9 +225,11 @@ export async function gerarPlanoRestrito(
     constraints: RetrievedConstraints,
     model?: MedicalModel,
     /** Poda ja refinada pelo caminho hibrido. Ausente: comportamento de sempre. */
-    subgrafoRefinado?: SubgrafoPodado
+    subgrafoRefinado?: SubgrafoPodado,
+    /** Ver `montarEntradaGeracao`: so o modo multiagente usa. */
+    conhecimento?: ConhecimentoRecuperado<RetrievedConstraints>
 ): Promise<ResultadoDecodificacao> {
-    return decodificar(montarEntradaGeracao(contexto, constraints, model, subgrafoRefinado));
+    return decodificar(montarEntradaGeracao(contexto, constraints, model, subgrafoRefinado, conhecimento));
 }
 
 // ---------------------------------------------------------------------------

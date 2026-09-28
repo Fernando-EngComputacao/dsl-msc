@@ -48,7 +48,9 @@ import {
     montarSubgrafo,
     reticuloDeValores,
     valoresPorDecisao,
+    atributosDeclarados,
     type ConstantesCenario,
+    type EsquemaDeclarado,
     type PapeisDominio,
     type PoliticaItem,
     type SubgrafoPodado,
@@ -282,6 +284,25 @@ export function condutasPorDecisaoMed(model: MedicalModel): Record<string, strin
     if (!schema) return mapa;
     for (const conduta of schema.conducts) mapa[conduta.decision] = conduta.name;
     return mapa;
+}
+
+/**
+ * O que o `esquema_dados` declara — universo de decisoes e atributos de cada
+ * conduta —, para o Decompositor do modo multiagente. Ver `EsquemaDeclarado`.
+ */
+export function esquemaDeclaradoMed(model: MedicalModel): EsquemaDeclarado {
+    const schema = model.elements.filter(isDataSchemaDef)[0];
+    if (!schema) return { decisoes: [], meios: [], condutas: {} };
+    const condutas: EsquemaDeclarado['condutas'] = {};
+    for (const c of schema.conducts) {
+        condutas[c.name] = atributosDeclarados({
+            via: c.route,
+            requer_dupla_checagem: c.doubleCheck,
+            justificativa_obrigatoria: c.requiresJustification,
+            recurso_fhir: c.fhir
+        });
+    }
+    return { decisoes: [...schema.decisions], meios: [...schema.routes], condutas };
 }
 
 /**

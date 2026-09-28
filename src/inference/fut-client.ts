@@ -27,11 +27,13 @@ import {
     type SubgrafoPodado
 } from '../knowledge/politica.js';
 import type { FutModel } from '../generated/ast.js';
+import type { ConhecimentoRecuperado } from './recuperacao-conhecimento.js';
 import {
     retrieveFutConstraints,
     futPruningPayload,
     condutasPorDecisaoFut,
     esquemaDeDadosFut,
+    esquemaDeclaradoFut,
     type FutContext,
     type RetrievedFutConstraints
 } from '../knowledge/graphrag-fut.js';
@@ -205,7 +207,9 @@ export function montarEntradaGeracaoFut(
     contexto: FutContext,
     constraints: RetrievedFutConstraints,
     model?: FutModel,
-    subgrafoRefinado?: SubgrafoPodado
+    subgrafoRefinado?: SubgrafoPodado,
+    /** A recuperacao inteira da requisicao. So o modo multiagente a le; sem ela, a entrada e a de sempre. */
+    conhecimento?: ConhecimentoRecuperado<RetrievedFutConstraints>
 ): OpcoesDecodificacao {
     const subgrafo = subgrafoRefinado ?? futPruningPayload(constraints, contexto);
     const contrato = montarContrato(
@@ -222,7 +226,10 @@ export function montarEntradaGeracaoFut(
         subgrafo,
         contrato,
         endpoint: ENDPOINT,
-        timeoutMs: TIMEOUT_MS
+        timeoutMs: TIMEOUT_MS,
+        ...(conhecimento
+            ? { execucao: { dominio: 'fut' as const, contexto, conhecimento, ...(model ? { esquema: esquemaDeclaradoFut(model) } : {}) } }
+            : {})
     };
 }
 
@@ -231,9 +238,11 @@ export async function gerarArbitragemRestrita(
     constraints: RetrievedFutConstraints,
     model?: FutModel,
     /** Poda ja refinada pelo caminho hibrido. Ausente: comportamento de sempre. */
-    subgrafoRefinado?: SubgrafoPodado
+    subgrafoRefinado?: SubgrafoPodado,
+    /** Ver `montarEntradaGeracaoFut`: so o modo multiagente usa. */
+    conhecimento?: ConhecimentoRecuperado<RetrievedFutConstraints>
 ): Promise<ResultadoDecodificacao> {
-    return decodificar(montarEntradaGeracaoFut(contexto, constraints, model, subgrafoRefinado));
+    return decodificar(montarEntradaGeracaoFut(contexto, constraints, model, subgrafoRefinado, conhecimento));
 }
 
 function carregarCenarios(filePath: string): FutContext[] {

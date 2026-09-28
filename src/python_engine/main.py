@@ -29,7 +29,13 @@ from fastapi import FastAPI, HTTPException  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from bnf import Rule, load_bnf, parse_bnf, build_parser, to_lark, to_gbnf  # noqa: E402
-from grammar_from_kg import gramatica_do_subgrafo  # noqa: E402
+from grammar_from_kg import (  # noqa: E402
+    INICIO_PI,
+    INICIO_PLANNER,
+    gramatica_do_pi,
+    gramatica_do_planner,
+    gramatica_do_subgrafo,
+)
 from prompt_builder import carregar_exemplos, montar_prompt  # noqa: E402
 
 # O dominio e escolhido na subida do servico. A gramatica e os exemplares mudam;
@@ -105,6 +111,11 @@ MAX_ITENS = int(os.environ.get("SPC_CML_MAX_ITENS", "4"))
 # penalidade desencoraja a ordem identica oito vezes seguidas.
 REPEAT_PENALTY = float(os.environ.get("SPC_CML_REPEAT_PENALTY", "1.15"))
 TEMPERATURA = float(os.environ.get("SPC_CML_TEMPERATURA", "0.3"))
+# Teto de caracteres dos campos de texto livre na gramatica do PI Agent. O `texto`
+# da DSL vira `[^']{0,N}` na GBNF (ver `_regex_to_gbnf`), e o padrao de 160 cortava
+# a justificativa do PI Agent no meio da palavra — observado no Qwen 7B real, em
+# todos os PIs. So /generate-pi usa este teto; as demais rotas seguem com o padrao.
+MAX_CHARS_PI = int(os.environ.get("SPC_CML_MAX_CHARS_PI", "400"))
 
 app = FastAPI(title="SPC-CML — decodificacao restrita", version="2.0")
 
@@ -193,7 +204,7 @@ def _modelo_carregado() -> bool:
     return (_MODEL if BACKEND == "outlines" else _LLAMA) is not None
 
 
-def _gerar(prompt: str, regras_hat: dict, inicio: str | None = None) -> str:
+def _gerar(prompt: str, regras_hat: dict, inicio: str | None = None, max_chars: int | None = None) -> str:
     """
     Geracao sob mascaramento de logits pela gramatica ja podada.
 
@@ -202,6 +213,9 @@ def _gerar(prompt: str, regras_hat: dict, inicio: str | None = None) -> str:
     gerar uma `ordem` de cada vez, ou uma `conduta` de cada vez, com o texto ja
     aceito servindo de prefixo — cada fragmento nasce sob a gramatica que as
     validacoes anteriores deixaram de pe.
+
+    `max_chars` muda o teto dos campos de texto livre na GBNF; ausente, vale o
+    padrao de `to_gbnf` (o de sempre).
     """
     alvo = inicio or INICIO
     if BACKEND == "outlines":
@@ -224,11 +238,12 @@ def _gerar(prompt: str, regras_hat: dict, inicio: str | None = None) -> str:
             ),
         )
 
+    teto = {} if max_chars is None else {"max_chars": max_chars}
     with _LLAMA_LOCK:
         saida = llm(
             prompt,
             grammar=LlamaGrammar.from_string(
-                to_gbnf(regras_hat, start=alvo, max_itens=MAX_ITENS), verbose=False
+                to_gbnf(regras_hat, start=alvo, max_itens=MAX_ITENS, **teto), verbose=False
             ),
             max_tokens=MAX_TOKENS,
             temperature=TEMPERATURA,
@@ -421,6 +436,45 @@ class FragmentoRequest(BaseModel):
     )
 
 
+class PlannerRequest(BaseModel):
+    """
+    Uma proposta do Planner multiagente: a sequencia de pares (item, conduta).
+
+    O prompt chega pronto do cliente — e uma camada fina sobre o Prompt
+    Semantico global, que so o cliente monta. O vocabulario vem da politica
+    efetiva; a gramatica e derivada dele AQUI, como G_hat e derivada do
+    subgrafo em /generate-constrained. Nada de dominio entra neste servico.
+    """
+
+    prompt: str = Field(..., description="Prompt do Planner (instrucao + Prompt Semantico + candidatos)")
+    itens: list[str] = Field(..., description="Itens candidatos, da politica efetiva")
+    condutas: list[str] = Field(..., description="Condutas que os itens candidatos podem realizar")
+    max_pis: int = Field(..., ge=1, description="Maximo de posicoes no plano")
+    condutas_por_item: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Restricao progressiva: itens cujo par ja foi reprovado pela validacao, amarrados "
+            "as condutas que realizam. Vazio na primeira tentativa."
+        ),
+    )
+
+
+class PIAgentRequest(BaseModel):
+    """
+    UMA tentativa do PI Agent: a acao e a justificativa de UM PI.
+
+    O prompt chega pronto do cliente (o contexto daquele PI, sem prefixo de
+    artefato nem clausula anterior). A gramatica e derivada AQUI do payload do
+    PI — a mesma especializacao por item de /generate-constrained, reduzida a
+    uma clausula —, com ordem e conduta fixadas como literais.
+    """
+
+    prompt: str = Field(..., description="Prompt do PI Agent (contexto do PI + regras de saida + formato)")
+    subgrafo_regras: dict = Field(..., description="Payload do PI: UMA politica, restrita as decisoes da conduta")
+    ordem: int = Field(..., ge=1, description="Ordem do PI no plano")
+    conduta: str = Field(..., description="Conduta que o Planner fixou para o PI")
+
+
 def _gramatica_efetiva(subgrafo: dict):
     """
     Devolve (regras, bnf_texto) apos a poda pelo subgrafo.
@@ -607,4 +661,84 @@ def generate_fragment(req: FragmentoRequest):
         "especializada": bool(
             req.subgrafo_regras.get("politicas") and req.subgrafo_regras.get("papeis")
         ),
+    }
+
+
+@app.post("/generate-planner")
+def generate_planner(req: PlannerRequest):
+    """
+    UMA chamada do Planner: gera a sequencia de pares (item, conduta) sob a
+    gramatica do Planner (ver `gramatica_do_planner`).
+
+    Usa o mesmo `_gerar` das outras rotas — mesmo modelo, mesmo `_LLAMA_LOCK`,
+    mesma guarda de n_ctx, mesmos TEMPERATURA, REPEAT_PENALTY, MAX_TOKENS e
+    MAX_ITENS. Sem nova tentativa: o cliente decide o que fazer com a saida.
+
+    A saida volta CRUA. O reparse abaixo e informativo (`valida_na_gramatica`);
+    a leitura que vale e a do cliente, que nao corrige nada.
+    """
+    regras = gramatica_do_planner(req.itens, req.condutas, req.max_pis, req.condutas_por_item)
+    if not regras:
+        raise HTTPException(
+            status_code=422,
+            detail="Sem item ou conduta candidata: o Planner nao tem o que propor.",
+        )
+
+    tokens_prompt = (
+        len(get_llama().tokenize(req.prompt.encode("utf-8"))) if BACKEND == "llamacpp" else None
+    )
+    saida = _gerar(req.prompt, regras, inicio=INICIO_PLANNER)
+
+    try:
+        build_parser(regras, start=INICIO_PLANNER).parse(saida)
+        valida, erro = True, None
+    except Exception as exc:
+        valida, erro = False, str(exc)
+
+    return {
+        "saida": saida,
+        "valida_na_gramatica": valida,
+        "erro": erro,
+        "tokens_prompt": tokens_prompt,
+        "regras_na_gramatica": len(regras),
+        "gbnf": to_gbnf(regras, start=INICIO_PLANNER, max_itens=MAX_ITENS),
+    }
+
+
+@app.post("/generate-pi")
+def generate_pi(req: PIAgentRequest):
+    """
+    UMA tentativa do PI Agent: gera a clausula de UM PI sob a gramatica do PI
+    (ver `gramatica_do_pi`).
+
+    Mesmo `_gerar` das outras rotas — mesmo modelo, mesmo `_LLAMA_LOCK`, mesma
+    guarda de n_ctx. Sem nova tentativa e sem exemplares few-shot: o cliente
+    valida e decide se tenta de novo. A saida volta CRUA; o reparse e
+    informativo (`valida_na_gramatica`).
+    """
+    regras = gramatica_do_pi(req.subgrafo_regras, RULES, req.ordem, req.conduta)
+    if not regras:
+        raise HTTPException(
+            status_code=422,
+            detail="O payload do PI nao admite clausula alguma: UMA politica, com alguma decisao, e os papeis.",
+        )
+
+    tokens_prompt = (
+        len(get_llama().tokenize(req.prompt.encode("utf-8"))) if BACKEND == "llamacpp" else None
+    )
+    saida = _gerar(req.prompt, regras, inicio=INICIO_PI, max_chars=MAX_CHARS_PI)
+
+    try:
+        build_parser(regras, start=INICIO_PI).parse(saida)
+        valida, erro = True, None
+    except Exception as exc:
+        valida, erro = False, str(exc)
+
+    return {
+        "saida": saida,
+        "valida_na_gramatica": valida,
+        "erro": erro,
+        "tokens_prompt": tokens_prompt,
+        "regras_na_gramatica": len(regras),
+        "gbnf": to_gbnf(regras, start=INICIO_PI, max_itens=MAX_ITENS, max_chars=MAX_CHARS_PI),
     }

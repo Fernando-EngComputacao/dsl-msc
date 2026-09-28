@@ -101,6 +101,35 @@ export interface PapeisDominio {
     decisoesQueContinuam?: string[];
 }
 
+/**
+ * O que o `esquema_dados` de um modelo DECLARA, sem interpretacao: os universos
+ * fechados de decisoes e de meios e, por conduta, os atributos escritos na DSL.
+ *
+ * `atributos` usa as palavras-chave da propria DSL (`via`, `modo`, `reinicio`,
+ * `requer_dupla_checagem`, `justificativa_obrigatoria`, `requer_var`,
+ * `recurso_fhir`, `protocolo_ifab`) e os valores como foram escritos (`sim`,
+ * `ACESSO_CENTRAL`, ...). A `decisao` da conduta NAO entra: ela ja e
+ * `ContratoArtefato.condutaPorDecisao`, e ter dois lugares para o mesmo mapa
+ * seria convite a divergencia. Nenhum atributo vira regra — o projeto nao tem
+ * semantica para `requer_var` nem para `requer_dupla_checagem`, e eles viajam
+ * so para que quem justifica uma decisao saiba que foram declarados.
+ */
+export interface EsquemaDeclarado {
+    /** `esquema_dados.decisoes`: o universo do qual toda politica parte. */
+    decisoes: string[];
+    /** O universo de meios: `vias` (med), `modos` (agro), `reinicios` (fut). */
+    meios: string[];
+    /** conduta -> atributos declarados (sem `decisao`). */
+    condutas: Record<string, Record<string, string>>;
+}
+
+/** Os atributos declarados de uma conduta, sem os campos que a DSL omitiu. */
+export function atributosDeclarados(campos: Record<string, string | undefined>): Record<string, string> {
+    const saida: Record<string, string> = {};
+    for (const [chave, valor] of Object.entries(campos)) if (valor !== undefined) saida[chave] = valor;
+    return saida;
+}
+
 /** Constantes do cenario: valores DADOS, que a geracao nao deve escolher. */
 export interface ConstantesCenario {
     /** Identificador do paciente/talhao/partida, sem aspas. */

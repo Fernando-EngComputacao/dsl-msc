@@ -207,6 +207,8 @@ async function main(): Promise<void> {
     let T = 0, C = 0, NCEN = 0, falhas = 0;
     const inesperadas: string[] = [];
     const porEscopo = new Map<string, number>();
+    /** Cada divergencia de escopo, com o cenario que a produziu — contar nao basta. */
+    const casosDeEscopo: string[] = [];
 
     for (const [dom, model, retrieve] of [
         ['med', med, retrieveConstraints],
@@ -224,6 +226,8 @@ async function main(): Promise<void> {
                 // Divergencia legitima: escalonamento de contexto nao ativo.
                 if (d.includes('/Escalonamento/')) {
                     porEscopo.set('ESCALONA', (porEscopo.get('ESCALONA') ?? 0) + 1);
+                    casosDeEscopo.push(`ESCALONA [${dom}] ${d}
+        telemetria=${JSON.stringify(telemetria)}`);
                 } else {
                     inesperadas.push(`[${dom}] ${d}`);
                 }
@@ -243,6 +247,7 @@ async function main(): Promise<void> {
         const nota = (DIFERENCAS_CONHECIDAS as any)[k];
         console.log(`    ${k}: ${n} ocorrencias — ${nota ?? 'NAO CLASSIFICADA'}`);
     }
+    for (const caso of casosDeEscopo) console.log(`      - ${caso}`);
 
     const teste = (nome: string, fn: () => void): void => {
         try { fn(); console.log(`  ok   ${nome}`); }

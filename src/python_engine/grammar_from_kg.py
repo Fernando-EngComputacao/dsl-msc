@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from bnf import Rule
+from bnf import Rule, parse_bnf
 
 # Nome da regra na BNF -> chave correspondente no subgrafo recuperado.
 #
@@ -225,6 +225,141 @@ def especializar_por_item(
         novas[conduta_sym] = Rule(conduta_sym, restantes)
 
     return novas
+
+
+# ---------------------------------------------------------------------------
+# Gramatica do PLANNER (arquitetura multiagente).
+#
+# O Planner nao escreve o artefato: escolhe, para cada posicao do plano, o PAR
+# (item, conduta) e as posicoes anteriores de que ele depende. A linguagem e
+# propria, separada da gramatica da clausula — decisao, meio, valor e
+# justificativa sao do PI Agent e nao existem aqui:
+#
+#     PLANO 1 | Noradrenalina | Titular_Vasopressor | [ ] 2 | Propofol | Manter_Bloqueio | [ 1 ] FIM
+#
+# Uma linha so, porque `to_gbnf` separa todo simbolo por exatamente um espaco;
+# o parser do cliente aceita o mesmo texto com quebras de linha.
+#
+# O vocabulario vem da politica efetiva, como o resto de G_hat: `itens` sao os
+# itens da politica e `condutas` as que eles podem realizar. O que a gramatica
+# garante por construcao e so estrutura e vocabulario — item e conduta
+# existentes, posicoes 1..n em ordem, dependencias so para tras, no maximo
+# `max_pis` posicoes. Se o PAR e realizavel, se o item se repete, se falta uma
+# conduta obrigatoria: isso e da validacao da sequencia, no cliente.
+#
+# Montada como `Rule` e nao como texto BNF porque `parse_bnf` separa as
+# alternativas em `|`, e aqui `|` e literal.
+#
+# RESTRICAO PROGRESSIVA (`condutas_por_item`). Quando a validacao da sequencia
+# prova que um item nao cumpre a conduta que o Planner lhe deu, a tentativa
+# seguinte amarra ESSE item as condutas que ele realiza: o par reprovado deixa
+# de ser exprimivel. So o item com erro comprovado e amarrado — os demais
+# continuam livres, e sem restricao a linguagem e a mesma de antes.
+# ---------------------------------------------------------------------------
+
+INICIO_PLANNER = "plano_pi"
+
+
+def gramatica_do_planner(
+    itens: list, condutas: list, max_pis: int, condutas_por_item: dict | None = None
+) -> dict[str, Rule]:
+    """G do Planner para este vocabulario. Vazia quando nao ha o que propor."""
+    itens = list(dict.fromkeys(i for i in itens if i))
+    condutas = list(dict.fromkeys(c for c in condutas if c))
+    if not itens or not condutas or max_pis < 1:
+        return {}
+
+    restritos = {
+        i: list(dict.fromkeys(c for c in cs if c))
+        for i, cs in (condutas_por_item or {}).items()
+        if i in itens
+    }
+    livres = [i for i in itens if i not in restritos]
+
+    regras: dict[str, Rule] = {
+        INICIO_PLANNER: Rule(INICIO_PLANNER, [[_literal("PLANO"), "pi_1", "resto_1"]]),
+        "conduta_pi": Rule("conduta_pi", [[_literal(c)] for c in condutas]),
+    }
+    pares = []
+    if livres:
+        regras["item_pi"] = Rule("item_pi", [[_literal(i)] for i in livres])
+        pares.append(["item_pi", _literal("|"), "conduta_pi"])
+    for item, suas in restritos.items():
+        if not suas:
+            continue  # item sem conduta possivel sai da gramatica
+        nome = "conduta_pi_" + _sufixo(item)
+        regras[nome] = Rule(nome, [[_literal(c)] for c in suas])
+        pares.append([_literal(item), _literal("|"), nome])
+    if not pares:
+        return {}
+    regras["par_pi"] = Rule("par_pi", pares)
+
+    for k in range(1, max_pis + 1):
+        regras[f"pi_{k}"] = Rule(
+            f"pi_{k}",
+            [[_literal(str(k)), _literal("|"), "par_pi", _literal("|"), f"deps_{k}"]],
+        )
+        if k == 1:
+            # A primeira posicao nao tem de quem depender.
+            regras["deps_1"] = Rule("deps_1", [[_literal("["), _literal("]")]])
+        else:
+            # So posicoes ANTERIORES: a propria ordem vira ordenacao topologica.
+            regras[f"dep_{k}"] = Rule(f"dep_{k}", [[_literal(str(j))] for j in range(1, k)])
+            regras[f"deps_{k}_g1"] = Rule(f"deps_{k}_g1", [[_literal(","), f"dep_{k}"]])
+            regras[f"deps_{k}"] = Rule(
+                f"deps_{k}",
+                [[_literal("["), _literal("]")], [_literal("["), f"dep_{k}", f"deps_{k}_g1*", _literal("]")]],
+            )
+        continua = [[f"pi_{k + 1}", f"resto_{k + 1}"]] if k < max_pis else []
+        regras[f"resto_{k}"] = Rule(f"resto_{k}", [[_literal("FIM")]] + continua)
+    return regras
+
+
+# ---------------------------------------------------------------------------
+# Gramatica do PI AGENT (arquitetura multiagente).
+#
+# O PI Agent resolve UM PI: o par (item, conduta) ja veio do Planner e foi
+# validado; falta a acao (decisao, meio, valor) e a justificativa. Isso E uma
+# clausula da DSL, e a clausula de UM item ja tem gramatica: a especializacao
+# por item (`especializar_por_item`) sobre o payload do PI — uma politica so, com
+# as decisoes da conduta e os valores que elas alcancam. Nada de clausula nova:
+#
+#     PI 1 | Manter_Bloqueio | ordem Propofol decisao MANTER_BLOQUEADO dose 0.0 mg/kg/h
+#          via ACESSO_CENTRAL justificativa '...' FIM
+#
+# O cabecalho fixa a ordem e a conduta como LITERAIS e o item ja e literal na
+# clausula especializada: o modelo nao consegue escrever outro PI. Decisao, meio
+# e valor saem das listas do payload; a justificativa e o `texto` da DSL
+# (/'[^']*'/), o unico campo livre. Uma clausula so, e FIM: nao ha segundo PI
+# nem segunda acao exprimivel.
+#
+# Sem prefixo de artefato nem clausula anterior: a entrada e so o payload do PI.
+# ---------------------------------------------------------------------------
+
+INICIO_PI = "resultado_pi"
+
+
+def gramatica_do_pi(subgrafo: dict, rules: dict[str, Rule], ordem: int, conduta: str) -> dict[str, Rule]:
+    """G do PI Agent para o payload de UM PI. Vazia quando o payload nao admite clausula alguma."""
+    papeis = subgrafo.get("papeis") or {}
+    clausula = papeis.get("clausula")
+    politicas = subgrafo.get("politicas") or []
+    if not clausula or not conduta or ordem < 1:
+        return {}
+    if len(politicas) != 1 or not politicas[0].get("decisoes"):
+        return {}  # o payload de um PI e UMA politica, com alguma decisao
+
+    texto = gramatica_do_subgrafo(subgrafo, rules, inicio=clausula)
+    if not texto:
+        return {}
+    regras = parse_bnf(texto)
+    if clausula not in regras:
+        return {}
+    regras[INICIO_PI] = Rule(
+        INICIO_PI,
+        [[_literal("PI"), _literal(str(ordem)), _literal("|"), _literal(conduta), _literal("|"), clausula, _literal("FIM")]],
+    )
+    return regras
 
 
 def gramatica_do_subgrafo(subgrafo: dict, rules: dict[str, Rule], inicio: str = "plano") -> str:

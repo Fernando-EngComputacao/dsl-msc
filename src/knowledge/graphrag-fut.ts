@@ -45,7 +45,9 @@ import { nomesFut } from './documentos.js';
 import {
     formatarNumero,
     montarSubgrafo,
+    atributosDeclarados,
     type ConstantesCenario,
+    type EsquemaDeclarado,
     type PapeisDominio,
     type PoliticaItem,
     type SubgrafoPodado,
@@ -183,6 +185,25 @@ export function condutasPorDecisaoFut(model: FutModel): Record<string, string> {
     if (!schema) return mapa;
     for (const conduta of schema.conducts) mapa[conduta.decision] = conduta.name;
     return mapa;
+}
+
+/**
+ * O que o `esquema_dados` declara — universo de decisoes e atributos de cada
+ * conduta —, para o Decompositor do modo multiagente. Ver `EsquemaDeclarado`.
+ */
+export function esquemaDeclaradoFut(model: FutModel): EsquemaDeclarado {
+    const schema = model.elements.filter(isFutSchemaDef)[0];
+    if (!schema) return { decisoes: [], meios: [], condutas: {} };
+    const condutas: EsquemaDeclarado['condutas'] = {};
+    for (const c of schema.conducts) {
+        condutas[c.name] = atributosDeclarados({
+            reinicio: c.restart,
+            requer_var: c.requiresVar,
+            justificativa_obrigatoria: c.requiresJustification,
+            protocolo_ifab: c.protocol
+        });
+    }
+    return { decisoes: [...schema.decisions], meios: [...schema.restarts], condutas };
 }
 
 /**

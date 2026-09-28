@@ -25,11 +25,13 @@ import {
     type SubgrafoPodado
 } from '../knowledge/politica.js';
 import type { AgroModel } from '../generated/ast.js';
+import type { ConhecimentoRecuperado } from './recuperacao-conhecimento.js';
 import {
     retrieveAgroConstraints,
     agroPruningPayload,
     condutasPorDecisaoAgro,
     esquemaDeDadosAgro,
+    esquemaDeclaradoAgro,
     type AgroContext,
     type RetrievedAgroConstraints
 } from '../knowledge/graphrag-agro.js';
@@ -201,7 +203,9 @@ export function montarEntradaGeracaoAgro(
     contexto: AgroContext,
     constraints: RetrievedAgroConstraints,
     model?: AgroModel,
-    subgrafoRefinado?: SubgrafoPodado
+    subgrafoRefinado?: SubgrafoPodado,
+    /** A recuperacao inteira da requisicao. So o modo multiagente a le; sem ela, a entrada e a de sempre. */
+    conhecimento?: ConhecimentoRecuperado<RetrievedAgroConstraints>
 ): OpcoesDecodificacao {
     const subgrafo = subgrafoRefinado ?? agroPruningPayload(constraints, contexto);
     const contrato = montarContrato(
@@ -218,7 +222,10 @@ export function montarEntradaGeracaoAgro(
         subgrafo,
         contrato,
         endpoint: ENDPOINT,
-        timeoutMs: TIMEOUT_MS
+        timeoutMs: TIMEOUT_MS,
+        ...(conhecimento
+            ? { execucao: { dominio: 'agro' as const, contexto, conhecimento, ...(model ? { esquema: esquemaDeclaradoAgro(model) } : {}) } }
+            : {})
     };
 }
 
@@ -227,9 +234,11 @@ export async function gerarMissaoRestrita(
     constraints: RetrievedAgroConstraints,
     model?: AgroModel,
     /** Poda ja refinada pelo caminho hibrido. Ausente: comportamento de sempre. */
-    subgrafoRefinado?: SubgrafoPodado
+    subgrafoRefinado?: SubgrafoPodado,
+    /** Ver `montarEntradaGeracaoAgro`: so o modo multiagente usa. */
+    conhecimento?: ConhecimentoRecuperado<RetrievedAgroConstraints>
 ): Promise<ResultadoDecodificacao> {
-    return decodificar(montarEntradaGeracaoAgro(contexto, constraints, model, subgrafoRefinado));
+    return decodificar(montarEntradaGeracaoAgro(contexto, constraints, model, subgrafoRefinado, conhecimento));
 }
 
 function carregarCenarios(filePath: string): AgroContext[] {

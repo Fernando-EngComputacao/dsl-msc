@@ -38,6 +38,49 @@ import {
     type Violacao
 } from '../knowledge/contrato.js';
 import type { SubgrafoPodado } from '../knowledge/politica.js';
+import type { PIPlanejado } from '../knowledge/contrato-pi.js';
+import { naoResolvido, type ResultadoValidacao } from '../knowledge/validacao.js';
+import {
+    alvoDoPedido,
+    lacunasDoConhecimento,
+    validarSequencia,
+    type ConhecimentoDaSequencia
+} from '../knowledge/validacao-sequencia.js';
+import {
+    avancarStatus,
+    decomporSequencia,
+    fecharCiclo,
+    impedimentoDeReiniciar,
+    impedimentoDeReplanejar,
+    medirExecucao,
+    novoContextoExecucao,
+    registrarConhecimento,
+    reiniciarCicloGlobal,
+    statusTerminal,
+    type ContextoExecucaoMultiagente,
+    type DuracoesGlobais,
+    type StatusMultiagente,
+    type EntradaMultiagente,
+    type FasePlanner,
+    type TentativaPlanner
+} from './multiagente.js';
+import {
+    comporEValidarPlano,
+    montarFeedbackGlobal,
+    type VerificacaoGramatical,
+    type VerificadorGramatical
+} from './ciclo-global.js';
+import type { ConhecimentoGlobal } from '../knowledge/validacao-global.js';
+import { resolverPIs, type MotorPIAgent, type RespostaPIAgent } from './pi-agent.js';
+import {
+    contextoPlanner,
+    montarFeedbackPlanner,
+    planejarSequencia,
+    restringirAposErros,
+    type ContextoPlanner,
+    type MotorPlanner,
+    type RespostaPlanner
+} from './planner.js';
 
 const ENDPOINT_PADRAO = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
 const TIMEOUT_PADRAO = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600_000);
@@ -117,6 +160,8 @@ export interface OpcoesDecodificacao {
     endpoint?: string;
     timeoutMs?: number;
     maxTentativas?: number;
+    /** A recuperacao desta requisicao. So o modo multiagente a le; os demais a ignoram. */
+    execucao?: EntradaMultiagente;
 }
 
 /**
@@ -201,12 +246,480 @@ export async function decodificarSobContrato(
  * contrato depois, com repoda e nova tentativa. A segunda existe para comparar
  * as duas na avaliacao — e como caminho de emergencia se o motor nao expuser
  * `/generate-fragment`.
+ *
+ * `multiagente` e o fluxo Planner -> PIs -> composicao (ver
+ * `inference/multiagente.ts`). Hoje ele roda o Planner com validacao
+ * deterministica da sequencia e retry dentro do orcamento, decompoe a
+ * sequencia validada em contextos por PI, resolve cada PI com o PI Agent (com
+ * validacao individual e retry so daquele PI), compoe o artefato e o valida
+ * globalmente, reiniciando no Planner se o plano inteiro for reprovado; termina
+ * em COMPLETED (com o artefato), UNRESOLVED ou FAILED — nunca cai no
+ * incremental: um experimento que pediu o modo novo e recebeu o antigo mediria
+ * a coisa errada sem perceber.
  */
-export async function decodificar(opts: OpcoesIncremental): Promise<ResultadoDecodificacao> {
-    const modo = process.env.SPC_CML_DECODIFICACAO ?? 'incremental';
-    return modo === 'monolitica'
-        ? decodificarSobContrato(opts)
-        : decodificarIncremental(opts);
+export type ModoDecodificacao = 'incremental' | 'monolitica' | 'multiagente';
+
+export const MODO_DECODIFICACAO_PADRAO: ModoDecodificacao = 'incremental';
+
+/**
+ * Le `SPC_CML_DECODIFICACAO`, na mesma convencao de `modoRecuperacao`: valor
+ * desconhecido cai no padrao em vez de derrubar o servico. E o que ja
+ * acontecia antes deste tipo existir — so `monolitica` desviava do
+ * incremental —, entao nenhum valor que funcionava muda de comportamento.
+ */
+export function modoDecodificacao(bruto = process.env.SPC_CML_DECODIFICACAO): ModoDecodificacao {
+    return bruto === 'monolitica' || bruto === 'multiagente' ? bruto : MODO_DECODIFICACAO_PADRAO;
+}
+
+export async function decodificar(opts: OpcoesIncremental & OpcoesMultiagente): Promise<ResultadoDecodificacao> {
+    switch (modoDecodificacao()) {
+        case 'monolitica':
+            return decodificarSobContrato(opts);
+        case 'multiagente':
+            return decodificarMultiagente(opts);
+        default:
+            return decodificarIncremental(opts);
+    }
+}
+
+// =============================================================================
+// Decodificacao MULTIAGENTE: Planner, PI Agents, composicao e validacao global
+// =============================================================================
+
+export interface OpcoesMultiagente {
+    /** Motor do Planner. Injetavel para teste sem motor nem GPU. Padrao: `motorPlannerHttp`. */
+    motorPlanner?: MotorPlanner;
+    /** Motor do PI Agent. Injetavel para teste sem motor nem GPU. Padrao: `motorPIAgentHttp`. */
+    motorPIAgent?: MotorPIAgent;
+    /** Quem confere a sintaxe do artefato composto. Padrao: `verificadorGramaticaHttp` (`/verify`). */
+    verificadorGramatical?: VerificadorGramatical;
+}
+
+/**
+ * O resultado no formato dos outros modos, mais a execucao. Em COMPLETED,
+ * `resultado` e o artefato globalmente valido, e `valido`/`conforme` vem
+ * verdadeiros. Em UNRESOLVED ou FAILED, `resultado` vem vazio e `erro` diz onde
+ * e por que a execucao parou; o historico inteiro esta em `execucao`.
+ */
+export interface ResultadoMultiagente extends ResultadoDecodificacao {
+    execucao: ContextoExecucaoMultiagente;
+}
+
+export function ehResultadoMultiagente(r: ResultadoDecodificacao): r is ResultadoMultiagente {
+    return 'execucao' in r;
+}
+
+/**
+ * O fluxo multiagente inteiro, em ciclos globais:
+ *
+ *     RECEIVED -> KNOWLEDGE_RETRIEVED -> SEMANTIC_PROMPT_READY      (uma vez)
+ *     ciclo k:  PLANNING -> SEQUENCE_VALIDATING -> SEQUENCE_VALID
+ *               -> PI_DECOMPOSING -> PI_DECOMPOSED
+ *               -> (PI_EXECUTING -> PI_VALIDATING)+ -> PI_ALL_VALID
+ *               -> COMPOSING -> GLOBAL_VALIDATING
+ *                    VALID       -> COMPLETED (o artefato e o `resultado`)
+ *                    UNRESOLVED  -> UNRESOLVED (outro plano nao supre o que falta)
+ *                    INVALID     -> feedback global -> PLANNING, ciclo k+1,
+ *                                   se houver ciclo (`orcamento.ciclosGlobais`);
+ *                                   senao UNRESOLVED
+ *
+ * A recuperacao NAO e refeita, nem no reinicio: vem pronta em `opts.execucao`
+ * (o `requestId` e o id da auditoria dela), e cada ciclo reusa a mesma
+ * politica, as mesmas regras e as mesmas evidencias. O que recomeca a cada
+ * ciclo e so o que depende do plano (`reiniciarCicloGlobal`), e os orcamentos
+ * do Planner e de cada PI, que sao por ciclo. Um retry de PI nunca consome ciclo.
+ *
+ * O laco do Planner, dentro do ciclo:
+ *
+ *     PLANNING -> proposta -> SEQUENCE_VALIDATING -> leitura + validarSequencia
+ *        VALID       -> SEQUENCE_VALID
+ *        UNRESOLVED  -> UNRESOLVED (outra proposta nao supre conhecimento que falta)
+ *        INVALID     -> feedback + restricao -> PLANNING, se houver orcamento
+ *                       -> UNRESOLVED, se o orcamento acabou
+ *
+ * Saida fora do protocolo tambem e INVALID (fase `protocolo`) e entra no laco.
+ * No maximo `orcamento.planner` chamadas por ciclo; a guarda de
+ * SEQUENCE_VALIDATING -> PLANNING (`impedimentoDeReplanejar`) recusa a volta
+ * alem disso. No ciclo seguinte ao de um plano globalmente reprovado, a
+ * primeira proposta ja traz o feedback global. Os desvios antes da primeira
+ * chamada:
+ *   - pedido sem alvo determinavel (nenhum item citado): SEMANTIC_PROMPT_READY
+ *     -> UNRESOLVED, sem entrar em PLANNING e sem ciclo;
+ *   - sem item ou conduta candidata: PLANNING -> UNRESOLVED;
+ *   - lacuna do conhecimento que nao depende do plano: PLANNING -> UNRESOLVED;
+ * e, em qualquer ponto, falha tecnica (motor fora, excecao, composicao
+ * inconsistente, artefato fora de L(Ĝ)) -> FAILED.
+ *
+ * Cada ciclo termina registrado em `historicoGlobal`; ao final,
+ * `metricasExecucao` soma o custo de todos.
+ *
+ * Lanca, antes de existir execucao, se `opts.execucao` nao vier: CLI e lote
+ * nao montam essa entrada.
+ */
+export async function decodificarMultiagente(
+    opts: OpcoesDecodificacao & OpcoesMultiagente & Pick<OpcoesIncremental, 'maxCondutas'>
+): Promise<ResultadoMultiagente> {
+    const entrada = opts.execucao;
+    if (!entrada) {
+        throw new Error(
+            'SPC_CML_DECODIFICACAO=multiagente precisa da recuperacao da requisicao (opts.execucao), ' +
+                'que so o servidor fornece nesta etapa. CLI e lote seguem em incremental ou monolitica.'
+        );
+    }
+    const { conhecimento } = entrada;
+    const ctx = novoContextoExecucao({
+        dominio: entrada.dominio,
+        pedido: opts.comando,
+        contexto: entrada.contexto,
+        requestId: conhecimento.auditoriaRecuperacao.id
+    });
+    const agora = (): number => performance.now();
+    // Lido por funcao: cada etapa muda o status por dentro, e o TypeScript nao ve.
+    const em = (s: StatusMultiagente): boolean => ctx.status === s;
+    const inicioExecucao = agora();
+    let inicioCiclo = inicioExecucao;
+    let duracoes: DuracoesGlobais = {};
+
+    try {
+        registrarConhecimento(ctx, conhecimento);
+        if (conhecimento.politicaEfetiva !== opts.subgrafo) {
+            throw new Error('a politica da geracao nao e a politica efetiva da recuperacao');
+        }
+
+        // O alvo do pedido e decidido ANTES do Planner: sem item citado, nenhum
+        // plano o tornaria determinavel (ver `alvoDoPedido`). Nenhuma chamada
+        // cognitiva, nenhum ciclo global.
+        const alvo = alvoDoPedido({ contrato: opts.contrato, politica: ctx.politicaEfetiva!, regras: ctx.regras, pedido: ctx.pedido });
+        if (alvo.veredito === 'UNRESOLVED') {
+            ctx.errosValidacao.push(alvo);
+            avancarStatus(ctx, 'UNRESOLVED', `o alvo do pedido nao e determinavel: ${alvo.dadosFaltantes.join('; ')}`);
+            return encerrar();
+        }
+
+        avancarStatus(ctx, 'PLANNING');
+        const universo = contextoPlanner(ctx, opts.contrato, opts.maxCondutas ?? MAX_CONDUTAS);
+        if (universo.veredito !== 'VALID') {
+            ctx.errosValidacao.push(universo);
+            avancarStatus(ctx, 'UNRESOLVED', `sem candidatos para o Planner: ${universo.dadosFaltantes.join('; ')}`);
+            return encerrar();
+        }
+
+        const conhecimentoDaSequencia: ConhecimentoDaSequencia = {
+            contrato: opts.contrato,
+            politica: ctx.politicaEfetiva!,
+            regras: ctx.regras,
+            pedido: ctx.pedido
+        };
+        // O que falta no conhecimento independente do plano: nenhuma proposta
+        // o supriria, entao nao se gasta tentativa.
+        const lacunas = lacunasDoConhecimento(conhecimentoDaSequencia);
+        if (lacunas.veredito === 'UNRESOLVED') {
+            ctx.errosValidacao.push(lacunas);
+            avancarStatus(ctx, 'UNRESOLVED', `conhecimento insuficiente: ${lacunas.dadosFaltantes.join('; ')}`);
+            return encerrar();
+        }
+
+        // O MESMO conhecimento em todos os ciclos: nada e recuperado de novo.
+        const conhecimentoGlobal: ConhecimentoGlobal = {
+            requestId: ctx.requestId,
+            dominio: ctx.dominio,
+            pedido: ctx.pedido,
+            telemetria: ctx.contexto.telemetria,
+            contrato: opts.contrato,
+            politica: ctx.politicaEfetiva!,
+            regras: ctx.regras,
+            restricoes: ctx.constraints,
+            esquema: entrada.esquema
+        };
+        const motorPlanner = opts.motorPlanner ?? motorPlannerHttp(opts.endpoint, opts.timeoutMs);
+        const motorPI = opts.motorPIAgent ?? motorPIAgentHttp(opts.endpoint, opts.timeoutMs);
+        const verificador = opts.verificadorGramatical ?? verificadorGramaticaHttp(opts.endpoint, opts.timeoutMs);
+        let feedbackGlobal: string | undefined;
+
+        for (;;) {
+            inicioCiclo = agora();
+            duracoes = {};
+            await planejarCiclo(ctx, universo.valor!, conhecimentoDaSequencia, motorPlanner, opts.contrato, entrada, feedbackGlobal);
+            if (!em('PI_DECOMPOSED')) break;
+            await resolverPIs(ctx, motorPI);
+            if (!em('PI_ALL_VALID')) break;   // um PI UNRESOLVED: nao ha plano completo a compor
+            duracoes = await comporEValidarPlano(ctx, conhecimentoGlobal, verificador, agora);
+            if (!em('GLOBAL_VALIDATING')) break;
+
+            const validacao = ctx.validacaoGlobal!;
+            if (validacao.veredito === 'VALID') {
+                ctx.artefatoFinal = ctx.planoComposto!.texto;
+                avancarStatus(ctx, 'COMPLETED', `plano globalmente valido no ciclo ${ctx.tentativaGlobal}`);
+                break;
+            }
+            ctx.errosValidacao.push(validacao);
+            if (validacao.veredito === 'UNRESOLVED') {
+                avancarStatus(ctx, 'UNRESOLVED', `conhecimento insuficiente para validar o plano: ${validacao.dadosFaltantes.join('; ')}`);
+                break;
+            }
+
+            const codigos = [...new Set(validacao.erros.map(e => e.codigo))].join(', ');
+            const feedback = montarFeedbackGlobal(validacao, ctx.planoComposto!, ctx.tentativaGlobal);
+            const impedimento = impedimentoDeReiniciar(ctx);
+            if (impedimento) {
+                // Sem ciclo: o historico fica, e o feedback que iria para o proximo
+                // Planner vira o prompt recomendado do UNRESOLVED.
+                ctx.errosValidacao.push(
+                    naoResolvido([`plano globalmente valido em ${ctx.orcamento.ciclosGlobais} ciclo(s)`], {
+                        avisos: [{ codigo: 'orcamento_esgotado', mensagem: `${impedimento}; ultima reprovacao global: ${codigos}` }],
+                        promptRecomendado: feedback
+                    })
+                );
+                avancarStatus(ctx, 'UNRESOLVED', `${impedimento}; ultima reprovacao global: ${codigos}`);
+                break;
+            }
+            const motivo = `plano global INVALID (${codigos}): ciclo ${ctx.tentativaGlobal + 1} no Planner`;
+            fecharCiclo(ctx, agora() - inicioCiclo, duracoes, { realimentacao: feedback, motivo });
+            reiniciarCicloGlobal(ctx, motivo);
+            feedbackGlobal = feedback;
+        }
+    } catch (erro) {
+        if (!statusTerminal(ctx.status)) avancarStatus(ctx, 'FAILED', (erro as Error).message);
+    }
+    return encerrar();
+
+    /**
+     * Registra o ciclo corrente (se ainda nao foi) e o custo da execucao. Um
+     * ciclo so existe a partir da entrada em PLANNING: a execucao que parou
+     * antes (pedido sem alvo, falha no registro do conhecimento) nao tem ciclo
+     * a registrar, nem chamada a contabilizar.
+     */
+    function encerrar(): ResultadoMultiagente {
+        const planejou = ctx.historicoStatus.some(t => t.para === 'PLANNING');
+        if (planejou && ctx.historicoGlobal[ctx.historicoGlobal.length - 1]?.ciclo !== ctx.tentativaGlobal) {
+            fecharCiclo(ctx, agora() - inicioCiclo, duracoes);
+        }
+        ctx.metricasExecucao = medirExecucao(ctx, Math.round(agora() - inicioExecucao));
+        return resultadoMultiagente(ctx);
+    }
+}
+
+/**
+ * O laco do Planner de UM ciclo: propostas ate uma sequencia VALID (que e
+ * decomposta: termina em PI_DECOMPOSED), ou ate UNRESOLVED. `feedbackInicial`
+ * e o feedback global do ciclo anterior, que a primeira proposta ja recebe.
+ */
+async function planejarCiclo(
+    ctx: ContextoExecucaoMultiagente,
+    base: ContextoPlanner,
+    conhecimentoDaSequencia: ConhecimentoDaSequencia,
+    motor: MotorPlanner,
+    contrato: ContratoArtefato,
+    entrada: EntradaMultiagente,
+    feedbackInicial?: string
+): Promise<void> {
+    let feedback = feedbackInicial;
+    let restricoes: Record<string, string[]> = {};
+
+    for (;;) {
+        const numero = ctx.tentativasPlanner.filter(t => t.ciclo === ctx.tentativaGlobal).length + 1;
+        const cp: ContextoPlanner = {
+            ...base,
+            tentativa: { ciclo: ctx.tentativaGlobal, numero },
+            restricoesPorItem: restricoes,
+            ...(feedback ? { feedback } : {})
+        };
+        const proposta = await planejarSequencia(cp, motor);
+        avancarStatus(ctx, 'SEQUENCE_VALIDATING');
+
+        // A leitura e a primeira validacao; so o que passou nela vai ao conhecimento.
+        let fase: FasePlanner = 'protocolo';
+        let validacao: ResultadoValidacao<PIPlanejado[]> = proposta.validacao;
+        let duracaoValidacaoMs: number | undefined;
+        if (proposta.validacao.veredito === 'VALID') {
+            fase = 'semantica';
+            ctx.sequenciaCandidata = proposta.validacao.valor;
+            const inicio = performance.now();
+            const julgada = validarSequencia(proposta.validacao.valor!, conhecimentoDaSequencia);
+            duracaoValidacaoMs = Math.round((performance.now() - inicio) * 1000) / 1000;
+            // Os avisos da leitura (par repetido, nome fora dos candidatos) seguem junto.
+            validacao = { ...julgada, avisos: [...proposta.validacao.avisos, ...julgada.avisos] };
+        }
+
+        const tentativa: TentativaPlanner = {
+            ciclo: ctx.tentativaGlobal,
+            tentativa: numero,
+            proposta: proposta.bruto,
+            validacao,
+            metricas: duracaoValidacaoMs === undefined ? proposta.metricas : { ...proposta.metricas, duracaoValidacaoMs },
+            prompt: proposta.prompt,
+            fase,
+            ...(proposta.validacao.valor ? { sequencia: proposta.validacao.valor } : {})
+        };
+        ctx.tentativasPlanner.push(tentativa);
+
+        if (validacao.veredito === 'VALID') {
+            ctx.sequenciaValidada = validacao.valor;
+            avancarStatus(ctx, 'SEQUENCE_VALID');
+            decomporSequencia(ctx, { contrato, esquema: entrada.esquema });
+            return;
+        }
+        ctx.errosValidacao.push(validacao);
+        if (validacao.veredito === 'UNRESOLVED') {
+            avancarStatus(ctx, 'UNRESOLVED', `conhecimento insuficiente para validar a sequencia: ${validacao.dadosFaltantes.join('; ')}`);
+            return;
+        }
+
+        const codigos = validacao.erros.map(e => e.codigo).join(', ');
+        const proximo = montarFeedbackPlanner(fase, proposta.bruto, validacao, tentativa.sequencia);
+        const impedimento = impedimentoDeReplanejar(ctx);
+        if (impedimento) {
+            // Orcamento esgotado: o historico fica, e o feedback que iria para a
+            // proxima tentativa vira o prompt recomendado do UNRESOLVED.
+            ctx.errosValidacao.push(
+                naoResolvido([`sequencia valida em ${ctx.orcamento.planner} proposta(s) do Planner`], {
+                    avisos: [{ codigo: 'orcamento_esgotado', mensagem: `${impedimento}; ultima reprovacao (${fase}): ${codigos}` }],
+                    promptRecomendado: proximo
+                })
+            );
+            avancarStatus(ctx, 'UNRESOLVED', `${impedimento}; ultima reprovacao (${fase}): ${codigos}`);
+            return;
+        }
+        tentativa.realimentacao = proximo;
+        feedback = proximo;
+        restricoes = restringirAposErros(restricoes, validacao, base.condutasPorItem);
+        avancarStatus(ctx, 'PLANNING', `nova proposta apos reprovacao (${fase}): ${codigos}`);
+    }
+}
+
+function resultadoMultiagente(ctx: ContextoExecucaoMultiagente): ResultadoMultiagente {
+    const motivo = ctx.historicoStatus[ctx.historicoStatus.length - 1]?.motivo;
+    if (ctx.status === 'COMPLETED') {
+        // O artefato composto e globalmente valido: e o resultado, como nos outros modos.
+        return {
+            resultado: ctx.artefatoFinal!,
+            valido: true,
+            erro: null,
+            g_hat_utilizada: null,
+            regras_em_g_hat: 0,
+            tentativas: ctx.tentativasPlanner.length,
+            violacoes: [],
+            historico: [],
+            conforme: true,
+            execucao: ctx
+        };
+    }
+    return {
+        resultado: '',
+        valido: false,
+        erro: `multiagente: execucao terminou em ${ctx.status}` + (motivo ? ` — ${motivo}` : ''),
+        g_hat_utilizada: null,
+        regras_em_g_hat: 0,
+        tentativas: ctx.tentativasPlanner.length,
+        violacoes: [],
+        historico: [],
+        conforme: false,
+        execucao: ctx
+    };
+}
+
+/**
+ * Motor do Planner: `POST /generate-planner` no MESMO servico Python das outras
+ * rotas — mesmo modelo, mesmo `_gerar`, mesmo `_LLAMA_LOCK`. Nao e um segundo
+ * cliente do Qwen: e mais uma rota do mesmo.
+ */
+export function motorPlannerHttp(
+    endpoint: string = ENDPOINT_PADRAO,
+    timeoutMs: number = TIMEOUT_PADRAO
+): MotorPlanner {
+    return async pedido => {
+        let response: Response;
+        try {
+            response = await fetch(`${endpoint}/generate-planner`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(pedido),
+                signal: AbortSignal.timeout(timeoutMs)
+            });
+        } catch (error) {
+            const causa =
+                (error as Error).name === 'TimeoutError'
+                    ? `sem resposta em ${timeoutMs / 1000}s (ajuste SPC_CML_TIMEOUT_MS)`
+                    : (error as Error).message;
+            throw new Error(`${endpoint} inacessivel: ${causa}`);
+        }
+        if (response.status === 404) {
+            // Mesmo sintoma de sempre: processo antigo no ar, com o main.py de antes.
+            throw new Error(
+                `${endpoint} nao expoe /generate-planner: o motor esta desatualizado. ` +
+                    'Reinicie o servico (uvicorn) para carregar o main.py atual.'
+            );
+        }
+        if (!response.ok) {
+            throw new Error(`${endpoint} respondeu ${response.status}: ${await response.text()}`);
+        }
+        return (await response.json()) as RespostaPlanner;
+    };
+}
+
+/**
+ * A autoridade da sintaxe: `POST /verify` no MESMO servico Python, que
+ * reparseia o artefato contra a Ĝ da politica enviada. Nao chama o modelo.
+ */
+export function verificadorGramaticaHttp(
+    endpoint: string = ENDPOINT_PADRAO,
+    timeoutMs: number = TIMEOUT_PADRAO
+): VerificadorGramatical {
+    return async (plano, subgrafo) => {
+        let response: Response;
+        try {
+            response = await fetch(`${endpoint}/verify`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ plano, subgrafo_regras: subgrafo }),
+                signal: AbortSignal.timeout(timeoutMs)
+            });
+        } catch (error) {
+            throw new Error(`${endpoint} inacessivel para /verify: ${(error as Error).message}`);
+        }
+        if (!response.ok) {
+            throw new Error(`${endpoint}/verify respondeu ${response.status}: ${await response.text()}`);
+        }
+        return (await response.json()) as VerificacaoGramatical;
+    };
+}
+
+/**
+ * Motor do PI Agent: `POST /generate-pi` no MESMO servico Python — mesmo
+ * modelo, mesmo `_gerar`, mesmo `_LLAMA_LOCK`. Mais uma rota do mesmo motor, e
+ * nao um segundo cliente do Qwen.
+ */
+export function motorPIAgentHttp(
+    endpoint: string = ENDPOINT_PADRAO,
+    timeoutMs: number = TIMEOUT_PADRAO
+): MotorPIAgent {
+    return async pedido => {
+        let response: Response;
+        try {
+            response = await fetch(`${endpoint}/generate-pi`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(pedido),
+                signal: AbortSignal.timeout(timeoutMs)
+            });
+        } catch (error) {
+            const causa =
+                (error as Error).name === 'TimeoutError'
+                    ? `sem resposta em ${timeoutMs / 1000}s (ajuste SPC_CML_TIMEOUT_MS)`
+                    : (error as Error).message;
+            throw new Error(`${endpoint} inacessivel: ${causa}`);
+        }
+        if (response.status === 404) {
+            throw new Error(
+                `${endpoint} nao expoe /generate-pi: o motor esta desatualizado. ` +
+                    'Reinicie o servico (uvicorn) para carregar o main.py atual.'
+            );
+        }
+        if (!response.ok) {
+            throw new Error(`${endpoint} respondeu ${response.status}: ${await response.text()}`);
+        }
+        return (await response.json()) as RespostaPIAgent;
+    };
 }
 
 // =============================================================================

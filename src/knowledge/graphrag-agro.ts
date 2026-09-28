@@ -44,7 +44,9 @@ import {
     montarSubgrafo,
     reticuloDeValores,
     valoresPorDecisao,
+    atributosDeclarados,
     type ConstantesCenario,
+    type EsquemaDeclarado,
     type PapeisDominio,
     type PoliticaItem,
     type SubgrafoPodado,
@@ -223,6 +225,24 @@ export function condutasPorDecisaoAgro(model: AgroModel): Record<string, string>
     if (!schema) return mapa;
     for (const conduta of schema.conducts) mapa[conduta.decision] = conduta.name;
     return mapa;
+}
+
+/**
+ * O que o `esquema_dados` declara — universo de decisoes e atributos de cada
+ * conduta —, para o Decompositor do modo multiagente. Ver `EsquemaDeclarado`.
+ */
+export function esquemaDeclaradoAgro(model: AgroModel): EsquemaDeclarado {
+    const schema = model.elements.filter(isAgroSchemaDef)[0];
+    if (!schema) return { decisoes: [], meios: [], condutas: {} };
+    const condutas: EsquemaDeclarado['condutas'] = {};
+    for (const c of schema.conducts) {
+        condutas[c.name] = atributosDeclarados({
+            modo: c.mode,
+            requer_dupla_checagem: c.doubleCheck,
+            justificativa_obrigatoria: c.requiresJustification
+        });
+    }
+    return { decisoes: [...schema.decisions], meios: [...schema.modes], condutas };
 }
 
 /**
