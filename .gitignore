@@ -23,3 +23,6 @@ src/python_engine/uvicorn.pid
 
 # Historico de chats persistido localmente pelo backend (src/web/server.ts).
 /data/chats
+
+# JSONL experimental de cada /api/avaliar (oraculo e juiz LLM), gravado pelo backend.
+/data/avaliacoes

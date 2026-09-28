@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
-import { avaliarResultados, type RespostaAvaliacao } from '../api';
+import { avaliarResultados, urlAvaliacaoJsonl, type RespostaAvaliacao } from '../api';
 import MetricasCard from './MetricasCard.vue';
 import ComparacaoLinhas from './ComparacaoLinhas.vue';
 
@@ -130,7 +130,10 @@ function cancelar(): void {
             </div>
             <div>
                 <h1 class="text-2xl font-medium text-neutral-900 dark:text-neutral-100">Avaliar resultados</h1>
-                <p class="text-sm text-neutral-500 dark:text-neutral-400">Cada plano é julgado por uma LLM contra o grafo de conhecimento recuperado para o cenário — com a justificativa do veredito.</p>
+                <p class="text-sm text-neutral-500 dark:text-neutral-400">
+                    Cada plano passa por uma cascata: sintaxe (a DSL — G e o parser → AST), semântica determinística sobre o AST (os validadores da geração) e, por
+                    último, um LLM Judge independente. O oráculo (sintaxe + semântica) decide a validade; as discordâncias do juiz ficam registradas.
+                </p>
             </div>
         </div>
 
@@ -342,8 +345,22 @@ function cancelar(): void {
                     </svg>
                     <span>
                         {{ resultado.naoAvaliados }} registro(s) não puderam ser avaliados — telemetria ausente/incompleta para reconstruir o cenário, ou falha ao
-                        consultar o grafo de conhecimento/julgar com o modelo local. Veja o motivo em cada linha marcada abaixo.
+                        consultar o grafo de conhecimento ou o /verify do motor. Veja o motivo em cada linha marcada abaixo.
                     </span>
+                </p>
+
+                <p v-if="resultado.arquivoJsonl" class="mb-4 flex max-w-5xl flex-wrap items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+                    <span>Registro experimental (oráculo e LLM Judge separados, um plano por linha): data/avaliacoes/{{ resultado.arquivoJsonl }}</span>
+                    <a
+                        :href="urlAvaliacaoJsonl(resultado.arquivoJsonl)"
+                        :download="resultado.arquivoJsonl"
+                        class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1 text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
+                    >
+                        <svg width="12" height="12" viewBox="0 0 24 24">
+                            <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        Baixar JSONL
+                    </a>
                 </p>
 
                 <div class="grid gap-4" :class="resultado.arquitetura && resultado.baseline ? 'lg:grid-cols-2' : 'grid-cols-1'">

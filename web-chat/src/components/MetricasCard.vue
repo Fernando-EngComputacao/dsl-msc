@@ -9,38 +9,84 @@ const props = defineProps<{
     comparar?: MetricasAvaliacao;
 }>();
 
-type ChaveMetrica = 'semanticaCorreta' | 'sintaxeCorreta' | 'violacoes';
+type ChaveMetrica = 'sintaxe' | 'semantica' | 'oraculo' | 'juiz' | 'discordantes' | 'violacoes';
 
-const LINHAS: Array<{ chave: ChaveMetrica; label: string; icone: 'check' | 'code' | 'alert'; cor: string; melhorQuandoMaior: boolean }> = [
-    { chave: 'semanticaCorreta', label: 'Semântica correta', icone: 'check', cor: 'blue', melhorQuandoMaior: true },
-    { chave: 'sintaxeCorreta', label: 'Sintaxe correta', icone: 'code', cor: 'emerald', melhorQuandoMaior: true },
-    { chave: 'violacoes', label: 'Violações', icone: 'alert', cor: 'rose', melhorQuandoMaior: false }
+/** Uma linha por camada da avaliação, na ordem da cascata: sintaxe, semântica,
+ *  oráculo (as duas juntas) e o LLM Judge, contado à parte — e a discordância
+ *  entre oráculo e juiz, que não é melhor nem pior para um lado (sem delta). */
+const LINHAS: Array<{
+    chave: ChaveMetrica;
+    label: string;
+    icone: 'check' | 'code' | 'alert' | 'scale';
+    cor: string;
+    melhorQuandoMaior: boolean | null;
+    valor: (m: MetricasAvaliacao) => number;
+    detalhe?: (m: MetricasAvaliacao) => string;
+}> = [
+    {
+        chave: 'sintaxe', label: 'Sintaxe válida (G + parser → AST)', icone: 'code', cor: 'emerald', melhorQuandoMaior: true,
+        valor: m => m.sintaxe.VALID,
+        detalhe: m => `inválida ${m.sintaxe.INVALID}`
+    },
+    {
+        chave: 'semantica', label: 'Semântica válida', icone: 'check', cor: 'teal', melhorQuandoMaior: true,
+        valor: m => m.semantica.VALID,
+        detalhe: m => `inválida ${m.semantica.INVALID} · indeterminada ${m.semantica.UNRESOLVED} · não avaliada (sem AST) ${m.semantica.NOT_EVALUATED}`
+    },
+    {
+        chave: 'oraculo', label: 'Válido pelo oráculo determinístico (normativo)', icone: 'check', cor: 'blue', melhorQuandoMaior: true,
+        valor: m => m.oraculo.VALID,
+        detalhe: m => `inválido ${m.oraculo.INVALID} · indeterminado ${m.oraculo.UNRESOLVED}`
+    },
+    {
+        chave: 'juiz', label: 'Válido pelo LLM Judge (experimental)', icone: 'check', cor: 'violet', melhorQuandoMaior: true,
+        valor: m => m.juiz.VALID,
+        detalhe: m =>
+            `inválido ${m.juiz.INVALID} · indeterminado ${m.juiz.UNRESOLVED}` +
+            (m.juiz.NOT_CALLED > 0 ? ` · não chamado ${m.juiz.NOT_CALLED}` : '') +
+            (m.juiz.NO_RESPONSE > 0 ? ` · sem resposta ${m.juiz.NO_RESPONSE}` : '')
+    },
+    {
+        chave: 'discordantes', label: 'Discordâncias oráculo × LLM', icone: 'scale', cor: 'amber', melhorQuandoMaior: null,
+        valor: m => m.discordantes,
+        detalhe: m =>
+            [`concordâncias ${m.concordantes}`, ...Object.entries(m.pares).filter(([par]) => par.split('+')[0] !== par.split('+')[1]).map(([par, n]) => `${par} ${n}`)].join(' · ')
+    },
+    { chave: 'violacoes', label: 'Violações', icone: 'alert', cor: 'rose', melhorQuandoMaior: false, valor: m => m.violacoes }
 ];
 
 const CORES: Record<string, { bg: string; texto: string; barra: string }> = {
     blue: { bg: 'bg-blue-50 dark:bg-blue-500/15', texto: 'text-blue-600 dark:text-blue-400', barra: 'bg-blue-500' },
+    teal: { bg: 'bg-teal-50 dark:bg-teal-500/15', texto: 'text-teal-600 dark:text-teal-400', barra: 'bg-teal-500' },
+    violet: { bg: 'bg-violet-50 dark:bg-violet-500/15', texto: 'text-violet-600 dark:text-violet-400', barra: 'bg-violet-500' },
+    amber: { bg: 'bg-amber-50 dark:bg-amber-500/15', texto: 'text-amber-600 dark:text-amber-400', barra: 'bg-amber-500' },
     emerald: { bg: 'bg-emerald-50 dark:bg-emerald-500/15', texto: 'text-emerald-600 dark:text-emerald-400', barra: 'bg-emerald-500' },
     rose: { bg: 'bg-rose-50 dark:bg-rose-500/15', texto: 'text-rose-600 dark:text-rose-400', barra: 'bg-rose-500' }
 };
+
+const linhaDe = (chave: ChaveMetrica) => LINHAS.find(l => l.chave === chave)!;
 
 /** Barras nascem em 0% e só assumem a largura real depois do primeiro paint —
  *  senão a transição CSS não tem um "de onde" animar (chega pronta). */
 const crescida = ref(false);
 onMounted(() => requestAnimationFrame(() => requestAnimationFrame(() => (crescida.value = true))));
 
+function valor(chave: ChaveMetrica): number {
+    return linhaDe(chave).valor(props.metricas);
+}
+
 function percentual(chave: ChaveMetrica): number {
     if (props.metricas.total === 0) return 0;
-    return Math.round((props.metricas[chave] / props.metricas.total) * 100);
+    return Math.round((valor(chave) / props.metricas.total) * 100);
 }
 
 function delta(chave: ChaveMetrica): number | null {
-    if (!props.comparar) return null;
-    return props.metricas[chave] - props.comparar[chave];
+    if (!props.comparar || linhaDe(chave).melhorQuandoMaior === null) return null;
+    return valor(chave) - linhaDe(chave).valor(props.comparar);
 }
 
-function deltaBom(chave: ChaveMetrica, valor: number): boolean {
-    const melhorQuandoMaior = LINHAS.find(l => l.chave === chave)!.melhorQuandoMaior;
-    return melhorQuandoMaior ? valor > 0 : valor < 0;
+function deltaBom(chave: ChaveMetrica, d: number): boolean {
+    return linhaDe(chave).melhorQuandoMaior ? d > 0 : d < 0;
 }
 </script>
 
@@ -95,6 +141,10 @@ function deltaBom(chave: ChaveMetrica, valor: number): boolean {
                             <polyline points="16 18 22 12 16 6" />
                             <polyline points="8 6 2 12 8 18" />
                         </svg>
+                        <svg v-else-if="linha.icone === 'scale'" width="11" height="11" viewBox="0 0 24 24" fill="none" :class="CORES[linha.cor].texto" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="12" y1="3" x2="12" y2="21" />
+                            <path d="M5 7h14M5 7l-3 7a3 3 0 006 0zM19 7l-3 7a3 3 0 006 0z" />
+                        </svg>
                         <svg v-else width="11" height="11" viewBox="0 0 24 24" fill="none" :class="CORES[linha.cor].texto" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                             <line x1="12" y1="9" x2="12" y2="13" />
@@ -117,8 +167,9 @@ function deltaBom(chave: ChaveMetrica, valor: number): boolean {
                         {{ delta(linha.chave)! > 0 ? '+' : '' }}{{ delta(linha.chave) }}
                     </span>
 
-                    <span class="font-mono text-sm tabular-nums text-neutral-800 dark:text-neutral-100">{{ metricas[linha.chave] }}/{{ metricas.total }}</span>
+                    <span class="font-mono text-sm tabular-nums text-neutral-800 dark:text-neutral-100">{{ valor(linha.chave) }}/{{ metricas.total }}</span>
                 </div>
+                <p v-if="linha.detalhe && linha.detalhe(metricas)" class="mb-1 pl-7 text-[11px] text-neutral-400 dark:text-neutral-500">{{ linha.detalhe(metricas) }}</p>
                 <div class="h-1.5 overflow-hidden rounded-full bg-neutral-100 dark:bg-white/10">
                     <div
                         class="h-full rounded-full transition-[width] duration-700 ease-out"

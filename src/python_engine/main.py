@@ -36,6 +36,12 @@ from grammar_from_kg import (  # noqa: E402
     gramatica_do_planner,
     gramatica_do_subgrafo,
 )
+from julgamento import (  # noqa: E402
+    JULGAMENTO_GBNF,
+    JulgamentoIlegivel,
+    ler_julgamento,
+    montar_prompt_julgamento,
+)
 from prompt_builder import carregar_exemplos, montar_prompt  # noqa: E402
 
 # O dominio e escolhido na subida do servico. A gramatica e os exemplares mudam;
@@ -313,75 +319,40 @@ def _validar_comando(comando: str) -> tuple[bool, str]:
     return status == "VALIDO", motivo
 
 
-# Gramatica GBNF fixa para o julgamento do PLANO ja gerado (avaliacao em lote, ver
-# POST /api/avaliar no web-chat) — mesma logica de VALIDACAO_GBNF: forcar duas linhas
-# em vez de deixar a LLM justificar em texto solto e sem estrutura. A violacao de
-# seguranca (ordem de incremento num farmaco/produto bloqueado ou vetado) NAO entra
-# aqui: e checada deterministicamente no lado TypeScript a partir do mesmo subgrafo
-# recuperado (ver src/inference/avaliar-grafo.ts) — este julgamento cobre so a
-# correcao semantica mais ampla (o plano atende a intencao e as recomendacoes do
-# grafo?), que e mais dificil de reduzir a uma comparacao numerica.
-JULGAMENTO_PLANO_GBNF = r"""
-root ::= veredito "\nmotivo: " motivo
-veredito ::= "CORRETO" | "INCORRETO"
-motivo ::= [^\n]+
-"""
-JULGAMENTO_PLANO_MAX_TOKENS = int(os.environ.get("SPC_CML_JULGAMENTO_MAX_TOKENS", "200"))
-
-JULGAMENTO_PLANO_INSTRUCAO = """Voce e um auditor que confere se um plano gerado por outro \
-sistema respeita as regras recuperadas do grafo de conhecimento e atende ao pedido do \
-profissional/operador.
-
-Considere INCORRETO quando o plano contraria um protocolo ativado, ignora um ajuste de \
-dose exigido, ignora uma recomendacao do protocolo sem justificativa, ou simplesmente nao \
-atende ao que foi pedido. Considere CORRETO quando o plano e coerente com as regras \
-abaixo e responde ao pedido, mesmo que nao siga exatamente as mesmas palavras.
-
-Nao julgue violacoes de seguranca (farmaco/produto bloqueado ou vetado) — isso ja e \
-conferido separadamente.
-
-[REGRAS RECUPERADAS DO GRAFO]
-{contexto_neo4j}
-
-[PEDIDO ORIGINAL]
-{intencao}
-
-[PLANO GERADO]
-{plano}
-
-Responda exatamente neste formato, sem mais nada:
-CORRETO
-motivo: <por que o plano atende as regras e ao pedido>
-
-ou
-
-INCORRETO
-motivo: <o que no plano contraria as regras ou deixa de atender ao pedido>
-
-resposta:
-"""
+# Julgamento do PLANO ja gerado (avaliacao em lote, ver POST /api/avaliar no
+# web-chat): o juiz LLM independente do oraculo deterministico. Formato, prompt e
+# leitura da resposta ficam em julgamento.py — ver o comentario de la. Aqui, so a
+# decodificacao sob a gramatica fixa da resposta, como em _validar_comando.
+# Tres campos de ate MAX_CHARS_LINHA caracteres: 200 tokens cortavam o veredito.
+JULGAMENTO_PLANO_MAX_TOKENS = int(os.environ.get("SPC_CML_JULGAMENTO_MAX_TOKENS", "400"))
 
 
-def _validar_plano(plano: str, contexto_neo4j: str, intencao: str) -> tuple[bool, str]:
-    """Julgamento (sob a mesma decodificacao restrita) de um plano JA GERADO contra o
-    subgrafo recuperado do Neo4j para o cenario dele — usado pela avaliacao em lote,
-    nao pelo fluxo de geracao. Ver comentario de JULGAMENTO_PLANO_GBNF."""
+def _validar_plano(plano: str, pedido: str, telemetria: str, conhecimento: str, evidencias: str) -> dict:
+    """Julgamento (sob decodificacao restrita) de um plano JA GERADO contra o
+    contexto completo do cenario — usado pela avaliacao em lote, nao pelo fluxo de
+    geracao. Resposta fora do formato sobe como `JulgamentoIlegivel`."""
     from llama_cpp import LlamaGrammar
 
     llm = get_llama()
-    prompt = JULGAMENTO_PLANO_INSTRUCAO.format(contexto_neo4j=contexto_neo4j, intencao=intencao, plano=plano)
+    prompt = montar_prompt_julgamento(plano, pedido, telemetria, conhecimento, evidencias)
+    # A mesma guarda de _gerar: estourar n_ctx aborta o processo, nao levanta excecao.
+    n_prompt = len(llm.tokenize(prompt.encode("utf-8")))
+    if n_prompt + JULGAMENTO_PLANO_MAX_TOKENS > N_CTX:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Prompt do juiz de {n_prompt} tokens mais {JULGAMENTO_PLANO_MAX_TOKENS} de saida "
+                f"excede n_ctx={N_CTX}."
+            ),
+        )
     with _LLAMA_LOCK:
         saida = llm(
             prompt,
-            grammar=LlamaGrammar.from_string(JULGAMENTO_PLANO_GBNF, verbose=False),
+            grammar=LlamaGrammar.from_string(JULGAMENTO_GBNF, verbose=False),
             max_tokens=JULGAMENTO_PLANO_MAX_TOKENS,
             temperature=0.1,
         )
-    texto = saida["choices"][0]["text"].strip()
-    linhas = texto.splitlines()
-    veredito = linhas[0].strip() if linhas else "INCORRETO"
-    motivo = linhas[1][len("motivo: "):].strip() if len(linhas) > 1 else "sem motivo reportado pelo modelo"
-    return veredito == "CORRETO", motivo
+    return ler_julgamento(saida["choices"][0]["text"])
 
 
 class ValidarRequest(BaseModel):
@@ -390,8 +361,13 @@ class ValidarRequest(BaseModel):
 
 class ValidarPlanoRequest(BaseModel):
     plano: str = Field(..., description="Texto do plano/missao/arbitragem gerado, a julgar contra o contexto do grafo")
-    contexto_neo4j: str = Field("", description="Prompt Semantico: regras recuperadas do grafo para este cenario")
-    intencao: str = Field("", description="Fala original do profissional/operador, para conferir se o plano a atende")
+    contexto_neo4j: str = Field(
+        "",
+        description="Prompt Semantico do cenario, com a politica efetiva: CENARIO, REGRAS e POLITICA",
+    )
+    intencao: str = Field("", description="PEDIDO: fala original do profissional/operador")
+    telemetria: str = Field("", description="TELEMETRIA do cenario, uma medida por linha")
+    evidencias: str = Field("", description="EVIDENCIAS da recuperacao: regras avaliadas e condicoes observadas")
 
 
 class EmbedRequest(BaseModel):
@@ -549,13 +525,17 @@ def validar_comando(req: ValidarRequest):
 @app.post("/validar-plano")
 def validar_plano(req: ValidarPlanoRequest):
     """
-    Avaliacao em lote (ver POST /api/avaliar no web-chat): julga se um plano JA
-    GERADO e coerente com o subgrafo recuperado do Neo4j para o cenario dele e com o
-    pedido original — substitui a comparacao contra um ground truth fixo por um
-    julgamento sobre o estado atual do grafo. Ver JULGAMENTO_PLANO_INSTRUCAO.
+    Avaliacao em lote (ver POST /api/avaliar no web-chat): o juiz LLM independente
+    diz se um plano JA GERADO e semanticamente compativel com o cenario, o pedido,
+    a politica, as regras, a telemetria e as evidencias — VALID, INVALID ou
+    UNRESOLVED, com justificativa, evidencias e a resposta bruta. Nao e a validade
+    do plano no SPC-CML (essa e do oraculo deterministico): e a opiniao que se
+    compara com ela. Resposta fora do formato: 502, sem veredito inventado.
     """
-    correto, motivo = _validar_plano(req.plano, req.contexto_neo4j, req.intencao)
-    return {"correto": correto, "motivo": motivo}
+    try:
+        return _validar_plano(req.plano, req.intencao, req.telemetria, req.contexto_neo4j, req.evidencias)
+    except JulgamentoIlegivel as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/embed")

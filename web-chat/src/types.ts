@@ -1,4 +1,4 @@
-import type { RespostaComando } from './api';
+import type { PIPlanejado, RespostaComando } from './api';
 
 export interface ItemResultadoLote {
     linha: number;
@@ -12,6 +12,12 @@ export interface ItemResultadoLote {
     promptSemantico?: string;
     foco?: RespostaComando['foco'];
     plano?: string;
+    /**
+     * Só no modo multiagente: o status e a sequência do Planner. A DSL do
+     * artefato não escreve `dependeDe`; sem isto, o avaliador julga os PIs sem as
+     * dependências (e sem as relações que cada PI Agent viu no prompt).
+     */
+    execucaoMultiagente?: { status: string; sequenciaValidada?: PIPlanejado[] };
 }
 
 export interface LoteEstado {

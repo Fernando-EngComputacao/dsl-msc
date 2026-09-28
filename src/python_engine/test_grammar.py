@@ -469,6 +469,58 @@ def main() -> int:
             falhas += 1
         print(f"      {'ok' if ok else 'FALHA'}: {descricao}")
 
+    # --- 12. Juiz LLM da avaliacao em lote: tres vereditos, sem veredito inventado
+    from julgamento import (
+        JULGAMENTO_GBNF,
+        JulgamentoIlegivel,
+        ler_julgamento,
+        montar_prompt_julgamento,
+    )
+
+    def _le(texto):
+        try:
+            return ler_julgamento(texto)
+        except JulgamentoIlegivel:
+            return None
+
+    lido_invalid = _le("evidencias: PAM 52; Propofol bloqueado\njustificativa: incrementa o que a politica veda\nveredito: INVALID")
+    prompt_juiz = montar_prompt_julgamento("plano X { }", "sobe a nora", "- PAM = 52", "[CENARIO]\n- paciente: P", "- regra R")
+    casos_juiz = [
+        ("le os tres vereditos", all(
+            (_le(f"evidencias: a\njustificativa: b\nveredito: {v}") or {}).get("veredito") == v
+            for v in ("VALID", "INVALID", "UNRESOLVED")
+        )),
+        ("evidencias separadas por ; e resposta bruta preservada",
+         lido_invalid is not None
+         and lido_invalid["evidencias"] == ["PAM 52", "Propofol bloqueado"]
+         and lido_invalid["resposta_bruta"].endswith("veredito: INVALID")),
+        ("resposta cortada antes do veredito nao vira veredito",
+         _le("evidencias: a\njustificativa: b") is None and _le("evidencias: a\njustificativa: b\nveredito: ") is None),
+        ("formato antigo (CORRETO/INCORRETO) e veredito desconhecido sao recusados",
+         _le("INCORRETO\nmotivo: x") is None and _le("evidencias: a\njustificativa: b\nveredito: INCORRETO") is None),
+        ("resposta vazia nao vira INVALID", _le("") is None),
+        ("o prompt traz todas as secoes do contexto",
+         all(s in prompt_juiz for s in ("[PEDIDO]", "[TELEMETRIA]", "[CONHECIMENTO RECUPERADO]", "[EVIDENCIAS]", "[PLANO]", "- PAM = 52", "[CENARIO]"))),
+        ("o prompt proibe igualdade textual, regra inventada e ausencia como reprovacao",
+         all(s in prompt_juiz for s in (
+             "Nao exija igualdade textual", "Nao invente regras", "Nao transforme conhecimento ausente em reprovacao",
+             "informacao insuficiente para concluir, responda UNRESOLVED"))),
+        ("GBNF do juiz com os tres vereditos", '"VALID" | "INVALID" | "UNRESOLVED"' in JULGAMENTO_GBNF),
+    ]
+    if LlamaGrammar is not None:
+        try:
+            LlamaGrammar.from_string(JULGAMENTO_GBNF, verbose=False)
+            compila_juiz = True
+        except Exception:
+            compila_juiz = False
+        casos_juiz.append(("GBNF do juiz compila no parser do llama.cpp", compila_juiz))
+
+    print("[12] Juiz LLM da avaliacao (VALID | INVALID | UNRESOLVED):")
+    for descricao, ok in casos_juiz:
+        if not ok:
+            falhas += 1
+        print(f"      {'ok' if ok else 'FALHA'}: {descricao}")
+
     print("\nRESULTADO:", "OK" if falhas == 0 else f"{falhas} falha(s)")
     return 0 if falhas == 0 else 1
 

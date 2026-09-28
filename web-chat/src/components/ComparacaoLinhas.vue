@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { DetalheLado, DetalheLinha } from '../api';
+import { rotuloVeredicto, tomDoLado } from '../avaliacao';
+import AvaliacaoLado from './AvaliacaoLado.vue';
 
 const props = defineProps<{
     linhas: DetalheLinha[];
@@ -8,11 +10,12 @@ const props = defineProps<{
     mostrarBaseline: boolean;
 }>();
 
-const filtro = ref<'todas' | 'divergencias'>('todas');
+const filtro = ref<'todas' | 'divergencias' | 'discordancias'>('todas');
 const busca = ref('');
 const abertas = ref<Set<number>>(new Set());
 
 const totalDivergencias = computed(() => props.linhas.filter(l => l.temDivergencia).length);
+const totalDiscordancias = computed(() => props.linhas.filter(l => l.temDiscordancia).length);
 
 /** Sem acento e em minúsculas: quem audita digita "glicemia" e espera achar
  *  "Glicemia", "hiperglicêmico" etc. sem se preocupar com acentuação. */
@@ -24,7 +27,12 @@ function normalizar(texto: string): string {
 }
 
 const linhasVisiveis = computed(() => {
-    let lista = filtro.value === 'divergencias' ? props.linhas.filter(l => l.temDivergencia) : props.linhas;
+    let lista =
+        filtro.value === 'divergencias'
+            ? props.linhas.filter(l => l.temDivergencia)
+            : filtro.value === 'discordancias'
+              ? props.linhas.filter(l => l.temDiscordancia)
+              : props.linhas;
 
     const termo = busca.value.trim();
     if (termo) {
@@ -58,27 +66,16 @@ function recolherTodas(): void {
     abertas.value = new Set();
 }
 
-function ladoOk(lado: DetalheLado | undefined): boolean {
-    return !!lado && !lado.naoAvaliado && lado.sintaxeOk && lado.semanticaOk && !lado.violacao;
-}
+/** Cor da pill de um lado na linha recolhida: a do ORÁCULO, como no painel; o juiz nunca pinta a linha (a discordância é o ⚠). */
+const PILL: Record<ReturnType<typeof tomDoLado>, string> = {
+    neutro: 'bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-400',
+    valido: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400',
+    invalido: 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400',
+    indeterminado: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300'
+};
 
-/** Lista curta do que falhou naquele lado — o que a pessoa precisa ler pra
- *  saber por que a linha está marcada como divergente. */
-function motivos(lado: DetalheLado | undefined): string[] {
-    if (!lado || lado.naoAvaliado) return [];
-    const lista: string[] = [];
-    if (!lado.sintaxeOk) lista.push('sintaxe');
-    if (!lado.semanticaOk) lista.push('semântica (grafo)');
-    if (lado.violacao) lista.push('violação');
-    return lista;
-}
-
-/** Rótulo curto do veredicto — usado tanto na pill da linha colapsada quanto
- *  no cabeçalho do painel expandido. */
-function rotuloVeredicto(lado: DetalheLado | undefined): string {
-    if (!lado) return '';
-    if (lado.naoAvaliado) return 'não avaliado';
-    return ladoOk(lado) ? 'correto' : motivos(lado).join(' · ');
+function pill(lado: DetalheLado | undefined): string {
+    return PILL[tomDoLado(lado)];
 }
 </script>
 
@@ -101,7 +98,7 @@ function rotuloVeredicto(lado: DetalheLado | undefined): string {
                     <p class="text-xs text-neutral-500 dark:text-neutral-400">
                         <template v-if="linhasVisiveis.length !== linhas.length">{{ linhasVisiveis.length }} de {{ linhas.length }} caso(s)</template>
                         <template v-else>{{ linhas.length }} caso(s)</template>
-                        · {{ totalDivergencias }} com divergência
+                        · {{ totalDivergencias }} reprovado(s) ou indeterminado(s) pelo oráculo · {{ totalDiscordancias }} com discordância oráculo × LLM
                     </p>
                 </div>
             </div>
@@ -154,7 +151,15 @@ function rotuloVeredicto(lado: DetalheLado | undefined): string {
                         :class="filtro === 'divergencias' ? 'bg-white text-neutral-800 shadow-sm dark:bg-white/15 dark:text-neutral-100' : 'text-neutral-500 dark:text-neutral-400'"
                         @click="filtro = 'divergencias'"
                     >
-                        Só divergências
+                        Reprovados pelo oráculo
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-full px-3 py-1.5 text-xs font-medium transition-colors"
+                        :class="filtro === 'discordancias' ? 'bg-white text-neutral-800 shadow-sm dark:bg-white/15 dark:text-neutral-100' : 'text-neutral-500 dark:text-neutral-400'"
+                        @click="filtro = 'discordancias'"
+                    >
+                        Discordâncias
                     </button>
                 </div>
 
@@ -170,7 +175,8 @@ function rotuloVeredicto(lado: DetalheLado | undefined): string {
 
         <p v-if="linhasVisiveis.length === 0" class="rounded-2xl border border-dashed border-neutral-200 px-4 py-8 text-center text-sm text-neutral-400 dark:border-white/10 dark:text-neutral-500">
             <template v-if="busca.trim()">Nenhum caso encontrado para “{{ busca.trim() }}”.</template>
-            <template v-else>Nenhuma divergência — todos os casos avaliados foram aprovados pelo grafo de conhecimento.</template>
+            <template v-else-if="filtro === 'discordancias'">Nenhuma discordância — o LLM Judge concordou com o oráculo em todos os casos avaliados.</template>
+            <template v-else>Nenhum caso reprovado — todos os casos avaliados foram aceitos pelo oráculo determinístico.</template>
         </p>
 
         <div v-else class="overflow-hidden rounded-2xl border border-neutral-200 dark:border-white/10">
@@ -208,31 +214,19 @@ function rotuloVeredicto(lado: DetalheLado | undefined): string {
                     <span
                         v-if="mostrarArquitetura && l.arquitetura"
                         class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                        :class="
-                            l.arquitetura.naoAvaliado
-                                ? 'bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-400'
-                                : ladoOk(l.arquitetura)
-                                  ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                                  : 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
-                        "
+                        :class="pill(l.arquitetura)"
                         :title="`SPC-CML: ${rotuloVeredicto(l.arquitetura)}`"
                     >
-                        SPC-CML
+                        <span v-if="l.arquitetura.concordancia === false" aria-hidden="true">⚠ </span>SPC-CML
                     </span>
 
                     <span
                         v-if="mostrarBaseline && l.baseline"
                         class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                        :class="
-                            l.baseline.naoAvaliado
-                                ? 'bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-400'
-                                : ladoOk(l.baseline)
-                                  ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                                  : 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400'
-                        "
+                        :class="pill(l.baseline)"
                         :title="`Baseline: ${rotuloVeredicto(l.baseline)}`"
                     >
-                        Baseline
+                        <span v-if="l.baseline.concordancia === false" aria-hidden="true">⚠ </span>Baseline
                     </span>
                 </button>
 
@@ -242,90 +236,8 @@ function rotuloVeredicto(lado: DetalheLado | undefined): string {
                             class="grid gap-3 border-t border-neutral-200 bg-neutral-50/60 p-3.5 dark:border-white/10 dark:bg-white/[0.02]"
                             :class="colunas === 3 ? 'lg:grid-cols-3' : colunas === 2 ? 'lg:grid-cols-2' : 'grid-cols-1'"
                         >
-                            <!-- Arquitetura SPC-CML -->
-                            <div
-                                v-if="mostrarArquitetura"
-                                class="flex min-w-0 flex-col rounded-xl border p-3"
-                                :class="
-                                    l.arquitetura && l.arquitetura.naoAvaliado
-                                        ? 'border-neutral-200 bg-neutral-50/60 dark:border-white/10 dark:bg-white/[0.03]'
-                                        : l.arquitetura && !ladoOk(l.arquitetura)
-                                          ? 'border-rose-200 bg-rose-50/50 dark:border-rose-500/25 dark:bg-rose-500/[0.06]'
-                                          : 'border-neutral-200 bg-white dark:border-white/10 dark:bg-white/5'
-                                "
-                            >
-                                <div class="mb-2 flex items-center gap-1.5">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" class="shrink-0 text-blue-500 dark:text-blue-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                                    </svg>
-                                    <span class="text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">Arquitetura SPC-CML</span>
-                                    <span
-                                        v-if="l.arquitetura"
-                                        class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-                                        :class="
-                                            l.arquitetura.naoAvaliado
-                                                ? 'bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-400'
-                                                : ladoOk(l.arquitetura)
-                                                  ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                                                  : 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300'
-                                        "
-                                    >
-                                        {{ rotuloVeredicto(l.arquitetura) }}
-                                    </span>
-                                </div>
-                                <template v-if="l.arquitetura">
-                                    <pre class="max-h-72 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-neutral-700 dark:bg-black/20 dark:text-neutral-300">{{ l.arquitetura.plano }}</pre>
-                                    <p class="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-300">{{ l.arquitetura.justificativa }}</p>
-                                    <details v-if="l.arquitetura.contextoGrafo" class="mt-2">
-                                        <summary class="cursor-pointer text-[11px] text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300">Contexto recuperado do grafo</summary>
-                                        <pre class="mt-1.5 max-h-56 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-neutral-600 dark:bg-black/20 dark:text-neutral-400">{{ l.arquitetura.contextoGrafo }}</pre>
-                                    </details>
-                                </template>
-                                <p v-else class="rounded-lg bg-neutral-50 p-2.5 text-[11px] text-neutral-400 dark:bg-black/20 dark:text-neutral-500">Sem registro para esta linha no arquivo enviado.</p>
-                            </div>
-
-                            <!-- Baseline -->
-                            <div
-                                v-if="mostrarBaseline"
-                                class="flex min-w-0 flex-col rounded-xl border p-3"
-                                :class="
-                                    l.baseline && l.baseline.naoAvaliado
-                                        ? 'border-neutral-200 bg-neutral-50/60 dark:border-white/10 dark:bg-white/[0.03]'
-                                        : l.baseline && !ladoOk(l.baseline)
-                                          ? 'border-rose-200 bg-rose-50/50 dark:border-rose-500/25 dark:bg-rose-500/[0.06]'
-                                          : 'border-neutral-200 bg-white dark:border-white/10 dark:bg-white/5'
-                                "
-                            >
-                                <div class="mb-2 flex items-center gap-1.5">
-                                    <svg width="13" height="13" viewBox="0 0 24 24" class="shrink-0 text-neutral-500 dark:text-neutral-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <rect x="4" y="4" width="16" height="16" rx="2" />
-                                        <rect x="9" y="9" width="6" height="6" />
-                                    </svg>
-                                    <span class="text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">Baseline</span>
-                                    <span
-                                        v-if="l.baseline"
-                                        class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-                                        :class="
-                                            l.baseline.naoAvaliado
-                                                ? 'bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-400'
-                                                : ladoOk(l.baseline)
-                                                  ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                                                  : 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300'
-                                        "
-                                    >
-                                        {{ rotuloVeredicto(l.baseline) }}
-                                    </span>
-                                </div>
-                                <template v-if="l.baseline">
-                                    <pre class="max-h-72 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-neutral-700 dark:bg-black/20 dark:text-neutral-300">{{ l.baseline.plano }}</pre>
-                                    <p class="mt-2 text-[11px] leading-relaxed text-neutral-600 dark:text-neutral-300">{{ l.baseline.justificativa }}</p>
-                                    <details v-if="l.baseline.contextoGrafo" class="mt-2">
-                                        <summary class="cursor-pointer text-[11px] text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300">Contexto recuperado do grafo</summary>
-                                        <pre class="mt-1.5 max-h-56 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-neutral-600 dark:bg-black/20 dark:text-neutral-400">{{ l.baseline.contextoGrafo }}</pre>
-                                    </details>
-                                </template>
-                                <p v-else class="rounded-lg bg-neutral-50 p-2.5 text-[11px] text-neutral-400 dark:bg-black/20 dark:text-neutral-500">Sem registro para esta linha no arquivo enviado.</p>
-                            </div>
+                            <AvaliacaoLado v-if="mostrarArquitetura" :lado="l.arquitetura" titulo="Arquitetura SPC-CML" variante="arquitetura" />
+                            <AvaliacaoLado v-if="mostrarBaseline" :lado="l.baseline" titulo="Baseline" variante="baseline" />
                         </div>
                     </div>
                 </Transition>

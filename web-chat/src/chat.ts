@@ -331,6 +331,17 @@ async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med'
                 promptSemantico: resposta.promptSemantico,
                 foco: resposta.foco,
                 plano: resposta.resultado,
+                ...(resposta.execucaoMultiagente
+                    ? {
+                          execucaoMultiagente: {
+                              status: resposta.execucaoMultiagente.status,
+                              // So o que o avaliador le; as regras associadas a cada PI ficam de fora.
+                              sequenciaValidada: resposta.execucaoMultiagente.sequenciaValidada?.map(({ ordem, item, conduta, dependeDe, motivo }) => ({
+                                  ordem, item, conduta, dependeDe, ...(motivo ? { motivo } : {})
+                              })),
+                          },
+                      }
+                    : {}),
             };
         } catch (error) {
             if ((error as Error).name === 'AbortError') break;

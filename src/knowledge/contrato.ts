@@ -328,11 +328,20 @@ export interface VereditoContrato {
 
 export function verificarContrato(contrato: ContratoArtefato, texto: string): VereditoContrato {
     const lido = lerArtefato(texto, contrato.papeis);
-    const violacoes = [
+    const violacoes = verificarLido(contrato, lido);
+    return { lido, violacoes, conforme: violacoes.length === 0 };
+}
+
+/**
+ * O julgamento de `verificarContrato` sobre um artefato JA LIDO: por
+ * `lerArtefato` na geracao, ou pelo AST do parser da DSL no avaliador
+ * (inference/avaliar-sintaxe.ts). Um criterio so, qualquer que seja a leitura.
+ */
+export function verificarLido(contrato: ContratoArtefato, lido: ArtefatoLido): Violacao[] {
+    return [
         ...verificarClausulas(contrato, lido.clausulas),
         ...verificarArtefato(contrato, lido)
     ];
-    return { lido, violacoes, conforme: violacoes.length === 0 };
 }
 
 // =============================================================================

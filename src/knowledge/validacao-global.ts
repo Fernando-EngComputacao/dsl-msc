@@ -11,7 +11,7 @@
  *
  * REUSADO, NAO REESCRITO:
  *
- *   clausulas e artefato    verificarContrato (contrato.ts) sobre a POLITICA
+ *   clausulas e artefato    verificarLido (contrato.ts: o de verificarContrato) sobre a POLITICA
  *                           EFETIVA inteira — admissibilidade de cada clausula,
  *                           unicidade por item, sujeito, contexto em foco,
  *                           sequencia x clausulas, escalonamento obrigatorio,
@@ -60,7 +60,7 @@
 
 import {
     condutasDoItem,
-    verificarContrato,
+    verificarLido,
     type TipoViolacao
 } from './contrato.js';
 import type { PlanoComposto } from './composicao.js';
@@ -158,7 +158,9 @@ export function validarPlanoGlobal(
     }
 
     // ------------------------------------------------------------ 2. contrato do artefato
-    for (const v of verificarContrato(k.contrato, plano.texto).violacoes) {
+    // Sobre `plano.lido`, e nao relendo `plano.texto`: na geracao ele e o
+    // `lerArtefato` do texto composto (comporPlano); no avaliador, o AST do parser.
+    for (const v of verificarLido(k.contrato, plano.lido)) {
         const x = v.clausula === null ? undefined : clausulas[v.clausula];
         if (x && v.tipo === 'decisao_inadmissivel' && telemetria.has(x.r.ordem)) continue; // ja explicado acima
         erros.push({

@@ -587,7 +587,6 @@ Quando o refinamento estreita um item, o motivo que ele acrescenta vem no format
 | chamador | por quê |
 |---|---|
 | `scripts/gerar-ground-truth-*.ts` | o gabarito precisa de texto estável |
-| `/api/avaliar` (`avaliarRegistro*` em `server.ts`) | o juiz de `/validar-plano` recebe esse texto, sem `[CENARIO]`, como contexto |
 | exibição no console de `cli.ts`, dos clientes de lote, de `inspecionar-foco.ts` e do `main()` de `llm-client.ts` | só log |
 
 > ⚠️ A CLI e os clientes de lote **imprimem** o prompt legado, mas o que **enviam** ao motor (via `gerar*Restrito` → `montarEntradaGeracao*`) traz a anotação e o bloco, montados com a poda. O log do console não é o texto que o LLM leu.
@@ -641,6 +640,28 @@ flowchart LR
     GH --> G
     style OK fill:#e6f4ea
 ```
+
+### Avaliação dos planos já gerados (`/api/avaliar`): sintaxe → AST → semântica → oráculo → LLM Judge
+
+A tela "Avaliar resultados" passa cada plano do lote por uma **cascata**, e cada camada responde uma pergunta diferente ([avaliar-sintaxe.ts](src/inference/avaliar-sintaxe.ts), [avaliar-grafo.ts](src/inference/avaliar-grafo.ts)):
+
+| camada | pergunta | como |
+|---|---|---|
+| **1. Sintaxe** | o texto pertence à DSL? | **G** — `/verify` com subgrafo vazio, que reparseia contra a BNF completa (a mesma que a decodificação mascara) — **e** o parser Langium da DSL, com a ligação de referências contra o modelo do especialista. VALID só se as duas peças aceitam (`pecas` diz o que cada uma disse). Erros com o código do próprio parser (classes do Lark, `lexing-error`/`parsing-error`/`linking-error` do Langium), fonte, linha, coluna, regra ou campo, encontrado e esperado |
+| **AST** | — | o AST **oficial** (`PlanCommand` \| `MissionCommand` \| `DecisionCommand`), serializado pelo `JsonSerializer` do Langium, com `$literal` em cada quantidade (o número como está no texto). É o objeto guardado no resultado **e** o único que a semântica lê (`projetarAst`) |
+| **2. Semântica** | dado o AST, o plano respeita política, conhecimento, telemetria, pedido, contrato e relações? | sem texto nenhum (o plano composto julgado tem `texto` vazio), com a recuperação da geração refeita a partir do `sorteio` do registro, os validadores do multiagente na ordem dele: `/verify` com a política efetiva (L(Ĝ)), `validarSequencia`, `decomporPIs` + `validarPI`, `validarPlanoGlobal` (contrato por `verificarLido`). Nenhum critério novo |
+| **3. Oráculo** | o plano é válido no SPC-CML? | sintaxe INVALID → INVALID (origem: sintaxe); senão o veredito da semântica (origem: semântica). É o resultado **normativo** |
+| **4. LLM Judge** | um LLM independente acha o plano adequado? | **experimental**: `/validar-plano` ([julgamento.py](src/python_engine/julgamento.py)). Avalia todo plano com AST — também os semanticamente INVALID ou UNRESOLVED —; texto fora da DSL só com `SPC_CML_AVALIAR_JULGAR_SINTAXE_INVALIDA=true`; artefato vazio nunca. `status`: `VALID` \| `INVALID` \| `UNRESOLVED` \| `NOT_CALLED` \| `NO_RESPONSE` |
+
+**Precedência.** Texto vazio ou fora da DSL: sintaxe INVALID, semântica `NOT_EVALUATED`, oráculo INVALID, juiz `NOT_CALLED`. DSL válida: semântica e oráculo VALID, INVALID ou UNRESOLVED, e o juiz registrado ao lado. O juiz nunca corrige o oráculo (nem o oráculo o juiz): vereditos iguais → concordantes, com a classificação do oráculo (`VALIDO_PELO_ORACULO`, `INVALIDO_PELO_ORACULO`, `UNRESOLVIDO_PELO_ORACULO`); qualquer combinação diferente → `DISCORDANCIA_LLM`, com o oráculo intacto — UNRESOLVED continua UNRESOLVED. A tela pinta a linha pela cor do oráculo; a discordância é uma marca à parte.
+
+**UNRESOLVED nunca vira INVALID.** Os caminhos, todos dos validadores da geração: política efetiva sem item ou sem mapa decisão → conduta (a semântica para na sequência, como a geração para antes do Planner, e o `/verify` da política nem é chamado); regra que bloquearia um incremento sem a medida (`telemetria_insuficiente`, na sequência, no PI e na global); pedido sem item citado (`pedido_global_indeterminado`); item citado sem decisão que realize conduta alguma, ou escalonamento que obriga uma conduta que nenhum item realiza (`conhecimento_insuficiente`); justificativa obrigatória sem evidência nenhuma no contexto (`evidencia_insuficiente`, no PI). No último caso de escalonamento, o `escalonamento_ignorado` de `validarPlanoGlobal` — que na geração nunca vê esse estado — é reclassificado como lacuna, pelo critério de `validarSequencia` (aviso `escalonamento_irrealizavel`).
+
+**Dependências.** `dependeDe` não está na DSL do artefato: vem da sequência do Planner (`execucaoMultiagente.sequenciaValidada`), que o lote do web-chat passou a gravar. Sem ela, as dependências não são conferidas e os PIs são julgados sem as relações que o Planner declarou — o que muda veredito: a justificativa de um PI que cita o item de que ele depende é `justificativa_referencia_inexistente` sem a sequência, e aceita com ela. Sequência que não corresponde às cláusulas do AST não é usada (aviso `sequencia_nao_corresponde`).
+
+**Estruturado × texto.** A semântica só confere o que tem forma. `regra_global` e o mecanismo/conduta das regras relacionais são texto: aparecem em `naoFormalizado` (e no aviso `regras_globais_textuais`), vão ao juiz como evidência e nunca reprovam nem deixam indeterminado.
+
+Cada avaliação grava `data/avaliacoes/<data>-<dominio>.jsonl` (baixável pela tela, `GET /api/avaliacoes/:arquivo`): um registro por plano, com `validacaoSintatica`, `ast`, `validacaoSemantica` (por etapa), `oraculo`, `julgamentoLLM` (com a resposta bruta), `concordancia` e `classificacao` separados. As métricas contam sintaxe, semântica, oráculo e juiz separadamente, as concordâncias e cada par `oráculo+juiz`. Se o Prompt Semântico reconstruído diferir do gravado na geração, a semântica avisa `contexto_divergente`.
 
 ---
 
@@ -936,7 +957,7 @@ Valor desconhecido em qualquer das duas cai no padrão em vez de derrubar o serv
 | GET | `/grammar` | G em Lark e GBNF |
 | POST | `/verify` | plano ∈ L(Ĝ)? — no `multiagente`, a checagem de sintaxe do artefato composto |
 | POST | `/validar-comando` | filtro prévio (LLM sob gramática fixa) |
-| POST | `/validar-plano` | julgamento de plano gerado (avaliação em lote) |
+| POST | `/validar-plano` | LLM Judge de plano já gerado (avaliação em lote): `VALID` \| `INVALID` \| `UNRESOLVED`, independente do oráculo (§10) |
 | POST | `/embed` | vetor bge-m3 |
 | POST | `/generate-constrained` | artefato inteiro + reparse |
 | POST | `/generate-fragment` | um não-terminal, sobre um prefixo |
@@ -947,7 +968,7 @@ Valor desconhecido em qualquer das duas cai no padrão em vez de derrubar o serv
 
 | método | rota |
 |---|---|
-| GET | `/api/dominios`, `/api/health`, `/api/chats`, `/api/chats/:id` |
+| GET | `/api/dominios`, `/api/health`, `/api/chats`, `/api/chats/:id`, `/api/avaliacoes/:arquivo` (JSONL da avaliação) |
 | POST | `/api/comando` (SSE), `/api/chats`, `/api/avaliar` |
 | PUT | `/api/chats/:id` |
 
@@ -1137,6 +1158,7 @@ Somadas, as contagens dão 191 casos; os 8 de `test:foco` que dependem do motor 
 | `npm run test:validacao-global` | 35 | composição (casos 1–12), validação global (A–F, duplicidade, dependências, justificativa × cenário, relação de risco, fronteira estruturado × texto, `regra_global` textual, alvo do pedido, feedback), reinício (A, B), pedido sem alvo → `UNRESOLVED` antes do Planner, pedido com item → `PLANNING`, orçamentos por ciclo, recuperação não repetida, isolamento dos ciclos, custo, `/verify` recusando → `FAILED`, PI `UNRESOLVED` sem composição, cliente HTTP real, baseline incremental |
 | `npm run test:earley` | — | 7 modos de falha + fechamento por prefixos |
 | `npm run test:avaliar` | — | métricas e pareamento |
+| `npm run test:avaliar-oraculo` | 39 | avaliador em cascata: vazio e fora da DSL param na sintaxe (juiz `NOT_CALLED`), sintaxe pelas duas peças (G e parser Langium; o que só uma recusa; falha técnica de cada uma), AST guardado = AST julgado (JSONL, reformatação, plano sem texto), semântica com os validadores da geração, os caminhos de UNRESOLVED (telemetria, política vazia, pedido sem alvo, item sem conduta, escalonamento irrealizável) sem virar INVALID, dependências presentes/inválidas/ausentes/divergentes, regressões permanentes (incremento proibido FC 138 → oráculo INVALID com juiz VALID; planos REAIS `COMPLETED` → VALID), juiz independente (nove combinações, `NO_RESPONSE`, cancelamento), métricas por camada, JSONL |
 | `npm run test:grammar` | — | G, G[y], Ĝ, especialização por item (Python) |
 | `npm run test:equivalencia` | 3 | AST × Cypher (fora de `npm test`; exige Neo4j) |
 | `npm run test:model` | — | inspeção do modelo clínico: imprime a AST, sem asserções (fora de `npm test`) |
