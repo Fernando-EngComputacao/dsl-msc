@@ -43,7 +43,7 @@ function aoTeclar(e: KeyboardEvent): void {
 <template>
     <nav class="mb-8 flex w-full justify-center" aria-label="Seções do resultado">
         <div
-            class="relative grid w-full max-w-2xl grid-cols-5 rounded-full border border-neutral-200 bg-neutral-100/80 p-1 shadow-sm dark:border-white/10 dark:bg-white/5"
+            class="relative grid w-full max-w-2xl grid-cols-5 rounded-full bg-neutral-100/80 p-1 shadow-sm dark:bg-white/5"
             role="tablist"
             @keydown="aoTeclar"
         >
@@ -65,8 +65,8 @@ function aoTeclar(e: KeyboardEvent): void {
                 :title="aba.rotulo"
                 class="relative z-10 flex items-center justify-center gap-2 rounded-full px-2 py-2 text-sm font-medium transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 sm:px-3"
                 :class="modelValue === aba.chave
-                    ? 'text-neutral-900 dark:text-neutral-50'
-                    : 'text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200'"
+                    ? 'text-blue-900 dark:text-blue-50'
+                    : 'text-neutral-500 hover:text-blue-800 dark:text-neutral-400 dark:hover:text-blue-200'"
                 @click="escolher(i)"
             >
                 <svg
