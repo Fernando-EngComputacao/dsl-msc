@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { DetalheLado, DetalheLinha } from '../api';
 import { rotuloVeredicto, tomDoLado } from '../avaliacao';
 import AvaliacaoLado from './AvaliacaoLado.vue';
@@ -48,6 +48,61 @@ const linhasVisiveis = computed(() => {
     return lista;
 });
 
+// ---------------------------------------------------------------------------
+// Paginação: 20 casos por página, ou todos de uma vez ("Ver tudo"). Filtro e
+// busca continuam valendo sobre o conjunto inteiro; a página só recorta o
+// que já passou por eles.
+// ---------------------------------------------------------------------------
+
+const POR_PAGINA = 20;
+const verTudo = ref(false);
+const pagina = ref(1);
+
+const totalPaginas = computed(() => Math.max(1, Math.ceil(linhasVisiveis.value.length / POR_PAGINA)));
+const paginado = computed(() => !verTudo.value && linhasVisiveis.value.length > POR_PAGINA);
+
+const linhasDaPagina = computed(() => {
+    if (!paginado.value) return linhasVisiveis.value;
+    const inicio = (pagina.value - 1) * POR_PAGINA;
+    return linhasVisiveis.value.slice(inicio, inicio + POR_PAGINA);
+});
+
+/** "21–40 de 137" — o intervalo que está na tela. */
+const intervalo = computed(() => {
+    const total = linhasVisiveis.value.length;
+    if (!paginado.value) return { de: total > 0 ? 1 : 0, ate: total, total };
+    const de = (pagina.value - 1) * POR_PAGINA + 1;
+    return { de, ate: Math.min(de + POR_PAGINA - 1, total), total };
+});
+
+/** Os números de página a mostrar: sempre a primeira, a última e as vizinhas da atual; o resto vira "…". */
+const botoesDePagina = computed<Array<number | '…'>>(() => {
+    const n = totalPaginas.value;
+    const atual = pagina.value;
+    const paginas = [...new Set([1, n, atual - 1, atual, atual + 1])].filter(p => p >= 1 && p <= n).sort((a, b) => a - b);
+    const saida: Array<number | '…'> = [];
+    paginas.forEach((p, i) => {
+        if (i > 0 && p - paginas[i - 1] > 1) saida.push('…');
+        saida.push(p);
+    });
+    return saida;
+});
+
+function irPara(p: number): void {
+    pagina.value = Math.min(Math.max(1, p), totalPaginas.value);
+}
+
+function alternarVerTudo(): void {
+    verTudo.value = !verTudo.value;
+    pagina.value = 1;
+}
+
+// Filtro ou busca novos começam na primeira página; um conjunto que encolheu nunca deixa a página fora do alcance.
+watch([filtro, busca], () => (pagina.value = 1));
+watch(totalPaginas, n => {
+    if (pagina.value > n) pagina.value = n;
+});
+
 /** Quantas colunas o painel expandido tem: um por lado selecionado. */
 const colunas = computed(() => (props.mostrarArquitetura ? 1 : 0) + (props.mostrarBaseline ? 1 : 0));
 
@@ -58,8 +113,9 @@ function alternar(linha: number): void {
     abertas.value = novo;
 }
 
+/** Expande os casos que estão na tela (a página atual, ou todos em "Ver tudo"). */
 function expandirTodas(): void {
-    abertas.value = new Set(linhasVisiveis.value.map(l => l.linha));
+    abertas.value = new Set(linhasDaPagina.value.map(l => l.linha));
 }
 
 function recolherTodas(): void {
@@ -154,7 +210,7 @@ function pill(lado: DetalheLado | undefined): string {
                         Reprovados pelo oráculo
                     </button>
                     <button
-                        type="button"
+                            type="button"
                         class="rounded-full px-3 py-1.5 text-xs font-medium transition-colors"
                         :class="filtro === 'discordancias' ? 'bg-white text-neutral-800 shadow-sm dark:bg-white/15 dark:text-neutral-100' : 'text-neutral-500 dark:text-neutral-400'"
                         @click="filtro = 'discordancias'"
@@ -181,7 +237,7 @@ function pill(lado: DetalheLado | undefined): string {
 
         <div v-else class="overflow-hidden rounded-2xl border border-neutral-200 dark:border-white/10">
             <div
-                v-for="(l, i) in linhasVisiveis"
+                v-for="(l, i) in linhasDaPagina"
                 :key="l.linha"
                 class="border-neutral-200 dark:border-white/10"
                 :class="i > 0 ? 'border-t' : ''"
@@ -243,6 +299,61 @@ function pill(lado: DetalheLado | undefined): string {
                 </Transition>
             </div>
         </div>
+
+        <!-- Paginação: 20 por página; "Ver tudo" mostra o conjunto inteiro (depois de filtro e busca). -->
+        <nav
+            v-if="linhasVisiveis.length > POR_PAGINA"
+            class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-neutral-500 dark:text-neutral-400"
+            aria-label="Paginação da comparação por linha"
+        >
+            <p class="tabular-nums">
+                <template v-if="paginado">Mostrando {{ intervalo.de }}–{{ intervalo.ate }} de {{ intervalo.total }} caso(s)</template>
+                <template v-else>Mostrando todos os {{ intervalo.total }} caso(s)</template>
+            </p>
+
+            <div v-if="paginado" class="flex items-center gap-1">
+                <button
+                    type="button"
+                    class="rounded-full px-2.5 py-1 transition-colors hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
+                    :disabled="pagina === 1"
+                    aria-label="Página anterior"
+                    @click="irPara(pagina - 1)"
+                >
+                    ‹ Anterior
+                </button>
+                <template v-for="(p, i) in botoesDePagina" :key="`${p}-${i}`">
+                    <span v-if="p === '…'" class="px-1 text-neutral-400 dark:text-neutral-500" aria-hidden="true">…</span>
+                    <button
+                        v-else
+                        type="button"
+                        class="min-w-7 rounded-full px-2 py-1 tabular-nums transition-colors"
+                        :class="p === pagina ? 'bg-neutral-800 font-medium text-white dark:bg-white dark:text-neutral-900' : 'hover:bg-neutral-100 dark:hover:bg-white/10'"
+                        :aria-current="p === pagina ? 'page' : undefined"
+                        :aria-label="`Página ${p}`"
+                        @click="irPara(p)"
+                    >
+                        {{ p }}
+                    </button>
+                </template>
+                <button
+                    type="button"
+                    class="rounded-full px-2.5 py-1 transition-colors hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
+                    :disabled="pagina === totalPaginas"
+                    aria-label="Próxima página"
+                    @click="irPara(pagina + 1)"
+                >
+                    Próxima ›
+                </button>
+            </div>
+
+            <button
+                type="button"
+                class="rounded-full border border-neutral-200 px-3 py-1.5 text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
+                @click="alternarVerTudo"
+            >
+                {{ verTudo ? `Ver menos (${POR_PAGINA} por página)` : 'Ver tudo' }}
+            </button>
+        </nav>
     </section>
 </template>
 
