@@ -11,6 +11,7 @@ import ComparacaoLinhas from "./ComparacaoLinhas.vue";
 import GraficosAvaliacao from "./GraficosAvaliacao.vue";
 import ResultadosImportados from "./ResultadosImportados.vue";
 import TemposAvaliacao from "./TemposAvaliacao.vue";
+import NavegacaoResultado, { type AbaResultado } from "./NavegacaoResultado.vue";
 import { parseRegistrosAvaliacao, type RegistroAvaliacaoImportado } from "../../../src/inference/avaliacao-jsonl";
 
 const DOMINIOS = [
@@ -73,6 +74,9 @@ const inputImportar = ref<HTMLInputElement | null>(null);
 const arquivoImportado = ref<string | null>(null);
 const registrosImportados = ref<RegistroAvaliacaoImportado[]>([]);
 const erroImportacao = ref<string | null>(null);
+// Qual seção do resultado aparece (só estado local: nenhuma rota muda). "Todas" mostra as quatro.
+const aba = ref<AbaResultado>("todas");
+const mostra = (a: AbaResultado): boolean => aba.value === "todas" || aba.value === a;
 
 function modeloIncluido(chave: "arquitetura" | "baseline"): boolean {
   return chave === "arquitetura"
@@ -153,6 +157,7 @@ async function avaliar(): Promise<void> {
   if (!podeAvaliar.value || avaliando.value) return;
   avaliando.value = true;
   view.value = "avaliando";
+  aba.value = "todas";
   erro.value = null;
   resultado.value = null;
   progresso.value = null;
@@ -198,6 +203,7 @@ function cancelar(): void {
 
 function novaAnalise(): void {
   resultado.value = null;
+  aba.value = "todas";
   erro.value = null;
   modo.value = "julgar";
   view.value = "config";
@@ -628,7 +634,7 @@ async function importarArquivo(evento: Event): Promise<void> {
     </Transition>
 
     <!-- Avaliando cenários -->
-    <Transition name="fade-slide" mode="out-in">
+    <Transition name="fade-slide">
       <section
         v-if="view === 'avaliando'"
         key="avaliando"
@@ -693,8 +699,10 @@ async function importarArquivo(evento: Event): Promise<void> {
           </button>
         </div>
       </section>
-      <div v-else-if="view === 'resultado' && resultado" key="resultado">
-        <div class="mb-8 flex flex-wrap items-center justify-between gap-4">
+    </Transition>
+
+    <div v-if="view === 'resultado' && resultado" class="animate-fade-in-up">
+      <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1
               class="text-2xl font-medium text-neutral-900 dark:text-neutral-100"
@@ -712,9 +720,11 @@ async function importarArquivo(evento: Event): Promise<void> {
           >
             Fazer nova análise
           </button>
-        </div>
       </div>
-    </Transition>
+    </div>
+
+    <!-- Opções de navegação: só trocam a seção mostrada, sem mudar de rota -->
+    <NavegacaoResultado v-if="view === 'resultado' && resultado" v-model="aba" />
 
     <!-- Importar resultado -->
     <section v-if="view === 'importar'" class="max-w-5xl py-4">
@@ -767,101 +777,110 @@ async function importarArquivo(evento: Event): Promise<void> {
       </p>
     </Transition>
 
-    <!-- Resultado da avaliação -->
-    <Transition name="fade-slide">
-      <div v-if="resultado && view === 'resultado'">
-        <p
-          v-if="resultado.naoAvaliados > 0"
-          class="mb-4 flex max-w-5xl items-start gap-2.5 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
+    <!-- Resultado da avaliação: a aba escolhida decide quais seções aparecem (v-show: filtros e linhas abertas não se perdem) -->
+    <div v-if="resultado && view === 'resultado'" class="animate-fade-in-up">
+      <p
+        v-if="resultado.naoAvaliados > 0"
+        class="mb-4 flex max-w-5xl items-start gap-2.5 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          class="mt-0.5 shrink-0"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            class="mt-0.5 shrink-0"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path
-              d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-            />
-            <line x1="12" y1="9" x2="12" y2="13" />
-            <line x1="12" y1="17" x2="12.01" y2="17" />
-          </svg>
-          <span>
-            {{ resultado.naoAvaliados }} registro(s) não puderam ser avaliados —
-            telemetria ausente/incompleta para reconstruir o cenário, ou falha
-            ao consultar o grafo de conhecimento ou o /verify do motor. Veja o
-            motivo em cada linha marcada abaixo.
-          </span>
-        </p>
-
-        <p
-          v-if="resultado.arquivoJsonl"
-          class="mb-4 flex max-w-5xl flex-wrap items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400"
-        >
-          <span
-            >Registro experimental (oráculo e LLM Judge separados, um plano por
-            linha): data/avaliacoes/{{ resultado.arquivoJsonl }}</span
-          >
-          <a
-            :href="urlAvaliacaoJsonl(resultado.arquivoJsonl)"
-            :download="resultado.arquivoJsonl"
-            class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1 text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24">
-              <path
-                d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-            Baixar JSONL
-          </a>
-        </p>
-
-        <TemposAvaliacao :resposta="resultado" origem="avaliacao" />
-
-        <div
-          class="grid gap-4"
-          :class="
-            resultado.arquitetura && resultado.baseline
-              ? 'lg:grid-cols-2'
-              : 'grid-cols-1'
-          "
-        >
-          <MetricasCard
-            v-if="resultado.arquitetura"
-            variante="arquitetura"
-            :metricas="resultado.arquitetura"
-            :comparar="resultado.baseline"
+          <path
+            d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
           />
-          <MetricasCard
-            v-if="resultado.baseline"
-            variante="baseline"
-            :metricas="resultado.baseline"
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        <span>
+          {{ resultado.naoAvaliados }} registro(s) não puderam ser avaliados —
+          telemetria ausente/incompleta para reconstruir o cenário, ou falha
+          ao consultar o grafo de conhecimento ou o /verify do motor. Veja o
+          motivo em cada linha marcada abaixo.
+        </span>
+      </p>
+
+      <p
+        v-if="resultado.arquivoJsonl"
+        class="mb-4 flex max-w-5xl flex-wrap items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400"
+      >
+        <span
+          >Registro experimental (oráculo e LLM Judge separados, um plano por
+          linha): data/avaliacoes/{{ resultado.arquivoJsonl }}</span
+        >
+        <a
+          :href="urlAvaliacaoJsonl(resultado.arquivoJsonl)"
+          :download="resultado.arquivoJsonl"
+          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1 text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24">
+            <path
+              d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          Baixar JSONL
+        </a>
+      </p>
+
+
+      <div class="flex flex-col gap-10">
+        <div v-show="mostra('metricas')" class="animate-fade-in-up">
+          <div
+            class="grid gap-4"
+            :class="
+              resultado.arquitetura && resultado.baseline
+                ? 'lg:grid-cols-2'
+                : 'grid-cols-1'
+            "
+          >
+            <MetricasCard
+              v-if="resultado.arquitetura"
+              variante="arquitetura"
+              :metricas="resultado.arquitetura"
+              :comparar="resultado.baseline"
+            />
+            <MetricasCard
+              v-if="resultado.baseline"
+              variante="baseline"
+              :metricas="resultado.baseline"
+            />
+          </div>
+        </div>
+
+        <div v-show="mostra('analise')" class="animate-fade-in-up">
+          <ComparacaoLinhas
+            v-if="resultado.linhas.length > 0"
+            :linhas="resultado.linhas"
+            :mostrar-arquitetura="!!resultado.arquitetura"
+            :mostrar-baseline="!!resultado.baseline"
           />
         </div>
 
-        <ComparacaoLinhas
-          v-if="resultado.linhas.length > 0"
-          :linhas="resultado.linhas"
-          :mostrar-arquitetura="!!resultado.arquitetura"
-          :mostrar-baseline="!!resultado.baseline"
-        />
+        <div v-show="mostra('graficos')" class="animate-fade-in-up">
+          <GraficosAvaliacao
+            :arquitetura="resultado.arquitetura"
+            :baseline="resultado.baseline"
+          />
+        </div>
 
-        <GraficosAvaliacao
-          :arquitetura="resultado.arquitetura"
-          :baseline="resultado.baseline"
-        />
+        <div v-show="mostra('tempo')" class="animate-fade-in-up">
+          <TemposAvaliacao :resposta="resultado" origem="avaliacao" />
+        </div>
       </div>
-    </Transition>
+    </div>
   </div>
 </template>
 

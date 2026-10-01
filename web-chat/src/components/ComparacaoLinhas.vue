@@ -136,7 +136,7 @@ function pill(lado: DetalheLado | undefined): string {
 </script>
 
 <template>
-    <section class="mt-6">
+    <section>
         <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-2.5">
                 <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-300">

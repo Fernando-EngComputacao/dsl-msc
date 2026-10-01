@@ -34,7 +34,7 @@ const semTempos = computed(() =>
 </script>
 
 <template>
-    <section class="mb-4 max-w-5xl rounded-2xl border border-neutral-200 p-4 dark:border-white/10">
+    <section class="max-w-5xl rounded-2xl border border-neutral-200 p-4 dark:border-white/10">
         <p class="mb-3 text-sm font-medium text-neutral-800 dark:text-neutral-100">Tempo da avaliação</p>
         <div v-if="algumTempo" class="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div v-for="item in itens" :key="item.rotulo" :title="item.dica">

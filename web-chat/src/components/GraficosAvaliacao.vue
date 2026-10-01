@@ -187,7 +187,7 @@ const tabela = ref({ camadas: false, matriz: false, violacoes: false });
 </script>
 
 <template>
-    <section v-if="lados.length > 0" class="viz mt-8" aria-label="Gráficos das métricas da avaliação">
+    <section v-if="lados.length > 0" class="viz" aria-label="Gráficos das métricas da avaliação">
         <div class="mb-3 flex items-center gap-2.5">
             <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-300">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

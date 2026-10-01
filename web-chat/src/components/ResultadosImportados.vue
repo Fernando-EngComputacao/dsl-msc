@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { DetalheLado, DetalheLinha, MetricasAvaliacao, RespostaAvaliacao, Veredito } from '../api';
 import type { RegistroAvaliacaoImportado } from '../../../src/inference/avaliacao-jsonl';
 import MetricasCard from './MetricasCard.vue';
 import ComparacaoLinhas from './ComparacaoLinhas.vue';
 import GraficosAvaliacao from './GraficosAvaliacao.vue';
 import TemposAvaliacao from './TemposAvaliacao.vue';
+import NavegacaoResultado, { type AbaResultado } from './NavegacaoResultado.vue';
 
 const props = defineProps<{ registros: RegistroAvaliacaoImportado[]; nomeArquivo: string }>();
 const emit = defineEmits<{ novaAnalise: [] }>();
@@ -97,6 +98,10 @@ const resposta = computed<RespostaAvaliacao>(() => {
     };
 });
 
+// Qual seção do resultado aparece (só estado local). "Todas" mostra as quatro, uma abaixo da outra.
+const aba = ref<AbaResultado>('todas');
+const mostra = (a: AbaResultado): boolean => aba.value === 'todas' || aba.value === a;
+
 function veredito(valor: unknown): valor is Veredito {
     return valor === 'VALID' || valor === 'INVALID' || valor === 'UNRESOLVED';
 }
@@ -117,14 +122,26 @@ function veredito(valor: unknown): valor is Veredito {
             <button type="button" class="rounded-full border border-neutral-200 px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/10" @click="emit('novaAnalise')">Fazer nova análise</button>
         </header>
 
-        <TemposAvaliacao :resposta="resposta" origem="importacao" />
-        <p v-if="resposta.naoAvaliados > 0" class="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{{ resposta.naoAvaliados }} registro(s) não foram avaliados no arquivo original.</p>
-        <div class="mb-4 grid gap-4" :class="resposta.arquitetura && resposta.baseline ? 'lg:grid-cols-2' : 'grid-cols-1'">
-            <MetricasCard v-if="resposta.arquitetura" variante="arquitetura" :metricas="resposta.arquitetura" :comparar="resposta.baseline" />
-            <MetricasCard v-if="resposta.baseline" variante="baseline" :metricas="resposta.baseline" />
+        <NavegacaoResultado v-model="aba" />
+
+        <p v-if="resposta.naoAvaliados > 0" class="mb-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{{ resposta.naoAvaliados }} registro(s) não foram avaliados no arquivo original.</p>
+        <div class="flex flex-col gap-10">
+            <div v-show="mostra('metricas')" class="animate-fade-in-up">
+                <div class="grid gap-4" :class="resposta.arquitetura && resposta.baseline ? 'lg:grid-cols-2' : 'grid-cols-1'">
+                    <MetricasCard v-if="resposta.arquitetura" variante="arquitetura" :metricas="resposta.arquitetura" :comparar="resposta.baseline" />
+                    <MetricasCard v-if="resposta.baseline" variante="baseline" :metricas="resposta.baseline" />
+                </div>
+            </div>
+            <div v-show="mostra('analise')" class="animate-fade-in-up">
+                <ComparacaoLinhas v-if="resposta.linhas.length" :linhas="resposta.linhas" :mostrar-arquitetura="!!resposta.arquitetura" :mostrar-baseline="!!resposta.baseline" />
+            </div>
+            <div v-show="mostra('graficos')" class="animate-fade-in-up">
+                <GraficosAvaliacao :arquitetura="resposta.arquitetura" :baseline="resposta.baseline" />
+            </div>
+            <div v-show="mostra('tempo')" class="animate-fade-in-up">
+                <TemposAvaliacao :resposta="resposta" origem="importacao" />
+            </div>
         </div>
-        <ComparacaoLinhas v-if="resposta.linhas.length" :linhas="resposta.linhas" :mostrar-arquitetura="!!resposta.arquitetura" :mostrar-baseline="!!resposta.baseline" />
-        <GraficosAvaliacao :arquitetura="resposta.arquitetura" :baseline="resposta.baseline" />
         <!-- 
         <details v-for="(registro, indice) in registros" :key="`${registro.lado}-${registro.linha}-${indice}`" class="mt-3 rounded-xl border border-neutral-200 px-4 py-3 dark:border-white/10">
             <summary class="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-200">Linha {{ registro.linha ?? indice + 1 }} · {{ registro.lado ?? 'resultado' }} · Oráculo {{ veredito(registro.oraculo?.veredito) ? registro.oraculo?.veredito : 'não informado' }} · Judge {{ statusJuiz(registro.julgamentoLLM?.status) ? (registro.julgamentoLLM?.status === 'NOT_CALLED' ? 'não executado' : registro.julgamentoLLM?.status) : 'não informado' }}</summary>
