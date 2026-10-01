@@ -145,6 +145,7 @@ export interface DetalheLado {
     julgamentoLLM?: JulgamentoLLM;
     concordancia?: boolean;
     classificacao?: ClassificacaoAvaliacao;
+    tempos?: { oraculoMs: number | null; llmJudgeMs: number | null };
 }
 
 export interface DetalheLinha {

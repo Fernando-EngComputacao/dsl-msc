@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   avaliarResultados,
   urlAvaliacaoJsonl,
@@ -8,6 +9,8 @@ import {
 import MetricasCard from "./MetricasCard.vue";
 import ComparacaoLinhas from "./ComparacaoLinhas.vue";
 import GraficosAvaliacao from "./GraficosAvaliacao.vue";
+import ResultadosImportados from "./ResultadosImportados.vue";
+import { parseRegistrosAvaliacao, type RegistroAvaliacaoImportado } from "../../../src/inference/avaliacao-jsonl";
 
 const DOMINIOS = [
   {
@@ -45,6 +48,8 @@ const MODELOS = [
   },
 ];
 
+const route = useRoute();
+const router = useRouter();
 const dominioSelecionado = ref<"med" | "agro" | "fut">("med");
 const incluirArquitetura = ref(true);
 const incluirBaseline = ref(true);
@@ -61,6 +66,12 @@ const erro = ref<string | null>(null);
 const resultado = ref<RespostaAvaliacao | null>(null);
 const progresso = ref<{ processados: number; total: number } | null>(null);
 const controlador = ref<AbortController | null>(null);
+const view = ref<"config" | "avaliando" | "resultado" | "importar" | "resultadoImportado">("config");
+const modo = ref<"julgar" | "importar">("julgar");
+const inputImportar = ref<HTMLInputElement | null>(null);
+const arquivoImportado = ref<string | null>(null);
+const registrosImportados = ref<RegistroAvaliacaoImportado[]>([]);
+const erroImportacao = ref<string | null>(null);
 
 function modeloIncluido(chave: "arquitetura" | "baseline"): boolean {
   return chave === "arquitetura"
@@ -140,6 +151,7 @@ function removerArquivo(chave: "arquitetura" | "baseline"): void {
 async function avaliar(): Promise<void> {
   if (!podeAvaliar.value || avaliando.value) return;
   avaliando.value = true;
+  view.value = "avaliando";
   erro.value = null;
   resultado.value = null;
   progresso.value = null;
@@ -163,8 +175,12 @@ async function avaliar(): Promise<void> {
       },
       ctrl.signal,
     );
+    view.value = "resultado";
   } catch (e) {
-    if ((e as Error).name !== "AbortError") erro.value = (e as Error).message;
+    if ((e as Error).name !== "AbortError") {
+      erro.value = (e as Error).message;
+      view.value = "config";
+    }
   } finally {
     avaliando.value = false;
     progresso.value = null;
@@ -173,7 +189,54 @@ async function avaliar(): Promise<void> {
 }
 
 function cancelar(): void {
+  view.value = "config";
+  resultado.value = null;
+  progresso.value = null;
   controlador.value?.abort();
+}
+
+function novaAnalise(): void {
+  resultado.value = null;
+  erro.value = null;
+  modo.value = "julgar";
+  view.value = "config";
+}
+
+function selecionarModo(novoModo: "julgar" | "importar"): void {
+  modo.value = novoModo;
+  erroImportacao.value = null;
+  view.value = novoModo === "julgar" ? "config" : "importar";
+  if (route.query.modo !== novoModo) void router.replace({ query: { modo: novoModo } });
+}
+
+// O submenu da sidebar navega por /avaliar?modo=...; a query dirige o modo.
+// Não interrompe uma avaliação em andamento.
+watch(
+  () => route.query.modo,
+  (valor) => {
+    const novo = valor === "importar" ? "importar" : "julgar";
+    if (view.value === "avaliando") return;
+    if (novo === modo.value && (novo === "importar" ? view.value !== "config" : view.value === "config")) return;
+    modo.value = novo;
+    erroImportacao.value = null;
+    view.value = novo === "julgar" ? "config" : "importar";
+  },
+  { immediate: true },
+);
+
+async function importarArquivo(evento: Event): Promise<void> {
+  const input = evento.target as HTMLInputElement;
+  const arquivo = input.files?.[0];
+  if (!arquivo) return;
+  try {
+    registrosImportados.value = parseRegistrosAvaliacao(await arquivo.text());
+    arquivoImportado.value = arquivo.name;
+    erroImportacao.value = null;
+    view.value = "resultadoImportado";
+  } catch (e) {
+    erroImportacao.value = (e as Error).message;
+  }
+  input.value = "";
 }
 </script>
 
@@ -181,12 +244,20 @@ function cancelar(): void {
   <div
     class="flex min-h-0 w-full flex-1 flex-col overflow-y-auto px-5 py-8 sm:px-8 lg:px-10"
   >
+    <!-- Modo de Avaliação de resultados -->
+    <div class="mb-5 flex justify-end">
+      <label class="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">Modo de avaliação
+        <select :value="modo" aria-label="Modo de avaliação" class="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-200" @change="selecionarModo(($event.target as HTMLSelectElement).value as 'julgar' | 'importar')">
+          <option value="julgar">Julgar resultado</option><option value="importar">Importar resultado</option>
+        </select>
+      </label>
+    </div>
     <!-- Configuração / Pagina inicial -->
-    <Transition name="fade-slide">
-      <div>
+    <Transition name="fade-slide" mode="out-in">
+      <div v-if="view === 'config'" key="config">
         <div class="mb-8 flex items-center gap-3.5">
           <div
-            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500/15 via-purple-400/15 to-rose-400/15 text-blue-600 dark:text-blue-400"
+            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500/15 via-gray-400/15 to-rose-400/15 text-blue-600 dark:text-blue-400"
           >
             <svg
               width="20"
@@ -529,93 +600,149 @@ function cancelar(): void {
             </TransitionGroup>
           </section>
 
-          <!-- Avaliando cenários -->
-          <div class="mb-6 flex flex-col items-start gap-3">
-            <div class="flex items-center gap-2.5">
-              <button
-                type="button"
-                class="flex items-center justify-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-blue-700 hover:shadow active:scale-[0.97] disabled:bg-neutral-300 disabled:text-neutral-500 disabled:shadow-none dark:disabled:bg-neutral-700 dark:disabled:text-neutral-400"
-                :disabled="!podeAvaliar || avaliando"
-                @click="avaliar"
-              >
-                <svg
-                  v-if="avaliando"
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  class="animate-spin"
-                >
-                  <path
-                    d="M21 12a9 9 0 11-9-9"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                    stroke-linecap="round"
-                  />
-                </svg>
-                <svg
-                  v-else
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M5 13l4 4L19 7" />
-                </svg>
-                {{ avaliando ? "Avaliando…" : "Avaliar" }}
-              </button>
-
-              <button
-                v-if="avaliando"
-                type="button"
-                class="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
-                @click="cancelar"
-              >
-                Cancelar
-              </button>
-            </div>
-
-            <div
-              v-if="avaliando && progresso && progresso.total > 0"
-              class="w-full max-w-sm"
+          <div class="mb-6">
+            <button
+              type="button"
+              class="flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:bg-neutral-300 disabled:text-neutral-500 dark:disabled:bg-neutral-700"
+              :disabled="!podeAvaliar || avaliando"
+              @click="avaliar"
             >
-              <div
-                class="mb-1 flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400"
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               >
-                <span
-                  >{{ progresso.processados }} de
-                  {{ progresso.total }} avaliados</span
-                >
-                <span
-                  >{{
-                    Math.round((progresso.processados / progresso.total) * 100)
-                  }}%</span
-                >
-              </div>
-              <div
-                class="h-1.5 overflow-hidden rounded-full bg-neutral-100 dark:bg-white/10"
-              >
-                <div
-                  class="h-full rounded-full bg-blue-500 transition-[width] duration-300 ease-out"
-                  :style="{
-                    width:
-                      (progresso.processados / progresso.total) * 100 + '%',
-                  }"
-                ></div>
-              </div>
-            </div>
+                <path d="M5 13l4 4L19 7" />
+              </svg>
+              Avaliar
+            </button>
           </div>
         </div>
       </div>
     </Transition>
 
+    <!-- Avaliando cenários -->
+    <Transition name="fade-slide" mode="out-in">
+      <section
+        v-if="view === 'avaliando'"
+        key="avaliando"
+        class="flex flex-1 flex-col items-center justify-center py-12"
+      >
+        <div class="flex w-full max-w-sm flex-col items-center gap-6">
+          <div class="ai-loader" role="img" aria-label="Inteligência artificial avaliando os cenários">
+            <svg viewBox="0 0 100 100" aria-hidden="true">
+              <circle class="ai-orbit" cx="50" cy="50" r="39" />
+              <path class="ai-link" d="M50 50 20 34M50 50 80 34M50 50 22 70M50 50 78 70M20 34 22 70M80 34 78 70" />
+              <rect class="ai-core" x="37" y="37" width="26" height="26" rx="8" />
+              <path class="ai-core-mark" d="M44 47h12M44 53h8" />
+              <circle class="ai-node ai-node-1" cx="20" cy="34" r="5" />
+              <circle class="ai-node ai-node-2" cx="80" cy="34" r="5" />
+              <circle class="ai-node ai-node-3" cx="22" cy="70" r="5" />
+              <circle class="ai-node ai-node-4" cx="78" cy="70" r="5" />
+            </svg>
+            <span class="sr-only">Avaliando</span>
+          </div>
+          <div class="text-center">
+            <h2
+              class="text-xl font-medium text-neutral-900 dark:text-neutral-100"
+            >
+              Avaliando cenários
+            </h2>
+            <p class="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+              Isso pode levar alguns minutos, dependendo do tamanho do lote.
+            </p>
+          </div>
+          <div class="w-full" aria-live="polite">
+            <div
+              class="mb-1.5 flex items-center justify-between text-sm text-neutral-600 dark:text-neutral-300"
+            >
+              <span v-if="progresso && progresso.total > 0">{{ progresso.processados }} de {{ progresso.total }} avaliados</span>
+              <span v-else>Preparando avaliação…</span>
+              <span v-if="progresso && progresso.total > 0" class="font-medium">{{ Math.round((progresso.processados / progresso.total) * 100) }}%</span>
+            </div>
+            <div
+              class="h-2.5 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-white/10"
+              role="progressbar"
+              aria-label="Progresso da avaliação"
+              :aria-valuenow="progresso && progresso.total > 0 ? Math.round((progresso.processados / progresso.total) * 100) : undefined"
+              :aria-valuemin="progresso && progresso.total > 0 ? 0 : undefined"
+              :aria-valuemax="progresso && progresso.total > 0 ? 100 : undefined"
+              :aria-valuetext="progresso && progresso.total > 0 ? `${progresso.processados} de ${progresso.total} cenários` : 'Avaliação em andamento'"
+            >
+              <div v-if="progresso && progresso.total > 0"
+                class="h-full rounded-full bg-blue-500 transition-[width] duration-300"
+                :style="{
+                  width: (progresso.processados / progresso.total) * 100 + '%',
+                }"
+              ></div>
+              <div v-else class="progress-indeterminate h-full rounded-full bg-gradient-to-r from-blue-500 via-cyan-400 to-blue-500"></div>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="rounded-full border border-neutral-200 px-6 py-2.5 text-sm font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
+            @click="cancelar"
+          >
+            Cancelar
+          </button>
+        </div>
+      </section>
+      <div v-else-if="view === 'resultado' && resultado" key="resultado">
+        <div class="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1
+              class="text-2xl font-medium text-neutral-900 dark:text-neutral-100"
+            >
+              Resultado da avaliação
+            </h1>
+            <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+              Métricas consolidadas e comparação detalhada das linhas avaliadas.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="rounded-full border border-neutral-200 px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/10"
+            @click="novaAnalise"
+          >
+            Fazer nova análise
+          </button>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- Importar resultado -->
+    <section v-if="view === 'importar'" class="max-w-5xl py-4">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h1 class="text-2xl font-medium text-neutral-900 dark:text-neutral-100">Importar resultado</h1>
+      <p class="mt-1 mb-4 text-sm text-neutral-500 dark:text-neutral-400">Selecione um arquivo JSONL já avaliado. Nenhuma avaliação será executada.</p>
+      </div><button type="button" class="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10" @click="selecionarModo('julgar')">Voltar</button></div>
+      <input ref="inputImportar" type="file" accept=".jsonl,application/x-ndjson" class="hidden" @change="importarArquivo" />
+      <div class="rounded-2xl border border-dashed border-neutral-300 p-4 text-center transition-colors dark:border-white/15">
+        <p class="mb-0.5 text-sm font-medium text-neutral-800 dark:text-neutral-100">Resultado avaliado</p>
+        <p class="mb-3 text-xs text-neutral-500 dark:text-neutral-400">Arquivo JSONL com as avaliações já calculadas</p>
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
+          @click="inputImportar?.click()"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24">
+            <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          Selecionar .jsonl
+        </button>
+      </div>
+      <p v-if="erroImportacao" class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{{ erroImportacao }}</p>
+    </section>
+
+    <ResultadosImportados v-if="view === 'resultadoImportado'" :registros="registrosImportados" :nome-arquivo="arquivoImportado ?? ''" @nova-analise="novaAnalise" />
+
     <Transition name="fade-slide">
       <p
-        v-if="erro"
+        v-if="erro && view === 'config'"
         class="mb-6 flex max-w-5xl items-start gap-2.5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300"
       >
         <svg
@@ -641,7 +768,7 @@ function cancelar(): void {
 
     <!-- Resultado da avaliação -->
     <Transition name="fade-slide">
-      <div v-if="resultado">
+      <div v-if="resultado && view === 'resultado'">
         <p
           v-if="resultado.naoAvaliados > 0"
           class="mb-4 flex max-w-5xl items-start gap-2.5 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
@@ -736,6 +863,36 @@ function cancelar(): void {
 </template>
 
 <style scoped>
+.ai-loader {
+  display: grid;
+  width: 6.5rem;
+  height: 6.5rem;
+  place-items: center;
+  border: 1px solid rgb(59 130 246 / 0.18);
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgb(59 130 246 / 0.1), transparent 70%);
+  box-shadow: 0 0 35px rgb(59 130 246 / 0.12);
+}
+.ai-loader svg { width: 100%; overflow: visible; }
+.ai-orbit { fill: none; stroke: rgb(59 130 246 / 0.25); stroke-dasharray: 3 5; transform-origin: center; animation: ai-orbit 12s linear infinite; }
+.ai-link { fill: none; stroke: rgb(59 130 246 / 0.42); stroke-width: 1.5; stroke-dasharray: 5 4; animation: ai-flow 1.8s linear infinite; }
+.ai-core { fill: rgb(37 99 235); filter: drop-shadow(0 0 7px rgb(59 130 246 / 0.65)); animation: ai-core-pulse 1.8s ease-in-out infinite; }
+.ai-core-mark { fill: none; stroke: white; stroke-linecap: round; stroke-width: 2; }
+.ai-node { fill: rgb(34 211 238); stroke: white; stroke-width: 1.5; transform-box: fill-box; transform-origin: center; animation: ai-node-pulse 1.6s ease-in-out infinite; }
+.ai-node-2 { animation-delay: 0.3s; }
+.ai-node-3 { animation-delay: 0.6s; }
+.ai-node-4 { animation-delay: 0.9s; }
+.progress-indeterminate { width: 38%; animation: progress-sweep 1.35s ease-in-out infinite; }
+@keyframes ai-orbit { to { transform: rotate(360deg); } }
+@keyframes ai-flow { to { stroke-dashoffset: -18; } }
+@keyframes ai-core-pulse { 50% { transform: scale(1.08); filter: drop-shadow(0 0 12px rgb(34 211 238 / 0.85)); } }
+@keyframes ai-node-pulse { 50% { transform: scale(1.45); opacity: 0.65; } }
+@keyframes progress-sweep { from { transform: translateX(-110%); } to { transform: translateX(370%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-orbit, .ai-link, .ai-core, .ai-node, .progress-indeterminate { animation: none; }
+}
+
 .fade-slide-enter-active {
   transition:
     opacity 0.35s ease,

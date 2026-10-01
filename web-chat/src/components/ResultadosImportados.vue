@@ -1,53 +1,120 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
+import type { DetalheLado, DetalheLinha, MetricasAvaliacao, RespostaAvaliacao, Veredito } from '../api';
 import type { RegistroAvaliacaoImportado } from '../../../src/inference/avaliacao-jsonl';
+import MetricasCard from './MetricasCard.vue';
+import ComparacaoLinhas from './ComparacaoLinhas.vue';
+import GraficosAvaliacao from './GraficosAvaliacao.vue';
 
 const props = defineProps<{ registros: RegistroAvaliacaoImportado[]; nomeArquivo: string }>();
-const selecionado = ref(0);
-const atual = computed(() => props.registros[selecionado.value]);
+const emit = defineEmits<{ novaAnalise: [] }>();
 
-function formatar(valor: unknown): string {
-    if (valor === undefined || valor === null) return 'Não informado';
-    if (typeof valor === 'string') return valor;
-    return JSON.stringify(valor, null, 2) ?? String(valor);
+function metricasDoLado(registros: RegistroAvaliacaoImportado[]): MetricasAvaliacao {
+    const m: MetricasAvaliacao = {
+        total: 0,
+        sintaxe: { VALID: 0, INVALID: 0 },
+        semantica: { VALID: 0, INVALID: 0, UNRESOLVED: 0, NOT_EVALUATED: 0 },
+        oraculo: { VALID: 0, INVALID: 0, UNRESOLVED: 0 },
+        juiz: { VALID: 0, INVALID: 0, UNRESOLVED: 0, NOT_CALLED: 0, NO_RESPONSE: 0 },
+        concordantes: 0, discordantes: 0, pares: {}, violacoes: 0
+    };
+    for (const r of registros) {
+        if (r.naoAvaliado || !r.oraculo) continue;
+        m.total++;
+        if (r.validacaoSintatica?.veredito === 'VALID' || r.validacaoSintatica?.veredito === 'INVALID') m.sintaxe[r.validacaoSintatica.veredito]++;
+        const semantica = r.validacaoSemantica?.veredito;
+        if (semantica === 'VALID' || semantica === 'INVALID' || semantica === 'UNRESOLVED' || semantica === 'NOT_EVALUATED') m.semantica[semantica]++;
+        const oraculo = r.oraculo.veredito;
+        if (oraculo === 'VALID' || oraculo === 'INVALID' || oraculo === 'UNRESOLVED') m.oraculo[oraculo]++;
+        const juiz = r.julgamentoLLM?.status;
+        if (juiz === 'VALID' || juiz === 'INVALID' || juiz === 'UNRESOLVED' || juiz === 'NOT_CALLED' || juiz === 'NO_RESPONSE') m.juiz[juiz]++;
+        if (r.violacao === true) m.violacoes++;
+        if (r.concordancia !== undefined) {
+            r.concordancia ? m.concordantes++ : m.discordantes++;
+            if (juiz) {
+                const par = `${oraculo}+${juiz}`;
+                m.pares[par] = (m.pares[par] ?? 0) + 1;
+            }
+        }
+    }
+    return m;
 }
 
-function tempo(valor: number | null | undefined, naoExecutado = false): string {
-    if (valor === null && naoExecutado) return 'Não executado';
-    if (valor === undefined || valor === null || !Number.isFinite(valor)) return 'Não informado';
-    return `${new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(valor)} ms`;
+function detalhe(r: RegistroAvaliacaoImportado): DetalheLado {
+    return {
+        ...(r as unknown as Partial<DetalheLado>),
+        plano: r.plano ?? '',
+        naoAvaliado: r.naoAvaliado ?? false,
+        validacaoSintatica: r.validacaoSintatica as unknown as DetalheLado['validacaoSintatica'],
+        ast: r.ast as unknown as DetalheLado['ast'],
+        validacaoSemantica: r.validacaoSemantica as unknown as DetalheLado['validacaoSemantica'],
+        oraculo: r.oraculo as unknown as DetalheLado['oraculo'],
+        julgamentoLLM: r.julgamentoLLM as unknown as DetalheLado['julgamentoLLM'],
+        concordancia: r.concordancia,
+        classificacao: r.classificacao as DetalheLado['classificacao'],
+        tempos: r.tempos as DetalheLado['tempos']
+    };
+}
+
+const resposta = computed<RespostaAvaliacao>(() => {
+    const grupos = new Map<number, DetalheLinha>();
+    props.registros.forEach((registro, indice) => {
+        const numero = registro.linha ?? indice + 1;
+        const linha = grupos.get(numero) ?? { linha: numero, intencao: registro.intencao ?? '', temDivergencia: false, temDiscordancia: false };
+        const lado = registro.lado;
+        if (lado === 'arquitetura' || lado === 'baseline') {
+            linha[lado] = detalhe(registro);
+            linha.temDivergencia ||= registro.violacao === true || (registro.oraculo?.veredito !== undefined && registro.oraculo.veredito !== 'VALID');
+            linha.temDiscordancia ||= registro.concordancia === false || registro.classificacao === 'DISCORDANCIA_LLM';
+        }
+        grupos.set(numero, linha);
+    });
+    const linhas = [...grupos.values()].sort((a, b) => a.linha - b.linha);
+    const arquitetura = props.registros.filter(r => r.lado === 'arquitetura');
+    const baseline = props.registros.filter(r => r.lado === 'baseline');
+    return {
+        arquitetura: arquitetura.length ? metricasDoLado(arquitetura) : undefined,
+        baseline: baseline.length ? metricasDoLado(baseline) : undefined,
+        naoAvaliados: props.registros.filter(r => r.naoAvaliado === true).length,
+        linhas,
+        arquivoJsonl: props.nomeArquivo
+    };
+});
+
+function veredito(valor: unknown): valor is Veredito {
+    return valor === 'VALID' || valor === 'INVALID' || valor === 'UNRESOLVED';
 }
 </script>
 
 <template>
-    <section class="w-full">
-        <header class="mb-4 flex flex-wrap items-end justify-between gap-2">
-            <div>
-                <p class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">Resultado importado <span class="ml-1 rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-normal text-neutral-600 dark:bg-white/10 dark:text-neutral-300">{{ registros.length }} registros</span></p>
-                <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{{ nomeArquivo }} · dados históricos, sem nova avaliação</p>
+    <div class="w-full">
+        <header class="mb-8 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3.5">
+                <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500/15 via-teal-400/15 to-cyan-400/15 text-emerald-600 dark:text-emerald-400">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M8 12.5l3 3 5-6" />
+                    </svg>
+                </div>
+                <div><h1 class="text-2xl font-medium text-neutral-900 dark:text-neutral-100">Resultado da avaliação</h1><p class="text-sm text-neutral-500 dark:text-neutral-400">Resultado importado · {{ registros.length }} registros · {{ nomeArquivo }}</p></div>
             </div>
+            <button type="button" class="rounded-full border border-neutral-200 px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/10" @click="emit('novaAnalise')">Fazer nova análise</button>
         </header>
 
-        <div class="overflow-x-auto rounded-xl border border-neutral-200 dark:border-white/10">
-            <table class="w-full min-w-[760px] text-left text-xs">
-                <thead class="bg-neutral-50 text-neutral-500 dark:bg-white/[0.03] dark:text-neutral-400"><tr>
-                    <th class="px-3 py-2">Linha</th><th class="px-3 py-2">Domínio</th><th class="px-3 py-2">Lado</th><th class="px-3 py-2">Intenção</th><th class="px-3 py-2">Sintaxe</th><th class="px-3 py-2">Semântica</th><th class="px-3 py-2">Oráculo</th><th class="px-3 py-2">Judge</th>
-                </tr></thead>
-                <tbody><tr v-for="(registro, i) in registros" :key="`${registro.lado}-${registro.linha}-${i}`" tabindex="0" class="cursor-pointer border-t border-neutral-100 hover:bg-blue-50/60 focus:bg-blue-50/60 dark:border-white/5 dark:hover:bg-white/[0.04] dark:focus:bg-white/[0.04]" :class="selecionado === i ? 'bg-blue-50/70 dark:bg-blue-500/[0.08]' : ''" @click="selecionado = i" @keydown.enter="selecionado = i">
-                    <td class="px-3 py-2 font-mono">{{ registro.linha ?? '—' }}</td><td class="px-3 py-2">{{ registro.dominio ?? '—' }}</td><td class="px-3 py-2">{{ registro.lado ?? '—' }}</td><td class="max-w-64 truncate px-3 py-2" :title="registro.intencao">{{ registro.intencao ?? '—' }}</td><td class="px-3 py-2">{{ registro.validacaoSintatica?.veredito ?? '—' }}</td><td class="px-3 py-2">{{ registro.validacaoSemantica?.veredito ?? '—' }}</td><td class="px-3 py-2">{{ registro.oraculo?.veredito ?? '—' }}</td><td class="px-3 py-2" :class="registro.classificacao === 'DISCORDANCIA_LLM' ? 'font-semibold text-amber-700 dark:text-amber-300' : ''">{{ registro.julgamentoLLM?.status === 'NOT_CALLED' ? 'Não executado' : registro.julgamentoLLM?.status ?? '—' }}</td>
-                </tr></tbody>
-            </table>
+        <p v-if="resposta.naoAvaliados > 0" class="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{{ resposta.naoAvaliados }} registro(s) não foram avaliados no arquivo original.</p>
+        <div class="mb-4 grid gap-4" :class="resposta.arquitetura && resposta.baseline ? 'lg:grid-cols-2' : 'grid-cols-1'">
+            <MetricasCard v-if="resposta.arquitetura" variante="arquitetura" :metricas="resposta.arquitetura" :comparar="resposta.baseline" />
+            <MetricasCard v-if="resposta.baseline" variante="baseline" :metricas="resposta.baseline" />
         </div>
-
-        <article v-if="atual" class="mt-5 rounded-xl border border-neutral-200 p-4 dark:border-white/10">
-            <header class="mb-4 flex flex-wrap items-center justify-between gap-2"><h2 class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">Registro {{ atual.linha ?? selecionado + 1 }} · {{ atual.lado ?? 'resultado' }}</h2><span v-if="atual.classificacao === 'DISCORDANCIA_LLM'" class="rounded-full bg-amber-100 px-2 py-1 text-[11px] text-amber-800 dark:bg-amber-500/15 dark:text-amber-200">Discordância do LLM</span></header>
-            <div class="mb-4 grid gap-3 text-xs sm:grid-cols-3"><div><p class="mb-1 text-neutral-400">Domínio · sujeito</p><p class="text-neutral-700 dark:text-neutral-200">{{ atual.dominio ?? 'Não informado' }} · {{ atual.sujeito ?? 'Não informado' }}</p></div><div><p class="mb-1 text-neutral-400">Intenção</p><p class="text-neutral-700 dark:text-neutral-200">{{ atual.intencao ?? 'Não informado' }}</p></div><div><p class="mb-1 text-neutral-400">Concordância · classificação</p><p class="text-neutral-700 dark:text-neutral-200">{{ atual.concordancia === undefined ? 'Não informado' : atual.concordancia ? 'Concorda' : 'Discorda' }} · {{ atual.classificacao ?? 'Não informado' }}</p></div></div>
-            <section class="mb-4"><p class="mb-1 text-xs font-medium text-neutral-500">Plano</p><pre class="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-neutral-50 p-3 font-mono text-[11px] text-neutral-700 dark:bg-black/20 dark:text-neutral-300">{{ atual.plano ?? 'Não informado' }}</pre></section>
-            <section class="mb-4"><p class="mb-2 text-xs font-medium text-neutral-500">Tempo de execução</p><div class="grid max-w-xl grid-cols-2 gap-2"><div class="rounded-lg bg-neutral-50 px-3 py-2 dark:bg-white/[0.04]"><p class="text-[11px] text-neutral-400">Oráculo</p><p class="text-sm text-neutral-700 dark:text-neutral-200">{{ tempo(atual.tempos?.oraculoMs) }}</p></div><div class="rounded-lg bg-neutral-50 px-3 py-2 dark:bg-white/[0.04]"><p class="text-[11px] text-neutral-400">LLM Judge</p><p class="text-sm text-neutral-700 dark:text-neutral-200">{{ tempo(atual.tempos?.llmJudgeMs, atual.julgamentoLLM?.status === 'NOT_CALLED') }}</p></div></div></section>
-            <details v-for="secao in [{ chave: 'validacaoSintatica', titulo: 'Validação sintática' }, { chave: 'ast', titulo: 'AST' }, { chave: 'validacaoSemantica', titulo: 'Validação semântica' }, { chave: 'oraculo', titulo: 'Oráculo' }, { chave: 'julgamentoLLM', titulo: 'LLM Judge' }]" :key="secao.chave" class="mb-2 rounded-lg border border-neutral-100 px-3 py-2 dark:border-white/5">
-                <summary class="cursor-pointer text-xs font-medium text-neutral-600 dark:text-neutral-300">{{ secao.titulo }}</summary>
-                <pre class="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-50 p-3 font-mono text-[10px] leading-relaxed text-neutral-600 dark:bg-black/20 dark:text-neutral-400">{{ formatar(atual[secao.chave]) }}</pre>
-            </details>
-        </article>
-    </section>
+        <ComparacaoLinhas v-if="resposta.linhas.length" :linhas="resposta.linhas" :mostrar-arquitetura="!!resposta.arquitetura" :mostrar-baseline="!!resposta.baseline" />
+        <GraficosAvaliacao :arquitetura="resposta.arquitetura" :baseline="resposta.baseline" />
+        <!-- 
+        <details v-for="(registro, indice) in registros" :key="`${registro.lado}-${registro.linha}-${indice}`" class="mt-3 rounded-xl border border-neutral-200 px-4 py-3 dark:border-white/10">
+            <summary class="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-200">Linha {{ registro.linha ?? indice + 1 }} · {{ registro.lado ?? 'resultado' }} · Oráculo {{ veredito(registro.oraculo?.veredito) ? registro.oraculo?.veredito : 'não informado' }} · Judge {{ statusJuiz(registro.julgamentoLLM?.status) ? (registro.julgamentoLLM?.status === 'NOT_CALLED' ? 'não executado' : registro.julgamentoLLM?.status) : 'não informado' }}</summary>
+            <div class="mt-3 grid gap-3 text-xs sm:grid-cols-2"><p><span class="text-neutral-400">Intenção: </span>{{ registro.intencao ?? 'Não informada' }}</p><p><span class="text-neutral-400">Sujeito: </span>{{ registro.sujeito ?? 'Não informado' }}</p><p><span class="text-neutral-400">Sintaxe: </span>{{ registro.validacaoSintatica?.veredito ?? 'Não informada' }}</p><p><span class="text-neutral-400">Semântica: </span>{{ registro.validacaoSemantica?.veredito ?? 'Não informada' }}</p><p><span class="text-neutral-400">Tempo do Oráculo: </span>{{ registro.tempos?.oraculoMs == null ? 'Não informado' : `${registro.tempos.oraculoMs} ms` }}</p><p><span class="text-neutral-400">Tempo do Judge: </span>{{ registro.tempos?.llmJudgeMs == null ? (registro.julgamentoLLM?.status === 'NOT_CALLED' ? 'Não executado' : 'Não informado') : `${registro.tempos.llmJudgeMs} ms` }}</p></div>
+            <pre class="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-neutral-50 p-3 font-mono text-xs text-neutral-700 dark:bg-black/20 dark:text-neutral-300">{{ registro.plano ?? 'Plano não informado' }}</pre>
+            <details v-if="registro.ast" class="mt-2"><summary class="cursor-pointer text-xs text-neutral-500">AST</summary><pre class="mt-2 max-h-72 overflow-auto rounded-lg bg-neutral-50 p-3 font-mono text-[11px] dark:bg-black/20">{{ JSON.stringify(registro.ast, null, 2) }}</pre></details>
+        </details>
+        -->
+    </div>
 </template>

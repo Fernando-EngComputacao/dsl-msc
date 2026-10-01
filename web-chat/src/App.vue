@@ -9,9 +9,7 @@ import logoUfg from "./assets/imgs/logo_ufg.png";
 const route = useRoute();
 const router = useRouter();
 
-const sidebarAberta = ref(
-  typeof window !== "undefined" ? window.innerWidth >= 768 : true,
-);
+const sidebarAberta = ref(false);
 
 const emAvaliacao = computed(() => route.path === "/avaliar");
 
@@ -139,6 +137,7 @@ function aoClicarNovoChat(): void {
         </div>
 
         <div class="flex items-center gap-1 justify-self-end">
+          <!-- 
           <button
             type="button"
             class="flex h-9 w-9 items-center justify-center rounded-full hover:bg-neutral-100 dark:hover:bg-white/10"
@@ -183,6 +182,7 @@ function aoClicarNovoChat(): void {
               />
             </svg>
           </button>
+          -->
 
           <button
             type="button"
