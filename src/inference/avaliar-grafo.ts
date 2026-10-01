@@ -210,6 +210,29 @@ export interface DetalheLado extends Partial<ResultadoAvaliacaoPlano> {
     naoAvaliado: boolean;
     /** Por que a linha não foi avaliada. */
     motivo?: string;
+    /** Tempos deste plano (ver `TemposPlano`). */
+    tempos?: TemposPlano;
+}
+
+/**
+ * Durações de UM plano, em ms (`performance.now()`, relógio monotônico). Depois do AST,
+ * oráculo e juiz rodam concorrentes: `paraleloMs` ≈ max(`oraculoMs`, `llmJudgeMs`) e
+ * `totalMs` ≈ `sintaxeMs` + `recuperacaoMs` + `paraleloMs` + sobrecarga — não a soma dos dois.
+ */
+export interface TemposPlano {
+    /** Validação sintática: G (/verify) + parser Langium. */
+    sintaxeMs: number;
+    /** Recuperação do conhecimento (grafo): passo compartilhado, feito ANTES da bifurcação
+     *  porque a semântica e o juiz leem o mesmo conhecimento. Ausente quando não houve. */
+    recuperacaoMs?: number;
+    /** Só a validação semântica (L(Ĝ), sequência, PIs, global). `null` se não rodou. */
+    oraculoMs: number | null;
+    /** Só a chamada ao LLM Judge (monta o pedido + `/validar-plano`). `null` se não foi chamado. */
+    llmJudgeMs: number | null;
+    /** O trecho concorrente inteiro (semântica || juiz). Ausente quando não houve bifurcação. */
+    paraleloMs?: number;
+    /** A avaliação completa deste plano. */
+    totalMs: number;
 }
 
 export interface DetalheLinha {
@@ -252,6 +275,14 @@ export interface ResultadoAvaliacaoGrafo {
     linhas: DetalheLinha[];
     /** Nome do JSONL experimental gravado pelo servidor (ver `registrosJsonl`). */
     arquivoJsonl?: string;
+    /** Tempo total, em segundos, que o servidor levou para processar a avaliação inteira. */
+    tempoTotalSegundos?: number;
+    /** Soma dos tempos da validação sintática de todos os planos, em segundos. */
+    tempoSintaxeSegundos?: number;
+    /** Soma dos tempos da validação semântica (oráculo) de todos os planos, em segundos. */
+    tempoOraculoSegundos?: number;
+    /** Soma dos tempos do LLM Judge de todos os planos, em segundos. */
+    tempoLlmJudgeSegundos?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -727,21 +758,32 @@ export function detalheNaoAvaliado(registro: RegistroAvaliarGrafo, motivo: strin
     };
 }
 
+/** Duração, em ms com 2 casas, desde um `performance.now()` (relógio monotônico). */
+const duracaoMs = (inicio: number): number => Math.round((performance.now() - inicio) * 100) / 100;
+
 /**
- * Avalia UM plano, em cascata:
+ * Avalia UM plano:
  *
  *     texto -> SINTAXE (G + parser -> AST)
  *              INVALID -> oráculo INVALID (origem: sintaxe); semântica NOT_EVALUATED;
  *                         juiz NOT_CALLED (salvo `julgarSintaxeInvalida`; vazio, nunca)
  *              VALID   -> recuperação da geração (recuperarConhecimento + montarEntradaGeracao*)
- *                         -> SEMÂNTICA sobre o AST guardado (L(Ĝ), sequência, PIs, global)
- *                         -> ORÁCULO (origem: semântica) -> JUIZ -> comparação
+ *                         -> em PARALELO, sobre o mesmo AST e o mesmo conhecimento:
+ *                              SEMÂNTICA (L(Ĝ), sequência, PIs, global) -> ORÁCULO
+ *                              JUIZ LLM
+ *                         -> comparação, só depois dos dois
+ *
+ * Oráculo e juiz são independentes: nenhum lê o resultado do outro, e nenhum espera
+ * o outro (o juiz continua sem ver sintaxe, AST, semântica ou oráculo — ver
+ * `pedidoDoJuiz`). O oráculo continua normativo; o juiz, experimental.
  *
  * O conhecimento global tem os MESMOS campos que `decodificarMultiagente`
  * (decodificacao.ts) monta para a geração; a avaliação não tem conhecimento
  * próprio. Falha técnica (grafo, motor, parser que lança, defeito interno)
  * torna a linha `naoAvaliado`; falha do juiz não — as camadas determinísticas
- * valem sozinhas e o juiz fica NO_RESPONSE. Cancelamento (`sinal`) propaga.
+ * valem sozinhas e o juiz fica NO_RESPONSE. Uma falha NUNCA apaga o resultado da
+ * outra: se a semântica falha, o julgamento do juiz (já em curso) é preservado na
+ * linha `naoAvaliado`; se o juiz falha, o oráculo vale. Cancelamento (`sinal`) propaga.
  */
 export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
     registro: RegistroAvaliarGrafo,
@@ -749,11 +791,13 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
     deps: DependenciasAvaliacao
 ): Promise<DetalheLado> {
     const { adaptador, modelo, contexto } = entrada;
+    const inicioTotal = performance.now();
     const plano = textoGerado(registro as RegistroAvaliar);
     const pedido = contexto.intencao ?? '';
     const sujeito = identificadorRegistro(registro) ?? undefined;
 
-    // 1. Sintaxe: G + parser -> AST.
+    // 1. Sintaxe: G + parser -> AST. Sempre antes de tudo.
+    const inicioSintaxe = performance.now();
     let sintatica: ResultadoSintaxe;
     try {
         sintatica = await validarSintaxePlano(plano, entrada.analisador, deps.verificadorDsl);
@@ -761,6 +805,7 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
         const peca = error instanceof FalhaSintaxe ? '' : ' (erro inesperado)';
         return detalheNaoAvaliado(registro, `Falha tecnica na validacao sintatica${peca} — ${(error as Error).message}`);
     }
+    const sintaxeMs = duracaoMs(inicioSintaxe);
     const { sintaxe: validacaoSintatica, ast } = sintatica;
     const vazio = plano.trim().length === 0;
     const julgar = !vazio && (!!ast || deps.julgarSintaxeInvalida === true);
@@ -776,11 +821,13 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
         return {
             plano, sujeito, naoAvaliado: false,
             validacaoSintatica, validacaoSemantica, oraculo, julgamentoLLM,
+            tempos: { sintaxeMs, oraculoMs: null, llmJudgeMs: null, totalMs: duracaoMs(inicioTotal) },
             ...compararAvaliacoes(oraculo, julgamentoLLM)
         };
     }
 
-    // 2. A recuperacao da geracao, para a semantica e para o juiz.
+    // 2. A recuperacao da geracao, para a semantica e para o juiz (dependencia compartilhada, antes da bifurcacao).
+    const inicioRecuperacao = performance.now();
     let conhecimento: ConhecimentoRecuperado<R>;
     let k: ConhecimentoGlobal;
     let proibidos: Set<string>;
@@ -802,26 +849,31 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
     } catch (error) {
         return detalheNaoAvaliado(registro, `Falha ao reconstruir o conhecimento do cenario: ${(error as Error).message}`);
     }
+    const recuperacaoMs = duracaoMs(inicioRecuperacao);
 
-    // 3. Semantica, sobre o AST GUARDADO: o objeto que vai para o resultado e o que ela le.
-    let validacaoSemantica: ValidacaoSemantica;
-    let violacao: boolean | undefined;
-    if (ast) {
+    // 3a. Semantica, sobre o AST GUARDADO: o objeto que vai para o resultado e o que ela le.
+    //     Nao toca no juiz. Falha tecnica volta como `falha`; so o inesperado rejeita.
+    interface DesfechoSemantica { validacaoSemantica?: ValidacaoSemantica; violacao?: boolean; falha?: string; ms: number | null }
+    const executarSemantica = async (): Promise<DesfechoSemantica> => {
+        if (!ast) return { validacaoSemantica: semanticaNaoAvaliada(semAst), ms: null };
+        const inicio = performance.now();
         let gramaticaDaPolitica: VerificacaoGramatical | undefined;
         if (!semBaseSemantica(k)) {
             try {
                 gramaticaDaPolitica = await deps.verificador(plano, conhecimento.politicaEfetiva);
             } catch (error) {
-                return detalheNaoAvaliado(registro, `Falha na verificacao de L(Ĝ) (/verify com a politica): ${(error as Error).message}`);
+                return { falha: `Falha na verificacao de L(Ĝ) (/verify com a politica): ${(error as Error).message}`, ms: duracaoMs(inicio) };
             }
         }
+        let validacaoSemantica: ValidacaoSemantica;
+        let violacao: boolean | undefined;
         try {
             const artefato = projetarAst(adaptador.dominio, ast);
             validacaoSemantica = validarSemantica(artefato, k, gramaticaDaPolitica, registro.execucaoMultiagente?.sequenciaValidada);
             violacao = violacaoNoArtefato(artefato, proibidos);
         } catch (error) {
             if (!(error instanceof DefeitoAvaliacao)) throw error;
-            return detalheNaoAvaliado(registro, `Defeito interno do avaliador: ${error.message}`);
+            return { falha: `Defeito interno do avaliador: ${error.message}`, ms: duracaoMs(inicio) };
         }
         if (conhecimento.focoIndisponivel) {
             validacaoSemantica.avisos.push({
@@ -835,22 +887,43 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
                 mensagem: 'o Prompt Semantico reconstruido difere do gravado na geracao (grafo, foco ou modo de recuperacao mudaram)'
             });
         }
-    } else {
-        validacaoSemantica = semanticaNaoAvaliada(semAst);
-    }
+        return { validacaoSemantica, violacao, ms: duracaoMs(inicio) };
+    };
 
-    // 4. Oraculo, antes do juiz e sem ele.
-    const oraculo = oraculoDe(validacaoSintatica, validacaoSemantica);
+    // 3b. Juiz, independente: le o contexto e o plano, nada das camadas deterministicas.
+    //     Falha do juiz vira NO_RESPONSE aqui dentro; so o cancelamento rejeita.
+    const executarJuiz = async (): Promise<{ julgamentoLLM: JulgamentoLLM; ms: number }> => {
+        const inicio = performance.now();
+        try {
+            const r = await deps.juiz(pedidoDoJuiz(adaptador.dominio, plano, pedido, contexto.telemetria, conhecimento), deps.sinal);
+            return { julgamentoLLM: { status: r.veredito, justificativa: r.justificativa, evidencias: r.evidencias, respostaBruta: r.respostaBruta }, ms: duracaoMs(inicio) };
+        } catch (error) {
+            if (deps.sinal.aborted) throw error;
+            return { julgamentoLLM: { status: 'NO_RESPONSE', motivo: `Falha ao julgar com o modelo local: ${(error as Error).message}` }, ms: duracaoMs(inicio) };
+        }
+    };
 
-    // 5. Juiz, independente: le o contexto e o plano, nada das camadas acima.
-    let julgamentoLLM: JulgamentoLLM;
-    try {
-        const r = await deps.juiz(pedidoDoJuiz(adaptador.dominio, plano, pedido, contexto.telemetria, conhecimento), deps.sinal);
-        julgamentoLLM = { status: r.veredito, justificativa: r.justificativa, evidencias: r.evidencias, respostaBruta: r.respostaBruta };
-    } catch (error) {
-        if (deps.sinal.aborted) throw error;
-        julgamentoLLM = { status: 'NO_RESPONSE', motivo: `Falha ao julgar com o modelo local: ${(error as Error).message}` };
+    // 4. As duas, iniciadas antes de aguardar qualquer uma; `allSettled` para que uma falha nao apague a outra.
+    const inicioParalelo = performance.now();
+    const [semantica, juiz] = await Promise.allSettled([executarSemantica(), executarJuiz()]);
+    const paraleloMs = duracaoMs(inicioParalelo);
+
+    if (juiz.status === 'rejected') throw juiz.reason; // so o cancelamento chega aqui
+    const { julgamentoLLM, ms: llmJudgeMs } = juiz.value;
+    const tempos = (oraculoMs: number | null): TemposPlano => ({ sintaxeMs, recuperacaoMs, oraculoMs, llmJudgeMs, paraleloMs, totalMs: duracaoMs(inicioTotal) });
+
+    if (semantica.status === 'rejected') {
+        if (deps.sinal.aborted) throw semantica.reason;
+        const erro = semantica.reason instanceof Error ? semantica.reason.message : String(semantica.reason);
+        return { ...detalheNaoAvaliado(registro, `Erro inesperado na validacao semantica: ${erro}`), julgamentoLLM, tempos: tempos(null) };
     }
+    if (semantica.value.falha !== undefined) {
+        return { ...detalheNaoAvaliado(registro, semantica.value.falha), julgamentoLLM, tempos: tempos(semantica.value.ms) };
+    }
+    const { validacaoSemantica, violacao, ms: oraculoMs } = semantica.value;
+
+    // 5. Oraculo (funcao pura da sintaxe e da semantica) e comparacao, so com os dois resultados em maos.
+    const oraculo = oraculoDe(validacaoSintatica, validacaoSemantica!);
 
     return {
         plano,
@@ -860,9 +933,10 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
         naoAvaliado: false,
         validacaoSintatica,
         ...(ast ? { ast } : {}),
-        validacaoSemantica,
+        validacaoSemantica: validacaoSemantica!,
         oraculo,
         julgamentoLLM,
+        tempos: tempos(oraculoMs),
         ...compararAvaliacoes(oraculo, julgamentoLLM)
     };
 }
@@ -911,6 +985,11 @@ export interface RegistroAvaliacaoJsonl extends Partial<ResultadoAvaliacaoPlano>
     violacao?: boolean;
     naoAvaliado: boolean;
     motivo?: string;
+    /** Tempos (s) da avaliação inteira — repetidos em todos os registros do arquivo. */
+    tempoTotalSegundos?: number;
+    tempoSintaxeSegundos?: number;
+    tempoOraculoSegundos?: number;
+    tempoLlmJudgeSegundos?: number;
 }
 
 /** O resultado da avaliação no formato do JSONL experimental — um registro por plano avaliado. */
@@ -920,7 +999,13 @@ export function registrosJsonl(dominio: Dominio, resultado: ResultadoAvaliacaoGr
             .filter(lado => l[lado])
             .map(lado => {
                 const { contextoGrafo, ...detalhe } = l[lado]!;
-                return { dominio, lado, linha: l.linha, intencao: l.intencao, ...detalhe };
+                return {
+                    dominio, lado, linha: l.linha, intencao: l.intencao, ...detalhe,
+                    ...(resultado.tempoTotalSegundos !== undefined && { tempoTotalSegundos: resultado.tempoTotalSegundos }),
+                    ...(resultado.tempoSintaxeSegundos !== undefined && { tempoSintaxeSegundos: resultado.tempoSintaxeSegundos }),
+                    ...(resultado.tempoOraculoSegundos !== undefined && { tempoOraculoSegundos: resultado.tempoOraculoSegundos }),
+                    ...(resultado.tempoLlmJudgeSegundos !== undefined && { tempoLlmJudgeSegundos: resultado.tempoLlmJudgeSegundos })
+                };
             })
     );
 }

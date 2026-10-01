@@ -10,6 +10,7 @@ import MetricasCard from "./MetricasCard.vue";
 import ComparacaoLinhas from "./ComparacaoLinhas.vue";
 import GraficosAvaliacao from "./GraficosAvaliacao.vue";
 import ResultadosImportados from "./ResultadosImportados.vue";
+import TemposAvaliacao from "./TemposAvaliacao.vue";
 import { parseRegistrosAvaliacao, type RegistroAvaliacaoImportado } from "../../../src/inference/avaliacao-jsonl";
 
 const DOMINIOS = [
@@ -824,6 +825,8 @@ async function importarArquivo(evento: Event): Promise<void> {
             Baixar JSONL
           </a>
         </p>
+
+        <TemposAvaliacao :resposta="resultado" origem="avaliacao" />
 
         <div
           class="grid gap-4"

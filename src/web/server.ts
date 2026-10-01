@@ -526,6 +526,7 @@ async function avaliarComGrafo(
     onProgresso: (processados: number, total: number) => void,
     sinal: AbortSignal
 ): Promise<ResultadoAvaliacaoGrafo> {
+    const inicio = performance.now();
     const motor = dominio === 'med' ? ENGINE : dominio === 'agro' ? ENGINE_AGRO : ENGINE_FUT;
     const verificador = verificadorGramaticaHttp(motor, TIMEOUT_MS);
     const deps: DependenciasAvaliacao = {
@@ -560,11 +561,19 @@ async function avaliarComGrafo(
 
     const naoAvaliados = [...ladosArq.values(), ...ladosBase.values()].filter(d => d.naoAvaliado).length;
 
+    const todos = [...ladosArq.values(), ...ladosBase.values()];
+    const somaSegundos = (campo: 'sintaxeMs' | 'oraculoMs' | 'llmJudgeMs'): number =>
+        Math.round(todos.reduce((acc, d) => acc + (d.tempos?.[campo] ?? 0), 0) / 10) / 100;
+
     const resultado: ResultadoAvaliacaoGrafo = {
         arquitetura: arquitetura ? agregarMetricas([...ladosArq.values()]) : undefined,
         baseline: baseline ? agregarMetricas([...ladosBase.values()]) : undefined,
         naoAvaliados,
-        linhas
+        linhas,
+        tempoTotalSegundos: Math.round((performance.now() - inicio) / 10) / 100,
+        tempoSintaxeSegundos: somaSegundos('sintaxeMs'),
+        tempoOraculoSegundos: somaSegundos('oraculoMs'),
+        tempoLlmJudgeSegundos: somaSegundos('llmJudgeMs')
     };
     if (!sinal.aborted) resultado.arquivoJsonl = gravarAvaliacao(dominio, resultado);
     return resultado;

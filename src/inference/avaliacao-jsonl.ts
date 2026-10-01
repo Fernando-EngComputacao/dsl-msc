@@ -11,9 +11,13 @@ export interface RegistroAvaliacaoImportado {
     validacaoSemantica?: { veredito?: string; [campo: string]: unknown };
     oraculo?: { veredito?: string; origem?: string; [campo: string]: unknown };
     julgamentoLLM?: { status?: string; [campo: string]: unknown };
+    tempoTotalSegundos?: number;
+    tempoSintaxeSegundos?: number;
+    tempoOraculoSegundos?: number;
+    tempoLlmJudgeSegundos?: number;
     concordancia?: boolean;
     classificacao?: string;
-    tempos?: { oraculoMs?: number | null; llmJudgeMs?: number | null };
+    tempos?: { sintaxeMs?: number; recuperacaoMs?: number; oraculoMs?: number | null; llmJudgeMs?: number | null; paraleloMs?: number; totalMs?: number };
     [campo: string]: unknown;
 }
 

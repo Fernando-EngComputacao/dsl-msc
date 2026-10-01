@@ -5,6 +5,7 @@ import type { RegistroAvaliacaoImportado } from '../../../src/inference/avaliaca
 import MetricasCard from './MetricasCard.vue';
 import ComparacaoLinhas from './ComparacaoLinhas.vue';
 import GraficosAvaliacao from './GraficosAvaliacao.vue';
+import TemposAvaliacao from './TemposAvaliacao.vue';
 
 const props = defineProps<{ registros: RegistroAvaliacaoImportado[]; nomeArquivo: string }>();
 const emit = defineEmits<{ novaAnalise: [] }>();
@@ -56,6 +57,17 @@ function detalhe(r: RegistroAvaliacaoImportado): DetalheLado {
     };
 }
 
+/** O total gravado no arquivo; sem ele (JSONL com `tempos` por plano), a soma dos tempos dos planos. */
+function totalDoArquivo(
+    campo: 'tempoSintaxeSegundos' | 'tempoOraculoSegundos' | 'tempoLlmJudgeSegundos',
+    porPlano: 'sintaxeMs' | 'oraculoMs' | 'llmJudgeMs'
+): number | undefined {
+    const gravado = props.registros.find(r => typeof r[campo] === 'number')?.[campo];
+    if (typeof gravado === 'number') return gravado;
+    const medidos = props.registros.map(r => r.tempos?.[porPlano]).filter((v): v is number => typeof v === 'number');
+    return medidos.length ? Math.round(medidos.reduce((a, b) => a + b, 0) / 10) / 100 : undefined;
+}
+
 const resposta = computed<RespostaAvaliacao>(() => {
     const grupos = new Map<number, DetalheLinha>();
     props.registros.forEach((registro, indice) => {
@@ -77,7 +89,11 @@ const resposta = computed<RespostaAvaliacao>(() => {
         baseline: baseline.length ? metricasDoLado(baseline) : undefined,
         naoAvaliados: props.registros.filter(r => r.naoAvaliado === true).length,
         linhas,
-        arquivoJsonl: props.nomeArquivo
+        arquivoJsonl: props.nomeArquivo,
+        tempoTotalSegundos: props.registros.find(r => typeof r.tempoTotalSegundos === 'number')?.tempoTotalSegundos,
+        tempoSintaxeSegundos: totalDoArquivo('tempoSintaxeSegundos', 'sintaxeMs'),
+        tempoOraculoSegundos: totalDoArquivo('tempoOraculoSegundos', 'oraculoMs'),
+        tempoLlmJudgeSegundos: totalDoArquivo('tempoLlmJudgeSegundos', 'llmJudgeMs')
     };
 });
 
@@ -101,6 +117,7 @@ function veredito(valor: unknown): valor is Veredito {
             <button type="button" class="rounded-full border border-neutral-200 px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/10" @click="emit('novaAnalise')">Fazer nova análise</button>
         </header>
 
+        <TemposAvaliacao :resposta="resposta" origem="importacao" />
         <p v-if="resposta.naoAvaliados > 0" class="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{{ resposta.naoAvaliados }} registro(s) não foram avaliados no arquivo original.</p>
         <div class="mb-4 grid gap-4" :class="resposta.arquitetura && resposta.baseline ? 'lg:grid-cols-2' : 'grid-cols-1'">
             <MetricasCard v-if="resposta.arquitetura" variante="arquitetura" :metricas="resposta.arquitetura" :comparar="resposta.baseline" />

@@ -435,18 +435,26 @@ async function main(): Promise<void> {
         assert.deepEqual([d.validacaoSintatica, d.oraculo, lidos.length], [undefined, undefined, 0]);
     });
 
-    await teste('falha tecnica do /verify (G ou Ĝ): "nao avaliado", e o juiz nem e chamado', async () => {
-        for (const o of [
-            { gDsl: async () => { throw new Error('inacessivel para /verify'); } },
-            { gHat: async () => { throw new Error('inacessivel para /verify'); } }
-        ] satisfies Opcoes[]) {
-            const lidos: PedidoJuiz[] = [];
-            const d = await avaliar(registroDe(REF, planoRef), juizQueResponde('INVALID', lidos), o);
-            assert.equal(d.naoAvaliado, true);
-            assert.match(d.motivo!, /\/verify/);
-            assert.deepEqual([d.oraculo, lidos.length], [undefined, 0]);
-            assert.equal(agregarMetricas([d]).total, 0);
-        }
+    await teste('falha tecnica do /verify de G (sintaxe): "nao avaliado", e o juiz nem e chamado', async () => {
+        const lidos: PedidoJuiz[] = [];
+        const d = await avaliar(registroDe(REF, planoRef), juizQueResponde('INVALID', lidos), { gDsl: async () => { throw new Error('inacessivel para /verify'); } });
+        assert.equal(d.naoAvaliado, true);
+        assert.match(d.motivo!, /\/verify/);
+        assert.deepEqual([d.oraculo, d.julgamentoLLM, lidos.length], [undefined, undefined, 0]);
+        assert.equal(agregarMetricas([d]).total, 0);
+    });
+
+    await teste('falha tecnica do /verify de Ĝ (semantica): "nao avaliado", mas o juiz — ja em curso, independente — NAO e apagado', async () => {
+        const lidos: PedidoJuiz[] = [];
+        const d = await avaliar(registroDe(REF, planoRef), juizQueResponde('INVALID', lidos), { gHat: async () => { throw new Error('inacessivel para /verify'); } });
+        assert.equal(d.naoAvaliado, true);
+        assert.match(d.motivo!, /L\(Ĝ\).*\/verify/);
+        assert.equal(d.oraculo, undefined, 'nenhum veredito normativo inventado');
+        assert.equal(d.julgamentoLLM!.status, 'INVALID', 'o resultado do juiz sobrevive a falha da semantica');
+        assert.equal(lidos.length, 1);
+        assert.equal(d.classificacao, undefined, 'sem oraculo nao ha comparacao');
+        assert.equal(typeof d.tempos!.llmJudgeMs, 'number');
+        assert.equal(agregarMetricas([d]).total, 0);
     });
 
     // =========================================================================
@@ -733,6 +741,143 @@ async function main(): Promise<void> {
     });
 
     // =========================================================================
+    console.log('\nConcorrencia: depois do AST, SEMANTICA (oraculo) || JUIZ; comparacao so depois dos dois');
+    // =========================================================================
+
+    const pausa = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+    const respostaJuiz = (veredito: Veredito): Awaited<ReturnType<JuizLLM>> => ({ veredito, justificativa: 'duble', evidencias: [], respostaBruta: `veredito: ${veredito}` });
+    /** L(Ĝ) duble lento: a parte da semantica que espera I/O. */
+    const gHatLento = (ms: number): VerificadorGramatical => async () => { await pausa(ms); return { valido: true, erro: null }; };
+    const juizLento = (ms: number, veredito: Veredito = 'VALID'): JuizLLM => async () => { await pausa(ms); return respostaJuiz(veredito); };
+    /** Tudo o que e logico no resultado — sem os tempos, que variam de execucao para execucao. */
+    const semTempos = (d: DetalheLado): string => JSON.stringify({ ...d, tempos: undefined });
+
+    await teste('teste 1 — sintaxe invalida: oraculo INVALID, juiz NOT_CALLED, nenhuma chamada ao juiz, nenhum tempo de juiz nem de semantica', async () => {
+        const lidos: PedidoJuiz[] = [];
+        const d = await avaliar(registroDe(REF, 'isto nao e um plano'), juizQueResponde('VALID', lidos));
+        assert.deepEqual([d.validacaoSintatica!.veredito, d.ast, d.oraculo!.veredito, d.julgamentoLLM!.status, lidos.length], ['INVALID', undefined, 'INVALID', 'NOT_CALLED', 0]);
+        assert.deepEqual([d.tempos!.oraculoMs, d.tempos!.llmJudgeMs, d.tempos!.paraleloMs], [null, null, undefined]);
+        assert.equal(typeof d.tempos!.sintaxeMs, 'number');
+        assert.ok(d.tempos!.totalMs >= d.tempos!.sintaxeMs);
+    });
+
+    await teste('teste 2 — sintaxe VALID + semantica VALID: AST, semantica, oraculo e juiz; os cinco tempos registrados e coerentes', async () => {
+        const lidos: PedidoJuiz[] = [];
+        const d = await avaliar(registroDe(REF, planoRef), juizQueResponde('VALID', lidos));
+        assert.deepEqual([d.validacaoSintatica!.veredito, d.ast!.$type, d.validacaoSemantica!.veredito, d.oraculo!.veredito, d.julgamentoLLM!.status, lidos.length], ['VALID', 'PlanCommand', 'VALID', 'VALID', 'VALID', 1]);
+        assert.deepEqual([d.concordancia, d.classificacao], [true, 'VALIDO_PELO_ORACULO']);
+        const t = d.tempos!;
+        for (const campo of ['sintaxeMs', 'recuperacaoMs', 'oraculoMs', 'llmJudgeMs', 'paraleloMs', 'totalMs'] as const) assert.equal(typeof t[campo], 'number', campo);
+        assert.ok(t.paraleloMs! >= Math.max(t.oraculoMs!, t.llmJudgeMs!), 'o trecho concorrente dura pelo menos o mais lento dos dois');
+        assert.ok(t.totalMs >= t.sintaxeMs + t.recuperacaoMs! + t.paraleloMs! - 1, 'o total cobre sintaxe + recuperacao + trecho concorrente');
+    });
+
+    await teste('teste 3 — sintaxe VALID + semantica INVALID: o juiz continua sendo chamado; resultados independentes e discordancia registrada', async () => {
+        const lidos: PedidoJuiz[] = [];
+        const d = await avaliar(registroDe(REF, planoProibidoPAM), juizQueResponde('VALID', lidos));
+        assert.deepEqual([d.validacaoSemantica!.veredito, d.oraculo!.veredito, d.julgamentoLLM!.status, lidos.length], ['INVALID', 'INVALID', 'VALID', 1]);
+        assert.deepEqual([d.concordancia, d.classificacao], [false, 'DISCORDANCIA_LLM']);
+    });
+
+    await teste('concorrencia — barreira mutua: a semantica so termina depois que o juiz comecou, e o juiz depois que a semantica comecou (em serie, trava)', async () => {
+        const eventos: string[] = [];
+        let semComecou!: () => void;
+        let juizComecou!: () => void;
+        const aSemantica = new Promise<void>(resolve => (semComecou = resolve));
+        const oJuiz = new Promise<void>(resolve => (juizComecou = resolve));
+        const comLimite = async (p: Promise<void>): Promise<void> => {
+            let t!: NodeJS.Timeout;
+            try {
+                await Promise.race([p, new Promise<never>((_, rejeita) => (t = setTimeout(() => rejeita(new Error('travou: a execucao nao e concorrente')), 3000)))]);
+            } finally {
+                clearTimeout(t);
+            }
+        };
+        const verificador: VerificadorGramatical = async () => {
+            eventos.push('semantica:inicio');
+            semComecou();
+            await comLimite(oJuiz);
+            eventos.push('semantica:fim');
+            return { valido: true, erro: null };
+        };
+        const juiz: JuizLLM = async () => {
+            eventos.push('juiz:inicio');
+            juizComecou();
+            await comLimite(aSemantica);
+            eventos.push('juiz:fim');
+            return respostaJuiz('VALID');
+        };
+        const d = await avaliar(registroDe(REF, planoRef), juiz, { gHat: verificador });
+        assert.deepEqual(eventos.slice(0, 2).sort(), ['juiz:inicio', 'semantica:inicio'], 'as duas comecam antes de qualquer fim');
+        assert.deepEqual(eventos.slice(2).sort(), ['juiz:fim', 'semantica:fim']);
+        assert.deepEqual([d.oraculo!.veredito, d.julgamentoLLM!.status, d.classificacao], ['VALID', 'VALID', 'VALIDO_PELO_ORACULO']);
+    });
+
+    await teste('teste 4 — juiz lento (100 ms) e semantica rapida (50 ms): o trecho paralelo dura ~100 ms, nao 150', async () => {
+        const d = await avaliar(registroDe(REF, planoRef), juizLento(100), { gHat: gHatLento(50) });
+        const t = d.tempos!;
+        assert.ok(t.llmJudgeMs! >= 95 && t.oraculoMs! >= 45, `juiz ${t.llmJudgeMs} ms, oraculo ${t.oraculoMs} ms`);
+        assert.ok(t.oraculoMs! < t.llmJudgeMs!);
+        assert.ok(t.paraleloMs! >= 95 && t.paraleloMs! < t.oraculoMs! + t.llmJudgeMs! - 30, `paralelo ${t.paraleloMs} ms vs soma ${t.oraculoMs! + t.llmJudgeMs!} ms`);
+    });
+
+    await teste('teste 5 — semantica lenta (100 ms) e juiz rapido (50 ms): o trecho paralelo dura ~100 ms, nao 150', async () => {
+        const d = await avaliar(registroDe(REF, planoRef), juizLento(50), { gHat: gHatLento(100) });
+        const t = d.tempos!;
+        assert.ok(t.oraculoMs! >= 95 && t.llmJudgeMs! >= 45, `oraculo ${t.oraculoMs} ms, juiz ${t.llmJudgeMs} ms`);
+        assert.ok(t.llmJudgeMs! < t.oraculoMs!);
+        assert.ok(t.paraleloMs! >= 95 && t.paraleloMs! < t.oraculoMs! + t.llmJudgeMs! - 30, `paralelo ${t.paraleloMs} ms vs soma ${t.oraculoMs! + t.llmJudgeMs!} ms`);
+    });
+
+    await teste('teste 6 — falha do juiz: o oraculo continua; juiz NO_RESPONSE com o motivo; os dois tempos registrados', async () => {
+        const d = await avaliar(registroDe(REF, planoRef), async () => { await pausa(10); throw new Error('motor respondeu 502'); }, { gHat: gHatLento(20) });
+        assert.deepEqual([d.naoAvaliado, d.oraculo, d.julgamentoLLM!.status], [false, { veredito: 'VALID', origem: 'semantica' }, 'NO_RESPONSE']);
+        assert.match(d.julgamentoLLM!.motivo!, /502/);
+        assert.equal(d.classificacao, 'VALIDO_PELO_ORACULO');
+        assert.deepEqual([typeof d.tempos!.oraculoMs, typeof d.tempos!.llmJudgeMs], ['number', 'number']);
+    });
+
+    await teste('teste 7 — falha da semantica (/verify de Ĝ): o juiz nao e apagado e o erro fica registrado, sem veredito normativo', async () => {
+        const lidos: PedidoJuiz[] = [];
+        const d = await avaliar(registroDe(REF, planoRef), juizQueResponde('VALID', lidos), { gHat: async () => { await pausa(10); throw new Error('motor caiu'); } });
+        assert.deepEqual([d.naoAvaliado, d.oraculo, d.julgamentoLLM!.status, lidos.length], [true, undefined, 'VALID', 1]);
+        assert.match(d.motivo!, /motor caiu/);
+    });
+
+    await teste('teste 7b — erro INESPERADO na semantica: nao e engolido nem vira INVALID; fica no motivo, e o juiz sobrevive', async () => {
+        const registro = registroDe(REF, planoRef);
+        registro.execucaoMultiagente = Object.defineProperty({ status: 'COMPLETED' }, 'sequenciaValidada', { get() { throw new Error('bug inesperado na semantica'); }, enumerable: true });
+        const d = await avaliar(registro, juizQueResponde('INVALID'));
+        assert.deepEqual([d.naoAvaliado, d.oraculo, d.julgamentoLLM!.status], [true, undefined, 'INVALID']);
+        assert.match(d.motivo!, /Erro inesperado na validacao semantica: bug inesperado na semantica/);
+    });
+
+    await teste('cancelamento durante o trecho concorrente propaga, mesmo com a semantica ainda em curso', async () => {
+        const controlador = new AbortController();
+        const juiz: JuizLLM = async () => { controlador.abort(); throw new Error('abortado'); };
+        await assert.rejects(avaliar(registroDe(REF, planoRef), juiz, { sinal: controlador.signal, gHat: gHatLento(30) }), /abortado/);
+    });
+
+    await teste('o juiz nao espera a semantica nem a le: com a semantica travada por 150 ms, o pedido do juiz sai antes dela terminar', async () => {
+        let verificacaoTerminou = false;
+        let juizChamadoAntes = false;
+        const juiz: JuizLLM = async () => { juizChamadoAntes = !verificacaoTerminou; return respostaJuiz('VALID'); };
+        const verificador: VerificadorGramatical = async () => { await pausa(150); verificacaoTerminou = true; return { valido: true, erro: null }; };
+        await avaliar(registroDe(REF, planoRef), juiz, { gHat: verificador });
+        assert.equal(juizChamadoAntes, true);
+    });
+
+    await teste('benchmark — sequencial x paralelo (semantica 60 ms, juiz 60 ms): mesmo resultado logico; o trecho paralelo custa ~max, nao a soma', async () => {
+        const rapido = await avaliar(registroDe(REF, planoRef), juizQueResponde('INVALID'));
+        const lento = await avaliar(registroDe(REF, planoRef), async pedido => { await pausa(60); return juizQueResponde('INVALID')(pedido, new AbortController().signal); }, { gHat: gHatLento(60) });
+        assert.equal(semTempos(lento), semTempos(rapido), 'o resultado logico nao depende da temporizacao');
+        const t = lento.tempos!;
+        const sequencial = t.oraculoMs! + t.llmJudgeMs!;
+        console.log(`       sequencial (soma): ${sequencial.toFixed(1)} ms | paralelo medido: ${t.paraleloMs!.toFixed(1)} ms | ganho: ${(sequencial / t.paraleloMs!).toFixed(2)}x`);
+        assert.ok(t.paraleloMs! < sequencial * 0.75, `paralelo ${t.paraleloMs} ms, sequencial ${sequencial} ms`);
+    });
+
+    // =========================================================================
     console.log('\nMetricas e JSONL experimental');
     // =========================================================================
 
@@ -768,6 +913,20 @@ async function main(): Promise<void> {
         assert.deepEqual([b.lado, b.validacaoSintatica.veredito, b.ast, b.validacaoSemantica.veredito, b.julgamentoLLM.status, b.classificacao], ['baseline', 'INVALID', undefined, 'NOT_EVALUATED', 'NOT_CALLED', 'INVALIDO_PELO_ORACULO']);
     });
 
+    await teste('teste 8 — JSONL com tempos: cada registro guarda sintaxe, AST, semantica, oraculo, juiz, concordancia, classificacao E os tempos do plano e os totais da avaliacao', async () => {
+        const arq = await avaliar(registroDe(REAL_1, PLANO_REAL_1), juizQueResponde('INVALID'));
+        const base = await avaliar(registroDe(REAL_1, ''), juizQueResponde('VALID'));
+        const registros = registrosJsonl('med', {
+            naoAvaliados: 0, linhas: [montarLinha(1, REAL_1.intencao!, arq, base)],
+            tempoTotalSegundos: 1.5, tempoSintaxeSegundos: 0.1, tempoOraculoSegundos: 0.4, tempoLlmJudgeSegundos: 1.2
+        }).map(r => JSON.parse(JSON.stringify(r)));
+        const [a, b] = registros;
+        for (const r of registros) assert.deepEqual([r.tempoTotalSegundos, r.tempoSintaxeSegundos, r.tempoOraculoSegundos, r.tempoLlmJudgeSegundos], [1.5, 0.1, 0.4, 1.2]);
+        for (const campo of ['validacaoSintatica', 'ast', 'validacaoSemantica', 'oraculo', 'julgamentoLLM', 'concordancia', 'classificacao', 'tempos']) assert.notEqual(a[campo], undefined, campo);
+        assert.deepEqual(Object.keys(a.tempos).sort(), ['llmJudgeMs', 'oraculoMs', 'paraleloMs', 'recuperacaoMs', 'sintaxeMs', 'totalMs']);
+        assert.deepEqual([b.tempos.oraculoMs, b.tempos.llmJudgeMs, b.tempos.paraleloMs, typeof b.tempos.sintaxeMs, typeof b.tempos.totalMs], [null, null, undefined, 'number', 'number']);
+    });
+
     // Exemplo legivel: a regressao do incremento proibido (FC 138), com um juiz que discorda.
     const exemplo = await avaliar(registroDe(REAL_2, PLANO_PROIBIDO_FC138), juizQueResponde('VALID'));
     console.log('\n  --- exemplo: incremento proibido com FC 138 (plano real do cenario 2 alterado) ---');
@@ -777,6 +936,8 @@ async function main(): Promise<void> {
     console.log(`    Oraculo:       ${exemplo.oraculo!.veredito} (origem: ${exemplo.oraculo!.origem})`);
     console.log(`    Judge:         ${exemplo.julgamentoLLM!.status}`);
     console.log(`    Classificacao: ${exemplo.classificacao}`);
+    const te = exemplo.tempos!;
+    console.log(`    Tempos (ms):   sintaxe ${te.sintaxeMs} | recuperacao ${te.recuperacaoMs} | oraculo ${te.oraculoMs} | juiz ${te.llmJudgeMs} | paralelo ${te.paraleloMs} | total ${te.totalMs}`);
 
     console.log(falhas === 0 ? `\nTodos os ${contagem} testes passaram.` : `\n${falhas} de ${contagem} teste(s) falharam.`);
     process.exit(falhas === 0 ? 0 : 1);

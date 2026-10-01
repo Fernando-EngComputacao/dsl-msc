@@ -641,7 +641,7 @@ flowchart LR
     style OK fill:#e6f4ea
 ```
 
-### Avaliação dos planos já gerados (`/api/avaliar`): sintaxe → AST → semântica → oráculo → LLM Judge
+### Avaliação dos planos já gerados (`/api/avaliar`): sintaxe → AST → (semântica → oráculo ‖ LLM Judge) → comparação
 
 A tela "Avaliar resultados" passa cada plano do lote por uma **cascata**, e cada camada responde uma pergunta diferente ([avaliar-sintaxe.ts](src/inference/avaliar-sintaxe.ts), [avaliar-grafo.ts](src/inference/avaliar-grafo.ts)):
 
@@ -652,6 +652,18 @@ A tela "Avaliar resultados" passa cada plano do lote por uma **cascata**, e cada
 | **2. Semântica** | dado o AST, o plano respeita política, conhecimento, telemetria, pedido, contrato e relações? | sem texto nenhum (o plano composto julgado tem `texto` vazio), com a recuperação da geração refeita a partir do `sorteio` do registro, os validadores do multiagente na ordem dele: `/verify` com a política efetiva (L(Ĝ)), `validarSequencia`, `decomporPIs` + `validarPI`, `validarPlanoGlobal` (contrato por `verificarLido`). Nenhum critério novo |
 | **3. Oráculo** | o plano é válido no SPC-CML? | sintaxe INVALID → INVALID (origem: sintaxe); senão o veredito da semântica (origem: semântica). É o resultado **normativo** |
 | **4. LLM Judge** | um LLM independente acha o plano adequado? | **experimental**: `/validar-plano` ([julgamento.py](src/python_engine/julgamento.py)). Avalia todo plano com AST — também os semanticamente INVALID ou UNRESOLVED —; texto fora da DSL só com `SPC_CML_AVALIAR_JULGAR_SINTAXE_INVALIDA=true`; artefato vazio nunca. `status`: `VALID` \| `INVALID` \| `UNRESOLVED` \| `NOT_CALLED` \| `NO_RESPONSE` |
+
+**Fluxo e concorrência.** Oráculo e LLM Judge são independentes e são executados concorrentemente após a obtenção de um AST sintaticamente válido:
+
+```
+TEXTO → SINTAXE → AST ─┬─→ SEMÂNTICA → ORÁCULO ─┐
+                       │                         ├─→ COMPARAÇÃO → JSONL/UI
+                       └─→ LLM JUDGE ────────────┘
+```
+
+Planos sintaticamente inválidos (e o artefato vazio) não são enviados ao Judge (`NOT_CALLED`; a exceção experimental é `SPC_CML_AVALIAR_JULGAR_SINTAXE_INVALIDA`). A sintaxe vem sempre primeiro. A recuperação do conhecimento (grafo) é a única dependência compartilhada além do AST: a semântica e o juiz leem o mesmo conhecimento, então ela roda antes da bifurcação. Em `avaliarPlano` as duas ramificações são iniciadas antes de qualquer `await` (`Promise.allSettled`): o juiz não lê nada da semântica (nem do oráculo), a semântica não espera o juiz, e a comparação só acontece com os dois resultados em mãos. Uma falha não apaga a outra: juiz sem resposta → `NO_RESPONSE` e o oráculo vale; semântica com falha técnica → a linha é `naoAvaliado` (sem veredito normativo), com o motivo, **e o julgamento do juiz é preservado**. Cancelamento propaga. O resultado lógico (AST, semântica, oráculo, juiz, concordância, classificação) é o mesmo da execução em série; só mudam os tempos.
+
+**Tempos.** Cada plano grava `tempos` (ms, `performance.now()`, relógio monotônico): `sintaxeMs`, `recuperacaoMs`, `oraculoMs` (só a validação semântica; `null` se não rodou), `llmJudgeMs` (só a chamada ao juiz; `null` se não foi chamado), `paraleloMs` (o trecho concorrente inteiro) e `totalMs`. Como as duas ramificações são concorrentes, `paraleloMs ≈ max(oraculoMs, llmJudgeMs)` e `totalMs ≈ sintaxeMs + recuperacaoMs + paraleloMs + sobrecarga` — não a soma do oráculo com o juiz. Cada registro do JSONL também repete os totais da avaliação, em segundos: `tempoTotalSegundos` (relógio de parede da avaliação inteira) e as somas por plano `tempoSintaxeSegundos`, `tempoOraculoSegundos`, `tempoLlmJudgeSegundos`. A tela mostra os quatro.
 
 **Precedência.** Texto vazio ou fora da DSL: sintaxe INVALID, semântica `NOT_EVALUATED`, oráculo INVALID, juiz `NOT_CALLED`. DSL válida: semântica e oráculo VALID, INVALID ou UNRESOLVED, e o juiz registrado ao lado. O juiz nunca corrige o oráculo (nem o oráculo o juiz): vereditos iguais → concordantes, com a classificação do oráculo (`VALIDO_PELO_ORACULO`, `INVALIDO_PELO_ORACULO`, `UNRESOLVIDO_PELO_ORACULO`); qualquer combinação diferente → `DISCORDANCIA_LLM`, com o oráculo intacto — UNRESOLVED continua UNRESOLVED. A tela pinta a linha pela cor do oráculo; a discordância é uma marca à parte.
 
@@ -1158,7 +1170,7 @@ Somadas, as contagens dão 191 casos; os 8 de `test:foco` que dependem do motor 
 | `npm run test:validacao-global` | 35 | composição (casos 1–12), validação global (A–F, duplicidade, dependências, justificativa × cenário, relação de risco, fronteira estruturado × texto, `regra_global` textual, alvo do pedido, feedback), reinício (A, B), pedido sem alvo → `UNRESOLVED` antes do Planner, pedido com item → `PLANNING`, orçamentos por ciclo, recuperação não repetida, isolamento dos ciclos, custo, `/verify` recusando → `FAILED`, PI `UNRESOLVED` sem composição, cliente HTTP real, baseline incremental |
 | `npm run test:earley` | — | 7 modos de falha + fechamento por prefixos |
 | `npm run test:avaliar` | — | métricas e pareamento |
-| `npm run test:avaliar-oraculo` | 39 | avaliador em cascata: vazio e fora da DSL param na sintaxe (juiz `NOT_CALLED`), sintaxe pelas duas peças (G e parser Langium; o que só uma recusa; falha técnica de cada uma), AST guardado = AST julgado (JSONL, reformatação, plano sem texto), semântica com os validadores da geração, os caminhos de UNRESOLVED (telemetria, política vazia, pedido sem alvo, item sem conduta, escalonamento irrealizável) sem virar INVALID, dependências presentes/inválidas/ausentes/divergentes, regressões permanentes (incremento proibido FC 138 → oráculo INVALID com juiz VALID; planos REAIS `COMPLETED` → VALID), juiz independente (nove combinações, `NO_RESPONSE`, cancelamento), métricas por camada, JSONL |
+| `npm run test:avaliar-oraculo` | 53 | avaliador em cascata: vazio e fora da DSL param na sintaxe (juiz `NOT_CALLED`), sintaxe pelas duas peças (G e parser Langium; o que só uma recusa; falha técnica de cada uma), AST guardado = AST julgado (JSONL, reformatação, plano sem texto), semântica com os validadores da geração, os caminhos de UNRESOLVED (telemetria, política vazia, pedido sem alvo, item sem conduta, escalonamento irrealizável) sem virar INVALID, dependências presentes/inválidas/ausentes/divergentes, regressões permanentes (incremento proibido FC 138 → oráculo INVALID com juiz VALID; planos REAIS `COMPLETED` → VALID), juiz independente (nove combinações, `NO_RESPONSE`, cancelamento), **concorrência oráculo ‖ juiz** (barreira mútua que trava se for em série, juiz lento × semântica lenta com `paraleloMs ≈ max`, falha de um lado sem apagar o outro, benchmark sequencial × paralelo com resultado lógico idêntico), métricas por camada, JSONL com tempos |
 | `npm run test:grammar` | — | G, G[y], Ĝ, especialização por item (Python) |
 | `npm run test:equivalencia` | 3 | AST × Cypher (fora de `npm test`; exige Neo4j) |
 | `npm run test:model` | — | inspeção do modelo clínico: imprime a AST, sem asserções (fora de `npm test`) |

@@ -145,7 +145,15 @@ export interface DetalheLado {
     julgamentoLLM?: JulgamentoLLM;
     concordancia?: boolean;
     classificacao?: ClassificacaoAvaliacao;
-    tempos?: { oraculoMs: number | null; llmJudgeMs: number | null };
+    /** Durações do plano em ms; oráculo e juiz rodam concorrentes (paraleloMs ≈ max dos dois). */
+    tempos?: {
+        sintaxeMs?: number;
+        recuperacaoMs?: number;
+        oraculoMs: number | null;
+        llmJudgeMs: number | null;
+        paraleloMs?: number;
+        totalMs?: number;
+    };
 }
 
 export interface DetalheLinha {
@@ -167,6 +175,14 @@ export interface RespostaAvaliacao {
     linhas: DetalheLinha[];
     /** Nome do JSONL experimental gravado pelo servidor — ver `urlAvaliacaoJsonl`. */
     arquivoJsonl?: string;
+    /** Tempo total (s) que o servidor levou para processar a avaliação inteira. */
+    tempoTotalSegundos?: number;
+    /** Soma dos tempos da validação sintática, em segundos. */
+    tempoSintaxeSegundos?: number;
+    /** Soma dos tempos da validação semântica (oráculo), em segundos. */
+    tempoOraculoSegundos?: number;
+    /** Soma dos tempos do LLM Judge, em segundos. */
+    tempoLlmJudgeSegundos?: number;
 }
 
 export interface RespostaComando {
