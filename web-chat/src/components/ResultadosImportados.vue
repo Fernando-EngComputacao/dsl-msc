@@ -6,6 +6,7 @@ import MetricasCard from './MetricasCard.vue';
 import ComparacaoLinhas from './ComparacaoLinhas.vue';
 import GraficosAvaliacao from './GraficosAvaliacao.vue';
 import TemposAvaliacao from './TemposAvaliacao.vue';
+import TempoGeracaoPlanos from './TempoGeracaoPlanos.vue';
 import NavegacaoResultado, { type AbaResultado } from './NavegacaoResultado.vue';
 
 const props = defineProps<{ registros: RegistroAvaliacaoImportado[]; nomeArquivo: string }>();
@@ -69,6 +70,16 @@ function totalDoArquivo(
     return medidos.length ? Math.round(medidos.reduce((a, b) => a + b, 0) / 10) / 100 : undefined;
 }
 
+/** Os tempos de GERAÇÃO (ver tempos-lote.ts) só existem como agregado repetido
+ *  por registro (`registrosJsonl`) — sem sub-objeto por plano para recalcular
+ *  como em `totalDoArquivo`. Ausente no arquivo: fica ausente aqui também. */
+function totalDoArquivoGeracao(
+    campo: 'tempoGeracaoTotalSegundos' | 'tempoGeracaoSequenciasSegundos' | 'tempoGeracaoPIsValidasSegundos' | 'tempoGeracaoValidacaoPlanosSegundos'
+): number | undefined {
+    const gravado = props.registros.find(r => typeof r[campo] === 'number')?.[campo];
+    return typeof gravado === 'number' ? gravado : undefined;
+}
+
 const resposta = computed<RespostaAvaliacao>(() => {
     const grupos = new Map<number, DetalheLinha>();
     props.registros.forEach((registro, indice) => {
@@ -94,7 +105,14 @@ const resposta = computed<RespostaAvaliacao>(() => {
         tempoTotalSegundos: props.registros.find(r => typeof r.tempoTotalSegundos === 'number')?.tempoTotalSegundos,
         tempoSintaxeSegundos: totalDoArquivo('tempoSintaxeSegundos', 'sintaxeMs'),
         tempoOraculoSegundos: totalDoArquivo('tempoOraculoSegundos', 'oraculoMs'),
-        tempoLlmJudgeSegundos: totalDoArquivo('tempoLlmJudgeSegundos', 'llmJudgeMs')
+        tempoLlmJudgeSegundos: totalDoArquivo('tempoLlmJudgeSegundos', 'llmJudgeMs'),
+        // Tempos de GERAÇÃO: diferente dos de cima, não há sub-objeto por plano
+        // para recalcular — são repetidos em todo registro quando o servidor os
+        // agregou (registrosJsonl). Sem o campo, fica ausente: nada é inventado.
+        tempoGeracaoTotalSegundos: totalDoArquivoGeracao('tempoGeracaoTotalSegundos'),
+        tempoGeracaoSequenciasSegundos: totalDoArquivoGeracao('tempoGeracaoSequenciasSegundos'),
+        tempoGeracaoPIsValidasSegundos: totalDoArquivoGeracao('tempoGeracaoPIsValidasSegundos'),
+        tempoGeracaoValidacaoPlanosSegundos: totalDoArquivoGeracao('tempoGeracaoValidacaoPlanosSegundos')
     };
 });
 
@@ -138,7 +156,8 @@ function veredito(valor: unknown): valor is Veredito {
             <div v-show="mostra('graficos')" class="animate-fade-in-up">
                 <GraficosAvaliacao :arquitetura="resposta.arquitetura" :baseline="resposta.baseline" />
             </div>
-            <div v-show="mostra('tempo')" class="animate-fade-in-up">
+            <div v-show="mostra('tempo')" class="animate-fade-in-up flex flex-col gap-6">
+                <TempoGeracaoPlanos :resposta="resposta" origem="importacao" />
                 <TemposAvaliacao :resposta="resposta" origem="importacao" />
             </div>
         </div>

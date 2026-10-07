@@ -183,6 +183,15 @@ export interface RespostaAvaliacao {
     tempoOraculoSegundos?: number;
     /** Soma dos tempos do LLM Judge, em segundos. */
     tempoLlmJudgeSegundos?: number;
+    /**
+     * Tempos de GERAÇÃO dos cenários avaliados (os dois arquivos), em
+     * segundos — não medidos na avaliação, repassados do lote (ver
+     * tempos-lote.ts) e agregados. Ausente quando nenhum registro os trouxe.
+     */
+    tempoGeracaoTotalSegundos?: number;
+    tempoGeracaoSequenciasSegundos?: number;
+    tempoGeracaoPIsValidasSegundos?: number;
+    tempoGeracaoValidacaoPlanosSegundos?: number;
 }
 
 export interface RespostaComando {
@@ -206,7 +215,26 @@ export interface RespostaComando {
     regrasEmGHat?: number;
     erro?: string;
     /** Só no modo multiagente (`SPC_CML_DECODIFICACAO=multiagente`): a execução resumida. */
-    execucaoMultiagente?: { status: string; sequenciaValidada?: PIPlanejado[] };
+    execucaoMultiagente?: ExecucaoMultiagenteResposta;
+}
+
+/**
+ * O que o web-chat lê de `execucaoMultiagente`. O servidor manda o
+ * `ResumoExecucao` inteiro (src/inference/multiagente.ts); aqui só os campos
+ * usados: o status e a sequência (avaliador) e os cronômetros que o próprio
+ * pipeline grava (tempos do lote, ver tempos-lote.ts).
+ */
+export interface ExecucaoMultiagenteResposta {
+    status: string;
+    sequenciaValidada?: PIPlanejado[];
+    /** Todas as propostas do Planner, de todos os ciclos. */
+    tentativasPlanner?: { ciclo: number; metricas?: { duracaoMs: number; duracaoValidacaoMs?: number } }[];
+    /** Um registro por ciclo global, com as ondas de PI e as métricas DAQUELE ciclo. */
+    historicoGlobal?: {
+        ciclo: number;
+        ondasPI?: { duracaoMs?: number }[];
+        metricas?: { duracaoComposicaoMs?: number; duracaoValidacaoGlobalMs?: number };
+    }[];
 }
 
 /** Um PI da sequência do Planner — o que o avaliador lê (`dependeDe` não está na DSL do artefato). */

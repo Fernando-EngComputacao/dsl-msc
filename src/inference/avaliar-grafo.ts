@@ -109,6 +109,17 @@ export interface RegistroAvaliarGrafo {
      * relações que cada PI Agent viu no prompt) vêm.
      */
     execucaoMultiagente?: { status?: string; sequenciaValidada?: PIPlanejado[] };
+    /**
+     * Tempos de GERAÇÃO deste cenário, gravados pelo lote do web-chat (ver
+     * tempos-lote.ts) — do sorteio à geração restrita do plano, ANTES de
+     * chegar aqui. A avaliação não os mede: só os repassa e agrega (ver
+     * `tempoGeracao*Segundos` em `ResultadoAvaliacaoGrafo`). `null` quando o
+     * lote não passou por aquela etapa (ex.: fora do modo multiagente).
+     */
+    tempoTotalMs?: number;
+    tempoSequenciasMs?: number | null;
+    tempoPIsValidasMs?: number | null;
+    tempoValidacaoPlanosMs?: number | null;
 }
 
 // =============================================================================
@@ -283,6 +294,16 @@ export interface ResultadoAvaliacaoGrafo {
     tempoOraculoSegundos?: number;
     /** Soma dos tempos do LLM Judge de todos os planos, em segundos. */
     tempoLlmJudgeSegundos?: number;
+    /**
+     * Soma, em segundos, dos tempos de GERAÇÃO dos cenários avaliados (os dois
+     * arquivos), repassados de `RegistroAvaliarGrafo.tempoTotalMs` e das três
+     * etapas. Ausente quando nenhum registro trouxe aquele tempo (ex.: os
+     * arquivos não vieram do lote do web-chat, ou vieram de antes da medição).
+     */
+    tempoGeracaoTotalSegundos?: number;
+    tempoGeracaoSequenciasSegundos?: number;
+    tempoGeracaoPIsValidasSegundos?: number;
+    tempoGeracaoValidacaoPlanosSegundos?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -990,6 +1011,11 @@ export interface RegistroAvaliacaoJsonl extends Partial<ResultadoAvaliacaoPlano>
     tempoSintaxeSegundos?: number;
     tempoOraculoSegundos?: number;
     tempoLlmJudgeSegundos?: number;
+    /** Tempos (s) da GERAÇÃO de todos os cenários avaliados — repetidos em todos os registros do arquivo. */
+    tempoGeracaoTotalSegundos?: number;
+    tempoGeracaoSequenciasSegundos?: number;
+    tempoGeracaoPIsValidasSegundos?: number;
+    tempoGeracaoValidacaoPlanosSegundos?: number;
 }
 
 /** O resultado da avaliação no formato do JSONL experimental — um registro por plano avaliado. */
@@ -1004,7 +1030,11 @@ export function registrosJsonl(dominio: Dominio, resultado: ResultadoAvaliacaoGr
                     ...(resultado.tempoTotalSegundos !== undefined && { tempoTotalSegundos: resultado.tempoTotalSegundos }),
                     ...(resultado.tempoSintaxeSegundos !== undefined && { tempoSintaxeSegundos: resultado.tempoSintaxeSegundos }),
                     ...(resultado.tempoOraculoSegundos !== undefined && { tempoOraculoSegundos: resultado.tempoOraculoSegundos }),
-                    ...(resultado.tempoLlmJudgeSegundos !== undefined && { tempoLlmJudgeSegundos: resultado.tempoLlmJudgeSegundos })
+                    ...(resultado.tempoLlmJudgeSegundos !== undefined && { tempoLlmJudgeSegundos: resultado.tempoLlmJudgeSegundos }),
+                    ...(resultado.tempoGeracaoTotalSegundos !== undefined && { tempoGeracaoTotalSegundos: resultado.tempoGeracaoTotalSegundos }),
+                    ...(resultado.tempoGeracaoSequenciasSegundos !== undefined && { tempoGeracaoSequenciasSegundos: resultado.tempoGeracaoSequenciasSegundos }),
+                    ...(resultado.tempoGeracaoPIsValidasSegundos !== undefined && { tempoGeracaoPIsValidasSegundos: resultado.tempoGeracaoPIsValidasSegundos }),
+                    ...(resultado.tempoGeracaoValidacaoPlanosSegundos !== undefined && { tempoGeracaoValidacaoPlanosSegundos: resultado.tempoGeracaoValidacaoPlanosSegundos })
                 };
             })
     );

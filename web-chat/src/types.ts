@@ -1,6 +1,8 @@
 import type { PIPlanejado, RespostaComando } from './api';
+import type { TemposCenario } from './tempos-lote';
 
-export interface ItemResultadoLote {
+/** Os campos de tempo (ver tempos-lote.ts) vêm depois dos campos de resultado, em toda linha. */
+export interface ItemResultadoLote extends Partial<TemposCenario> {
     linha: number;
     intencao: string;
     aceito: boolean;
@@ -32,6 +34,8 @@ export interface LoteEstado {
     iniciadoEm: number;
     /** Só preenchido quando finalizado: tempo total do lote, do início ao fim. */
     duracaoSegundos?: number;
+    /** Só preenchido quando o laço termina: `performance.now()` do início do primeiro cenário ao fim do último. */
+    tempoTotalBatchMs?: number;
 }
 
 export interface Mensagem {

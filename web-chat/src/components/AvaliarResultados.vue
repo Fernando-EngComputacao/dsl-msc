@@ -11,6 +11,7 @@ import ComparacaoLinhas from "./ComparacaoLinhas.vue";
 import GraficosAvaliacao from "./GraficosAvaliacao.vue";
 import ResultadosImportados from "./ResultadosImportados.vue";
 import TemposAvaliacao from "./TemposAvaliacao.vue";
+import TempoGeracaoPlanos from "./TempoGeracaoPlanos.vue";
 import NavegacaoResultado, { type AbaResultado } from "./NavegacaoResultado.vue";
 import { parseRegistrosAvaliacao, type RegistroAvaliacaoImportado } from "../../../src/inference/avaliacao-jsonl";
 
@@ -876,7 +877,8 @@ async function importarArquivo(evento: Event): Promise<void> {
           />
         </div>
 
-        <div v-show="mostra('tempo')" class="animate-fade-in-up">
+        <div v-show="mostra('tempo')" class="animate-fade-in-up flex flex-col gap-6">
+          <TempoGeracaoPlanos :resposta="resultado" origem="avaliacao" />
           <TemposAvaliacao :resposta="resultado" origem="avaliacao" />
         </div>
       </div>
