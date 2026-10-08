@@ -7,6 +7,7 @@ import ComparacaoLinhas from './ComparacaoLinhas.vue';
 import GraficosAvaliacao from './GraficosAvaliacao.vue';
 import TemposAvaliacao from './TemposAvaliacao.vue';
 import TempoGeracaoPlanos from './TempoGeracaoPlanos.vue';
+import AvaliacaoLLM from './AvaliacaoLLM.vue';
 import NavegacaoResultado, { type AbaResultado } from './NavegacaoResultado.vue';
 
 const props = defineProps<{ registros: RegistroAvaliacaoImportado[]; nomeArquivo: string }>();
@@ -116,8 +117,11 @@ const resposta = computed<RespostaAvaliacao>(() => {
     };
 });
 
-// Qual seção do resultado aparece (só estado local). "Todas" mostra as quatro, uma abaixo da outra.
+// Qual seção do resultado aparece (só estado local). "Todas" mostra as outras, uma abaixo da outra.
 const aba = ref<AbaResultado>('todas');
+
+/** O JSONL experimental é gravado por domínio (`gravarAvaliacao`): o domínio vem dos próprios registros. */
+const dominioDoArquivo = computed(() => props.registros.find(r => typeof r.dominio === 'string')?.dominio);
 const mostra = (a: AbaResultado): boolean => aba.value === 'todas' || aba.value === a;
 
 function veredito(valor: unknown): valor is Veredito {
@@ -143,7 +147,7 @@ function veredito(valor: unknown): valor is Veredito {
         <NavegacaoResultado v-model="aba" />
 
         <p v-if="resposta.naoAvaliados > 0" class="mb-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{{ resposta.naoAvaliados }} registro(s) não foram avaliados no arquivo original.</p>
-        <div class="flex flex-col gap-10">
+        <div class="flex flex-col gap-10 w-screen max-w-full">
             <div v-show="mostra('metricas')" class="animate-fade-in-up">
                 <div class="grid gap-4" :class="resposta.arquitetura && resposta.baseline ? 'lg:grid-cols-2' : 'grid-cols-1'">
                     <MetricasCard v-if="resposta.arquitetura" variante="arquitetura" :metricas="resposta.arquitetura" :comparar="resposta.baseline" />
@@ -155,6 +159,9 @@ function veredito(valor: unknown): valor is Veredito {
             </div>
             <div v-show="mostra('graficos')" class="animate-fade-in-up">
                 <GraficosAvaliacao :arquitetura="resposta.arquitetura" :baseline="resposta.baseline" />
+            </div>
+            <div v-show="mostra('avaliacaoLlm')" class="animate-fade-in-up">
+                <AvaliacaoLLM :resposta="resposta" :dominio="dominioDoArquivo" />
             </div>
             <div v-show="mostra('tempo')" class="animate-fade-in-up flex flex-col gap-6">
                 <TempoGeracaoPlanos :resposta="resposta" origem="importacao" />

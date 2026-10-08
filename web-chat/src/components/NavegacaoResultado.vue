@@ -1,6 +1,6 @@
 <script lang="ts">
-/** As seções do resultado da avaliação. `todas` mostra as outras quatro, uma abaixo da outra. */
-export type AbaResultado = 'todas' | 'metricas' | 'analise' | 'graficos' | 'tempo';
+/** As seções do resultado da avaliação. `todas` mostra as outras, uma abaixo da outra. */
+export type AbaResultado = 'todas' | 'metricas' | 'analise' | 'graficos' | 'avaliacaoLlm' | 'tempo';
 </script>
 
 <script setup lang="ts">
@@ -14,6 +14,7 @@ const ABAS: { chave: AbaResultado; rotulo: string }[] = [
     { chave: 'metricas', rotulo: 'Métricas' },
     { chave: 'analise', rotulo: 'Análise' },
     { chave: 'graficos', rotulo: 'Gráficos' },
+    { chave: 'avaliacaoLlm', rotulo: 'Estatísticos' },
     { chave: 'tempo', rotulo: 'Tempo' }
 ];
 
@@ -43,14 +44,15 @@ function aoTeclar(e: KeyboardEvent): void {
 <template>
     <nav class="mb-8 flex w-full justify-center" aria-label="Seções do resultado">
         <div
-            class="relative grid w-full max-w-2xl grid-cols-5 rounded-full bg-neutral-100/80 p-1 shadow-sm dark:bg-white/5"
+            class="relative grid w-full max-w-3xl rounded-full bg-neutral-100/80 p-1 shadow-sm dark:bg-white/5"
+            :style="{ gridTemplateColumns: `repeat(${ABAS.length}, minmax(0, 1fr))` }"
             role="tablist"
             @keydown="aoTeclar"
         >
-            <!-- O destaque desliza até a aba escolhida: cada aba ocupa 1/5 da largura útil. -->
+            <!-- O destaque desliza até a aba escolhida: cada aba ocupa 1/N da largura útil. -->
             <span
                 class="indicador pointer-events-none absolute inset-y-1 left-1 rounded-full bg-white shadow-sm ring-1 ring-black/5 dark:bg-white/15 dark:ring-white/10"
-                :style="{ width: 'calc((100% - 0.5rem) / 5)', transform: `translateX(${indice * 100}%)` }"
+                :style="{ width: `calc((100% - 0.5rem) / ${ABAS.length})`, transform: `translateX(${indice * 100}%)` }"
                 aria-hidden="true"
             ></span>
 
@@ -101,6 +103,12 @@ function aoTeclar(e: KeyboardEvent): void {
                         <line x1="7" y1="16" x2="7" y2="10" />
                         <line x1="12" y1="16" x2="12" y2="5" />
                         <line x1="17" y1="16" x2="17" y2="12" />
+                    </template>
+                    <template v-else-if="aba.chave === 'avaliacaoLlm'">
+                        <path d="M12 3v18" />
+                        <path d="M5 7h14" />
+                        <path d="M5 7l-3 7a4 4 0 0 0 6 0z" />
+                        <path d="M19 7l-3 7a4 4 0 0 0 6 0z" />
                     </template>
                     <template v-else>
                         <circle cx="12" cy="12" r="9" />
