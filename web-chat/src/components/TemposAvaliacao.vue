@@ -34,6 +34,29 @@ const semTempos = computed(() =>
 </script>
 
 <template>
+    <div class="mb-3 flex items-center gap-2.5">
+            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-300">
+                <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="shrink-0 transition-colors duration-200 text-gray-500 dark:text-gray-400"
+                    aria-hidden="true"
+                >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2" />
+                </svg>
+            </div>
+            <div>
+                <p class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">Análise do tempo de geração/avaliação</p>
+                <p class="text-xs text-neutral-500 dark:text-neutral-400">Os números representam o tempo gasto em cada etapa do processo de geração dos planos e de sua avaliação (sintática e semântica).</p>
+            </div>
+        </div>
     <section class="max-w-5xl rounded-2xl border border-neutral-200 p-4 dark:border-white/10">
         <p class="mb-3 text-sm font-medium text-neutral-800 dark:text-neutral-100">Tempo da avaliação</p>
         <div v-if="algumTempo" class="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -47,3 +70,15 @@ const semTempos = computed(() =>
         <p v-else class="text-xs text-neutral-500 dark:text-neutral-400">Tempos indisponíveis: {{ semTempos }}</p>
     </section>
 </template>
+
+<style scoped>
+.indicador {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .indicador {
+        transition: none;
+    }
+}
+</style>

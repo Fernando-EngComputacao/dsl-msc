@@ -8,6 +8,7 @@ import {
 } from './api';
 import type { Mensagem, ItemResultadoLote } from './types';
 import { parseArquivoLote, type CenarioLote } from './lote';
+import { arredondarMs, emSegundos, nomeArquivoResultados, temposDasEtapas, temposDoCenario, type TemposEtapas } from './tempos-lote';
 
 /** Estado do chat vive fora de qualquer componente (mesmo padrao de theme.ts)
  *  para sobreviver a navegacao entre "/" e "/avaliar" sem depender de
@@ -306,9 +307,14 @@ async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med'
     const controlador = new AbortController();
     loteControlador.value = controlador;
 
+    // Instrumentacao (tempos-lote.ts): so le o relogio e os cronometros que o
+    // pipeline ja devolve; nada abaixo muda o que e enviado nem a ordem.
+    const inicioBatch = performance.now();
     for (const [i, cenario] of cenarios.entries()) {
         if (controlador.signal.aborted) break;
 
+        const inicioCenario = performance.now();
+        let etapas: TemposEtapas = temposDasEtapas(undefined);
         let item: ItemResultadoLote;
         try {
             const resposta = await enviarComandoStream(
@@ -320,6 +326,7 @@ async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med'
                 controlador.signal,
                 cenario.contexto,
             );
+            etapas = temposDasEtapas(resposta.execucaoMultiagente);
             item = {
                 linha: i + 1,
                 intencao: cenario.intencao,
@@ -352,11 +359,13 @@ async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med'
                 erro: (error as Error).message,
             };
         }
+        item = { ...item, ...temposDoCenario(performance.now() - inicioCenario, etapas) };
 
         msg.lote.resultados.push(item);
         msg.lote.concluidos++;
         rolarParaFinal();
     }
+    msg.lote.tempoTotalBatchMs = arredondarMs(performance.now() - inicioBatch);
 
     msg.lote.finalizado = true;
     msg.lote.estagioAtual = undefined;
@@ -381,20 +390,20 @@ export function cancelarPararLote(): void {
     modalPararLoteAberto.value = false;
 }
 
-function nomeArquivoLote(): string {
-    const d = new Date();
-    const pad = (n: number): string => String(n).padStart(2, '0');
-    return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}_${d.getFullYear()}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.jsonl`;
-}
-
 export function baixarResultadosLote(msg: Mensagem): void {
     const l = msg.lote;
     if (!l) return;
 
     const linhas = l.resultados.map((r) => JSON.stringify(r));
+    // A linha final de resumo ja existia (e /api/avaliar a ignora: nao tem
+    // `plano`). Os campos de tempo do lote entram nela.
     linhas.push(
         JSON.stringify({
             duracaoSegundos: l.duracaoSegundos ?? Number(((Date.now() - l.iniciadoEm) / 1000).toFixed(1)),
+            quantidadeCenariosProcessados: l.resultados.length,
+            ...(l.tempoTotalBatchMs !== undefined
+                ? { tempoTotalBatchMs: l.tempoTotalBatchMs, tempoTotalBatchSegundos: emSegundos(l.tempoTotalBatchMs) }
+                : {}),
         }),
     );
     const conteudo = linhas.join('\n');
@@ -402,7 +411,8 @@ export function baixarResultadosLote(msg: Mensagem): void {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `results/${nomeArquivoLote()}`;
+    // `iniciadoEm` e o instante em que o lote comecou (aoSelecionarArquivo).
+    a.download = nomeArquivoResultados(l.nomeArquivo, new Date(l.iniciadoEm));
     document.body.appendChild(a);
     a.click();
     a.remove();

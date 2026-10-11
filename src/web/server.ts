@@ -565,6 +565,18 @@ async function avaliarComGrafo(
     const somaSegundos = (campo: 'sintaxeMs' | 'oraculoMs' | 'llmJudgeMs'): number =>
         Math.round(todos.reduce((acc, d) => acc + (d.tempos?.[campo] ?? 0), 0) / 10) / 100;
 
+    // Tempos de GERAÇÃO: não medidos aqui, só repassados do que o lote do
+    // web-chat gravou em cada registro de ENTRADA (tempos-lote.ts, web-chat) e
+    // agregados. Ausente (não soma 0) quando NENHUM registro trouxe o tempo —
+    // arquivo que não veio do lote, ou de antes da medição.
+    const entradas = [...(arquitetura ?? []), ...(baseline ?? [])];
+    const somaSegundosGeracao = (
+        campo: 'tempoTotalMs' | 'tempoSequenciasMs' | 'tempoPIsValidasMs' | 'tempoValidacaoPlanosMs'
+    ): number | undefined => {
+        const valores = entradas.map(r => r[campo]).filter((v): v is number => typeof v === 'number');
+        return valores.length === 0 ? undefined : Math.round(valores.reduce((a, b) => a + b, 0) / 10) / 100;
+    };
+
     const resultado: ResultadoAvaliacaoGrafo = {
         arquitetura: arquitetura ? agregarMetricas([...ladosArq.values()]) : undefined,
         baseline: baseline ? agregarMetricas([...ladosBase.values()]) : undefined,
@@ -573,7 +585,11 @@ async function avaliarComGrafo(
         tempoTotalSegundos: Math.round((performance.now() - inicio) / 10) / 100,
         tempoSintaxeSegundos: somaSegundos('sintaxeMs'),
         tempoOraculoSegundos: somaSegundos('oraculoMs'),
-        tempoLlmJudgeSegundos: somaSegundos('llmJudgeMs')
+        tempoLlmJudgeSegundos: somaSegundos('llmJudgeMs'),
+        tempoGeracaoTotalSegundos: somaSegundosGeracao('tempoTotalMs'),
+        tempoGeracaoSequenciasSegundos: somaSegundosGeracao('tempoSequenciasMs'),
+        tempoGeracaoPIsValidasSegundos: somaSegundosGeracao('tempoPIsValidasMs'),
+        tempoGeracaoValidacaoPlanosSegundos: somaSegundosGeracao('tempoValidacaoPlanosMs')
     };
     if (!sinal.aborted) resultado.arquivoJsonl = gravarAvaliacao(dominio, resultado);
     return resultado;

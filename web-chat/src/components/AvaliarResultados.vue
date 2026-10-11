@@ -11,6 +11,8 @@ import ComparacaoLinhas from "./ComparacaoLinhas.vue";
 import GraficosAvaliacao from "./GraficosAvaliacao.vue";
 import ResultadosImportados from "./ResultadosImportados.vue";
 import TemposAvaliacao from "./TemposAvaliacao.vue";
+import TempoGeracaoPlanos from "./TempoGeracaoPlanos.vue";
+import AvaliacaoLLM from "./AvaliacaoLLM.vue";
 import NavegacaoResultado, { type AbaResultado } from "./NavegacaoResultado.vue";
 import { parseRegistrosAvaliacao, type RegistroAvaliacaoImportado } from "../../../src/inference/avaliacao-jsonl";
 
@@ -74,7 +76,7 @@ const inputImportar = ref<HTMLInputElement | null>(null);
 const arquivoImportado = ref<string | null>(null);
 const registrosImportados = ref<RegistroAvaliacaoImportado[]>([]);
 const erroImportacao = ref<string | null>(null);
-// Qual seção do resultado aparece (só estado local: nenhuma rota muda). "Todas" mostra as quatro.
+// Qual seção do resultado aparece (só estado local: nenhuma rota muda). "Todas" mostra as outras.
 const aba = ref<AbaResultado>("todas");
 const mostra = (a: AbaResultado): boolean => aba.value === "todas" || aba.value === a;
 
@@ -876,7 +878,12 @@ async function importarArquivo(evento: Event): Promise<void> {
           />
         </div>
 
-        <div v-show="mostra('tempo')" class="animate-fade-in-up">
+        <div v-show="mostra('avaliacaoLlm')" class="animate-fade-in-up">
+          <AvaliacaoLLM :resposta="resultado" :dominio="dominioSelecionado" />
+        </div>
+
+        <div v-show="mostra('tempo')" class="animate-fade-in-up flex flex-col gap-6">
+          <TempoGeracaoPlanos :resposta="resultado" origem="avaliacao" />
           <TemposAvaliacao :resposta="resultado" origem="avaliacao" />
         </div>
       </div>

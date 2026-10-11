@@ -15,6 +15,11 @@ export interface RegistroAvaliacaoImportado {
     tempoSintaxeSegundos?: number;
     tempoOraculoSegundos?: number;
     tempoLlmJudgeSegundos?: number;
+    /** Tempos de GERAÇÃO dos cenários avaliados (ver tempos-lote.ts, web-chat), repassados e agregados pela avaliação. */
+    tempoGeracaoTotalSegundos?: number;
+    tempoGeracaoSequenciasSegundos?: number;
+    tempoGeracaoPIsValidasSegundos?: number;
+    tempoGeracaoValidacaoPlanosSegundos?: number;
     concordancia?: boolean;
     classificacao?: string;
     tempos?: { sintaxeMs?: number; recuperacaoMs?: number; oraculoMs?: number | null; llmJudgeMs?: number | null; paraleloMs?: number; totalMs?: number };
