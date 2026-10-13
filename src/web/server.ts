@@ -65,6 +65,7 @@ import {
     type RegistroAvaliarGrafo,
     type ResultadoAvaliacaoGrafo
 } from '../inference/avaliar-grafo.js';
+import { diagnosticadorLLMHttp } from '../inference/diagnostico-juiz.js';
 import { criarAnalisadorDsl, verificadorDaDsl } from '../inference/avaliar-sintaxe.js';
 
 const ENGINE = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
@@ -465,6 +466,10 @@ const ANALISADORES = {
 // Julgar texto que nem pertence a DSL so com razao experimental explicita.
 const JULGAR_SINTAXE_INVALIDA = process.env.SPC_CML_AVALIAR_JULGAR_SINTAXE_INVALIDA === 'true';
 
+// Diagnostico da indeterminacao do juiz (ver src/inference/diagnostico-juiz.ts): uma
+// chamada a mais ao motor, so quando o juiz responde UNRESOLVED. Ligado por padrao.
+const DIAGNOSTICAR_INDETERMINACAO = process.env.SPC_CML_AVALIAR_DIAGNOSTICO !== 'false';
+
 const SEM_CENARIO = 'Telemetria ausente ou incompleta neste registro — não foi possível reconstruir o cenário para consultar o grafo.';
 
 /** Reconstroi o cenario do registro pelos nomes de campo do dominio e o avalia;
@@ -536,6 +541,7 @@ async function avaliarComGrafo(
         verificadorDsl: verificadorDaDsl(verificador),
         verificador,
         juiz: juizLLMHttp(motor, TIMEOUT_MS),
+        ...(DIAGNOSTICAR_INDETERMINACAO ? { diagnosticador: diagnosticadorLLMHttp(motor, TIMEOUT_MS) } : {}),
         sinal,
         julgarSintaxeInvalida: JULGAR_SINTAXE_INVALIDA
     };
@@ -564,7 +570,7 @@ async function avaliarComGrafo(
     const naoAvaliados = [...ladosArq.values(), ...ladosBase.values()].filter(d => d.naoAvaliado).length;
 
     const todos = [...ladosArq.values(), ...ladosBase.values()];
-    const somaSegundos = (campo: 'sintaxeMs' | 'oraculoMs' | 'llmJudgeMs'): number =>
+    const somaSegundos = (campo: 'sintaxeMs' | 'oraculoMs' | 'llmJudgeMs' | 'diagnosticoMs'): number =>
         Math.round(todos.reduce((acc, d) => acc + (d.tempos?.[campo] ?? 0), 0) / 10) / 100;
 
     // Tempos de GERAÇÃO: não medidos aqui, só repassados do que o lote do
@@ -588,6 +594,8 @@ async function avaliarComGrafo(
         tempoSintaxeSegundos: somaSegundos('sintaxeMs'),
         tempoOraculoSegundos: somaSegundos('oraculoMs'),
         tempoLlmJudgeSegundos: somaSegundos('llmJudgeMs'),
+        // Separado do juiz: so os planos com UNRESOLVED somam; ausente quando nenhum foi diagnosticado.
+        ...(todos.some(d => d.tempos?.diagnosticoMs !== undefined) && { tempoDiagnosticoSegundos: somaSegundos('diagnosticoMs') }),
         tempoGeracaoTotalSegundos: somaSegundosGeracao('tempoTotalMs'),
         tempoGeracaoSequenciasSegundos: somaSegundosGeracao('tempoSequenciasMs'),
         tempoGeracaoPIsValidasSegundos: somaSegundosGeracao('tempoPIsValidasMs'),

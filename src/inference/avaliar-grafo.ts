@@ -66,6 +66,8 @@ import {
 } from './avaliar-sintaxe.js';
 import type { VerificacaoGramatical, VerificadorGramatical } from './ciclo-global.js';
 import type { OpcoesDecodificacao } from './decodificacao.js';
+import { catalogoDeFundamentacao, diagnosticarIndeterminacao, type DiagnosticadorLLM, type DiagnosticoIndeterminacao } from './diagnostico-juiz.js';
+import { postarJsonNoMotor } from './motor-http.js';
 import { recuperarConhecimento, type AdaptadorRecuperacao, type ConhecimentoRecuperado } from './recuperacao-conhecimento.js';
 
 export type Dominio = 'med' | 'agro' | 'fut';
@@ -186,6 +188,13 @@ export interface JulgamentoLLM {
     respostaBruta?: string;
     /** Em NOT_CALLED, por que não foi chamado; em NO_RESPONSE, a falha. */
     motivo?: string;
+    /**
+     * Só com `status` UNRESOLVED (e um diagnosticador nas dependências): por que o
+     * juiz não concluiu, fundamentado no conhecimento recuperado (ver
+     * diagnostico-juiz.ts). Explicação complementar — não muda `status`, o
+     * oráculo nem a classificação. Ausente nos registros anteriores a ele.
+     */
+    diagnostico?: DiagnosticoIndeterminacao;
 }
 
 export type ClassificacaoAvaliacao =
@@ -240,7 +249,10 @@ export interface TemposPlano {
     oraculoMs: number | null;
     /** Só a chamada ao LLM Judge (monta o pedido + `/validar-plano`). `null` se não foi chamado. */
     llmJudgeMs: number | null;
-    /** O trecho concorrente inteiro (semântica || juiz). Ausente quando não houve bifurcação. */
+    /** Só o diagnóstico da indeterminação (catálogo + `/diagnosticar-indeterminacao`), depois do juiz e
+     *  no mesmo ramo dele. Ausente quando não houve diagnóstico — fora de UNRESOLVED, nunca há. */
+    diagnosticoMs?: number;
+    /** O trecho concorrente inteiro (semântica || juiz [+ diagnóstico]). Ausente quando não houve bifurcação. */
     paraleloMs?: number;
     /** A avaliação completa deste plano. */
     totalMs: number;
@@ -294,6 +306,8 @@ export interface ResultadoAvaliacaoGrafo {
     tempoOraculoSegundos?: number;
     /** Soma dos tempos do LLM Judge de todos os planos, em segundos. */
     tempoLlmJudgeSegundos?: number;
+    /** Soma dos tempos do diagnóstico da indeterminação (só planos com juiz UNRESOLVED), em segundos. Ausente sem nenhum. */
+    tempoDiagnosticoSegundos?: number;
     /**
      * Soma, em segundos, dos tempos de GERAÇÃO dos cenários avaliados (os dois
      * arquivos), repassados de `RegistroAvaliarGrafo.tempoTotalMs` e das três
@@ -694,38 +708,14 @@ interface RespostaJuizHttp {
 /** O juiz real: `POST /validar-plano` no motor do domínio. `sinal` cancela o julgamento em andamento. */
 export function juizLLMHttp(motor: string, timeoutMs: number): JuizLLM {
     return async (pedido, sinal) => {
-        const timeout = AbortSignal.timeout(timeoutMs);
-        const combinado = new AbortController();
-        const abortar = (): void => combinado.abort();
-        timeout.addEventListener('abort', abortar);
-        sinal.addEventListener('abort', abortar);
-
-        let response: Response;
-        try {
-            response = await fetch(`${motor}/validar-plano`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    plano: pedido.plano,
-                    intencao: pedido.pedido,
-                    telemetria: pedido.telemetria,
-                    contexto_neo4j: pedido.conhecimento,
-                    evidencias: pedido.evidencias
-                }),
-                signal: combinado.signal
-            });
-        } catch (error) {
-            if (sinal.aborted) throw error;
-            const causa = timeout.aborted ? `sem resposta em ${timeoutMs / 1000}s` : (error as Error).message;
-            throw new Error(`motor (${motor}) inacessivel: ${causa}`);
-        } finally {
-            timeout.removeEventListener('abort', abortar);
-            sinal.removeEventListener('abort', abortar);
-        }
-        if (!response.ok) {
-            throw new Error(`motor respondeu ${response.status}: ${await response.text()}`);
-        }
-        const r = (await response.json()) as RespostaJuizHttp;
+        const corpo = {
+            plano: pedido.plano,
+            intencao: pedido.pedido,
+            telemetria: pedido.telemetria,
+            contexto_neo4j: pedido.conhecimento,
+            evidencias: pedido.evidencias
+        };
+        const r = (await postarJsonNoMotor(motor, '/validar-plano', corpo, timeoutMs, sinal)) as RespostaJuizHttp;
         return { veredito: r.veredito, justificativa: r.justificativa, evidencias: r.evidencias, respostaBruta: r.resposta_bruta };
     };
 }
@@ -760,6 +750,8 @@ export interface DependenciasAvaliacao {
     /** L(Ĝ): `/verify` com a política efetiva (`verificadorGramaticaHttp`). */
     verificador: VerificadorGramatical;
     juiz: JuizLLM;
+    /** Diagnóstico da indeterminação: chamado só quando o juiz responde UNRESOLVED. Ausente, não há diagnóstico. */
+    diagnosticador?: DiagnosticadorLLM;
     sinal: AbortSignal;
     /**
      * Julgar também o texto que não pertence à DSL — só com razão experimental
@@ -791,8 +783,13 @@ const duracaoMs = (inicio: number): number => Math.round((performance.now() - in
  *              VALID   -> recuperação da geração (recuperarConhecimento + montarEntradaGeracao*)
  *                         -> em PARALELO, sobre o mesmo AST e o mesmo conhecimento:
  *                              SEMÂNTICA (L(Ĝ), sequência, PIs, global) -> ORÁCULO
- *                              JUIZ LLM
+ *                              JUIZ LLM [-> DIAGNÓSTICO, só se UNRESOLVED]
  *                         -> comparação, só depois dos dois
+ *
+ * O diagnóstico (diagnostico-juiz.ts) explica a indeterminação do juiz com o
+ * conhecimento recuperado; fica em `julgamentoLLM.diagnostico`, com tempo
+ * próprio (`diagnosticoMs`, fora de `llmJudgeMs`). Não muda o status do juiz,
+ * o oráculo nem a classificação, e falha dele não apaga nada.
  *
  * Oráculo e juiz são independentes: nenhum lê o resultado do outro, e nenhum espera
  * o outro (o juiz continua sem ver sintaxe, AST, semântica ou oráculo — ver
@@ -913,15 +910,34 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
 
     // 3b. Juiz, independente: le o contexto e o plano, nada das camadas deterministicas.
     //     Falha do juiz vira NO_RESPONSE aqui dentro; so o cancelamento rejeita.
-    const executarJuiz = async (): Promise<{ julgamentoLLM: JulgamentoLLM; ms: number }> => {
-        const inicio = performance.now();
+    //     So com UNRESOLVED, e ainda neste ramo (sem ver a semantica), o diagnostico da
+    //     indeterminacao: tempo proprio, e nenhuma falha dele chega ao status do juiz.
+    const executarDiagnostico = async (pedidoJuiz: PedidoJuiz, julgamento: JulgamentoLLM): Promise<DiagnosticoIndeterminacao> => {
         try {
-            const r = await deps.juiz(pedidoDoJuiz(adaptador.dominio, plano, pedido, contexto.telemetria, conhecimento), deps.sinal);
-            return { julgamentoLLM: { status: r.veredito, justificativa: r.justificativa, evidencias: r.evidencias, respostaBruta: r.respostaBruta }, ms: duracaoMs(inicio) };
+            const catalogo = catalogoDeFundamentacao(adaptador.dominio, contexto.telemetria, conhecimento.constraints, conhecimento.auditoriaRecuperacao.validacao, ast);
+            const resposta = { justificativa: julgamento.justificativa ?? '', evidencias: julgamento.evidencias ?? [] };
+            return await diagnosticarIndeterminacao({ juiz: pedidoJuiz, julgamento: resposta, catalogo }, deps.diagnosticador!, deps.sinal);
+        } catch (error) {
+            if (deps.sinal.aborted) throw error;
+            return { status: 'NO_RESPONSE', motivo: `Defeito interno no diagnostico: ${(error as Error).message}`, limitacoes: [] };
+        }
+    };
+    const executarJuiz = async (): Promise<{ julgamentoLLM: JulgamentoLLM; ms: number; diagnosticoMs?: number }> => {
+        const inicio = performance.now();
+        const pedidoJuiz = pedidoDoJuiz(adaptador.dominio, plano, pedido, contexto.telemetria, conhecimento);
+        let julgamentoLLM: JulgamentoLLM;
+        try {
+            const r = await deps.juiz(pedidoJuiz, deps.sinal);
+            julgamentoLLM = { status: r.veredito, justificativa: r.justificativa, evidencias: r.evidencias, respostaBruta: r.respostaBruta };
         } catch (error) {
             if (deps.sinal.aborted) throw error;
             return { julgamentoLLM: { status: 'NO_RESPONSE', motivo: `Falha ao julgar com o modelo local: ${(error as Error).message}` }, ms: duracaoMs(inicio) };
         }
+        const ms = duracaoMs(inicio);
+        if (julgamentoLLM.status !== 'UNRESOLVED' || !deps.diagnosticador) return { julgamentoLLM, ms };
+        const inicioDiagnostico = performance.now();
+        const diagnostico = await executarDiagnostico(pedidoJuiz, julgamentoLLM);
+        return { julgamentoLLM: { ...julgamentoLLM, diagnostico }, ms, diagnosticoMs: duracaoMs(inicioDiagnostico) };
     };
 
     // 4. As duas, iniciadas antes de aguardar qualquer uma; `allSettled` para que uma falha nao apague a outra.
@@ -930,8 +946,12 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
     const paraleloMs = duracaoMs(inicioParalelo);
 
     if (juiz.status === 'rejected') throw juiz.reason; // so o cancelamento chega aqui
-    const { julgamentoLLM, ms: llmJudgeMs } = juiz.value;
-    const tempos = (oraculoMs: number | null): TemposPlano => ({ sintaxeMs, recuperacaoMs, oraculoMs, llmJudgeMs, paraleloMs, totalMs: duracaoMs(inicioTotal) });
+    const { julgamentoLLM, ms: llmJudgeMs, diagnosticoMs } = juiz.value;
+    const tempos = (oraculoMs: number | null): TemposPlano => ({
+        sintaxeMs, recuperacaoMs, oraculoMs, llmJudgeMs,
+        ...(diagnosticoMs !== undefined ? { diagnosticoMs } : {}),
+        paraleloMs, totalMs: duracaoMs(inicioTotal)
+    });
 
     if (semantica.status === 'rejected') {
         if (deps.sinal.aborted) throw semantica.reason;
@@ -1011,6 +1031,7 @@ export interface RegistroAvaliacaoJsonl extends Partial<ResultadoAvaliacaoPlano>
     tempoSintaxeSegundos?: number;
     tempoOraculoSegundos?: number;
     tempoLlmJudgeSegundos?: number;
+    tempoDiagnosticoSegundos?: number;
     /** Tempos (s) da GERAÇÃO de todos os cenários avaliados — repetidos em todos os registros do arquivo. */
     tempoGeracaoTotalSegundos?: number;
     tempoGeracaoSequenciasSegundos?: number;
@@ -1031,6 +1052,7 @@ export function registrosJsonl(dominio: Dominio, resultado: ResultadoAvaliacaoGr
                     ...(resultado.tempoSintaxeSegundos !== undefined && { tempoSintaxeSegundos: resultado.tempoSintaxeSegundos }),
                     ...(resultado.tempoOraculoSegundos !== undefined && { tempoOraculoSegundos: resultado.tempoOraculoSegundos }),
                     ...(resultado.tempoLlmJudgeSegundos !== undefined && { tempoLlmJudgeSegundos: resultado.tempoLlmJudgeSegundos }),
+                    ...(resultado.tempoDiagnosticoSegundos !== undefined && { tempoDiagnosticoSegundos: resultado.tempoDiagnosticoSegundos }),
                     ...(resultado.tempoGeracaoTotalSegundos !== undefined && { tempoGeracaoTotalSegundos: resultado.tempoGeracaoTotalSegundos }),
                     ...(resultado.tempoGeracaoSequenciasSegundos !== undefined && { tempoGeracaoSequenciasSegundos: resultado.tempoGeracaoSequenciasSegundos }),
                     ...(resultado.tempoGeracaoPIsValidasSegundos !== undefined && { tempoGeracaoPIsValidasSegundos: resultado.tempoGeracaoPIsValidasSegundos }),

@@ -66,7 +66,9 @@ import {
     type VerificadorDaDsl
 } from '../inference/avaliar-sintaxe.js';
 import type { VerificadorGramatical } from '../inference/ciclo-global.js';
+import { parseRegistrosAvaliacao } from '../inference/avaliacao-jsonl.js';
 import { decodificar, type ResultadoMultiagente } from '../inference/decodificacao.js';
+import type { DiagnosticadorLLM, PedidoDiagnostico } from '../inference/diagnostico-juiz.js';
 import { montarEntradaGeracao } from '../inference/llm-client.js';
 import { ADAPTADOR_MED, recuperarConhecimento, type ConhecimentoRecuperado } from '../inference/recuperacao-conhecimento.js';
 import { piAgentQueObedece, verificadorQueAceita } from './dubles-pi-agent.js';
@@ -230,7 +232,7 @@ async function main(): Promise<void> {
 
     interface Opcoes {
         gHat?: VerificadorGramatical; gDsl?: VerificadorDaDsl; analisador?: AnalisadorDsl; adaptador?: typeof ADAPTADOR_MED;
-        sinal?: AbortSignal; julgarSintaxeInvalida?: boolean; sessoes?: { aberturas: number };
+        sinal?: AbortSignal; julgarSintaxeInvalida?: boolean; sessoes?: { aberturas: number }; diagnosticador?: DiagnosticadorLLM;
     }
 
     /** A avaliacao de uma linha, como o servidor a faz: o cenario vem do registro. */
@@ -251,6 +253,7 @@ async function main(): Promise<void> {
                 verificadorDsl: o.gDsl ?? gDaDsl,
                 verificador: o.gHat ?? gHat(),
                 juiz,
+                diagnosticador: o.diagnosticador,
                 sinal: o.sinal ?? new AbortController().signal,
                 julgarSintaxeInvalida: o.julgarSintaxeInvalida
             }
@@ -875,6 +878,140 @@ async function main(): Promise<void> {
         const sequencial = t.oraculoMs! + t.llmJudgeMs!;
         console.log(`       sequencial (soma): ${sequencial.toFixed(1)} ms | paralelo medido: ${t.paraleloMs!.toFixed(1)} ms | ganho: ${(sequencial / t.paraleloMs!).toFixed(2)}x`);
         assert.ok(t.paraleloMs! < sequencial * 0.75, `paralelo ${t.paraleloMs} ms, sequencial ${sequencial} ms`);
+    });
+
+    // =========================================================================
+    console.log('\nDiagnostico da indeterminacao: so com juiz UNRESOLVED, sem tocar em status, oraculo nem classificacao');
+    // =========================================================================
+
+    /** Diagnosticador duble: cita a primeira regra formal do catalogo que recebeu, e guarda o pedido. */
+    const diagnosticadorQueResponde = (lidos: PedidoDiagnostico[] = [], ms = 0): DiagnosticadorLLM => async p => {
+        lidos.push(p);
+        if (ms > 0) await pausa(ms);
+        const formal = p.catalogo.regras.find(r => r.formalizacao === 'formal')!;
+        return {
+            respostaBruta: JSON.stringify({
+                evidenciasDisponiveis: [{ fonte: 'telemetria', referencia: 'PAM', descricao: 'PAM medida' }],
+                regrasAfetadas: [{ regra: formal.id, motivo: 'duble' }],
+                informacoesAusentes: [],
+                motivo: 'duble',
+                caminhosPossiveis: [{ resultado: 'VALID', condicoes: 'duble', regras: [formal.id] }],
+                incertezaRemanescente: 'duble',
+                limitacoes: []
+            })
+        };
+    };
+    /** O resultado sem os tempos e sem o diagnostico — o que o diagnostico nao pode mudar. */
+    const semDiagnostico = (d: DetalheLado): string => {
+        const { diagnostico: _, ...juiz } = d.julgamentoLLM!;
+        return JSON.stringify({ ...d, julgamentoLLM: juiz, tempos: undefined });
+    };
+
+    await teste('caso 9 — juiz VALID ou INVALID: nenhuma chamada ao diagnostico, nenhum campo nem tempo dele', async () => {
+        for (const veredito of ['VALID', 'INVALID'] as Veredito[]) {
+            const lidos: PedidoDiagnostico[] = [];
+            const d = await avaliar(registroDe(REF, planoRef), juizQueResponde(veredito), { diagnosticador: diagnosticadorQueResponde(lidos) });
+            assert.deepEqual([d.julgamentoLLM!.status, lidos.length, d.julgamentoLLM!.diagnostico, d.tempos!.diagnosticoMs], [veredito, 0, undefined, undefined], veredito);
+            assert.ok(!('diagnosticoMs' in d.tempos!), veredito);
+        }
+    });
+
+    await teste('caso 10 — juiz NOT_CALLED (sintaxe invalida, artefato vazio) ou NO_RESPONSE: nao e UNRESOLVED, e nao ha diagnostico', async () => {
+        const lidos: PedidoDiagnostico[] = [];
+        const diagnosticador = diagnosticadorQueResponde(lidos);
+        const invalida = await avaliar(registroDe(REF, 'isto nao e um plano'), juizQueResponde('UNRESOLVED'), { diagnosticador });
+        const vazia = await avaliar(registroDe(REF, '  '), juizQueResponde('UNRESOLVED'), { diagnosticador, julgarSintaxeInvalida: true });
+        const semResposta = await avaliar(registroDe(REF, planoRef), async () => { throw new Error('motor respondeu 502'); }, { diagnosticador });
+        assert.deepEqual([invalida, vazia, semResposta].map(d => [d.julgamentoLLM!.status, d.julgamentoLLM!.diagnostico]), [['NOT_CALLED', undefined], ['NOT_CALLED', undefined], ['NO_RESPONSE', undefined]]);
+        assert.equal(lidos.length, 0);
+    });
+
+    await teste('juiz UNRESOLVED: diagnostico fundamentado em julgamentoLLM.diagnostico; status, oraculo, concordancia e classificacao identicos aos de sem diagnostico', async () => {
+        const lidos: PedidoDiagnostico[] = [];
+        const juizLidos: PedidoJuiz[] = [];
+        const sem = await avaliar(registroDe(REF, planoRef), juizQueResponde('UNRESOLVED'));
+        const com = await avaliar(registroDe(REF, planoRef), juizQueResponde('UNRESOLVED', juizLidos), { diagnosticador: diagnosticadorQueResponde(lidos) });
+        assert.equal(lidos.length, 1);
+        assert.equal(com.julgamentoLLM!.status, 'UNRESOLVED', 'UNRESOLVED nunca vira VALID nem INVALID');
+        assert.deepEqual([com.oraculo, com.concordancia, com.classificacao], [{ veredito: 'VALID', origem: 'semantica' }, false, 'DISCORDANCIA_LLM']);
+        assert.equal(semDiagnostico(com), semDiagnostico(sem), 'o diagnostico so acrescenta julgamentoLLM.diagnostico');
+        const diag = com.julgamentoLLM!.diagnostico!;
+        assert.equal(diag.status, 'DIAGNOSED', JSON.stringify(diag.referenciasRejeitadas));
+        assert.deepEqual(diag.caminhosPossiveis!.map(c => [c.resultado, c.fundamentacao]), [['VALID', 'formal']]);
+        // O diagnostico leu o MESMO contexto do juiz, a resposta dele e o catalogo — e nada do oraculo.
+        assert.deepEqual(lidos[0].juiz, juizLidos[0]);
+        assert.deepEqual(lidos[0].julgamento, { justificativa: 'duble respondeu UNRESOLVED', evidencias: ['evidencia do duble'] });
+        assert.ok(lidos[0].catalogo.regras.some(r => r.item === 'Propofol' && r.formalizacao === 'formal' && r.campos.includes('PAM')), JSON.stringify(lidos[0].catalogo.regras.map(r => r.id)));
+        for (const proibido of ['oraculo', 'validacaoSemantica', 'VALIDO_PELO', 'PlanCommand', 'telemetria_global_incompativel']) {
+            assert.ok(!JSON.stringify(lidos[0]).includes(proibido), `o diagnostico recebeu "${proibido}"`);
+        }
+    });
+
+    await teste('tempos: o diagnostico tem tempo proprio; llmJudgeMs continua so o juiz', async () => {
+        const d = await avaliar(registroDe(REF, planoRef), juizLento(40, 'UNRESOLVED'), { diagnosticador: diagnosticadorQueResponde([], 80) });
+        const t = d.tempos!;
+        assert.ok(t.llmJudgeMs! >= 35 && t.llmJudgeMs! < 75, `juiz ${t.llmJudgeMs} ms (o diagnostico nao entra)`);
+        assert.ok(t.diagnosticoMs! >= 75, `diagnostico ${t.diagnosticoMs} ms`);
+        assert.ok(t.paraleloMs! >= t.llmJudgeMs! + t.diagnosticoMs! - 1, 'o diagnostico corre no ramo do juiz, depois dele');
+    });
+
+    await teste('caso 11 — falha, resposta malformada ou defeito do diagnostico: o juiz continua UNRESOLVED, o oraculo e a classificacao nao mudam', async () => {
+        const referencia = await avaliar(registroDe(REF, planoRef), juizQueResponde('UNRESOLVED'));
+        const falhas: [string, DiagnosticadorLLM, string, RegExp][] = [
+            ['motor fora', async () => { throw new Error('motor respondeu 502: diagnostico'); }, 'NO_RESPONSE', /Falha ao diagnosticar.*502/],
+            ['malformada', async () => ({ respostaBruta: 'nao sei' }), 'MALFORMED', /nao e JSON/],
+            ['defeito', async p => { (p.catalogo as unknown as { regras: unknown }).regras = null; return { respostaBruta: '{}' }; }, 'NO_RESPONSE', /Defeito interno no diagnostico/]
+        ];
+        for (const [nome, diagnosticador, status, motivo] of falhas) {
+            const d = await avaliar(registroDe(REF, planoRef), juizQueResponde('UNRESOLVED'), { diagnosticador });
+            assert.equal(semDiagnostico(d), semDiagnostico(referencia), nome);
+            assert.deepEqual([d.naoAvaliado, d.julgamentoLLM!.status, d.julgamentoLLM!.justificativa], [false, 'UNRESOLVED', 'duble respondeu UNRESOLVED'], nome);
+            assert.equal(d.julgamentoLLM!.diagnostico!.status, status, nome);
+            assert.match(d.julgamentoLLM!.diagnostico!.motivo!, motivo, nome);
+            assert.equal(typeof d.tempos!.diagnosticoMs, 'number', nome);
+        }
+    });
+
+    await teste('caso 14 — cancelamento durante o diagnostico propaga; e o diagnostico corre sem esperar nem ler a semantica', async () => {
+        const controlador = new AbortController();
+        const cancela: DiagnosticadorLLM = async () => { controlador.abort(); throw new Error('abortado no diagnostico'); };
+        await assert.rejects(avaliar(registroDe(REF, planoRef), juizQueResponde('UNRESOLVED'), { diagnosticador: cancela, sinal: controlador.signal }), /abortado no diagnostico/);
+
+        let semanticaTerminou = false;
+        let diagnosticoAntes = false;
+        const verificador: VerificadorGramatical = async () => { await pausa(150); semanticaTerminou = true; return { valido: true, erro: null }; };
+        const diagnosticador: DiagnosticadorLLM = async p => { diagnosticoAntes = !semanticaTerminou; return diagnosticadorQueResponde()(p, new AbortController().signal); };
+        const d = await avaliar(registroDe(REF, planoRef), juizQueResponde('UNRESOLVED'), { gHat: verificador, diagnosticador });
+        assert.equal(diagnosticoAntes, true, 'o diagnostico nao espera o oraculo');
+        assert.deepEqual([d.oraculo!.veredito, d.julgamentoLLM!.diagnostico!.status], ['VALID', 'DIAGNOSED']);
+    });
+
+    await teste('a falha da semantica nao apaga o diagnostico (ja feito no ramo do juiz)', async () => {
+        const d = await avaliar(registroDe(REF, planoRef), juizQueResponde('UNRESOLVED'), { gHat: async () => { await pausa(10); throw new Error('motor caiu'); }, diagnosticador: diagnosticadorQueResponde() });
+        assert.deepEqual([d.naoAvaliado, d.oraculo, d.julgamentoLLM!.status, d.julgamentoLLM!.diagnostico!.status], [true, undefined, 'UNRESOLVED', 'DIAGNOSED']);
+    });
+
+    await teste('caso 12 — JSONL: o diagnostico e o tempo dele sao gravados e relidos junto do juiz; o total do diagnostico e separado', async () => {
+        const arq = await avaliar(registroDe(REF, planoRef), juizQueResponde('UNRESOLVED'), { diagnosticador: diagnosticadorQueResponde() });
+        const base = await avaliar(registroDe(REAL_1, PLANO_REAL_1), juizQueResponde('VALID'), { diagnosticador: diagnosticadorQueResponde() });
+        const linhasJsonl = registrosJsonl('med', {
+            naoAvaliados: 0, linhas: [montarLinha(1, REF.intencao!, arq, base)], tempoLlmJudgeSegundos: 1.2, tempoDiagnosticoSegundos: 0.4
+        }).map(r => JSON.stringify(r));
+        const [a, b] = parseRegistrosAvaliacao(linhasJsonl.join('\n') + '\n');
+        assert.deepEqual([a.julgamentoLLM!.status, a.julgamentoLLM!.diagnostico!.status, a.classificacao], ['UNRESOLVED', 'DIAGNOSED', 'DISCORDANCIA_LLM']);
+        assert.deepEqual(a.julgamentoLLM!.diagnostico, JSON.parse(JSON.stringify(arq.julgamentoLLM!.diagnostico)), 'relido sem perda');
+        assert.deepEqual([typeof a.tempos!.diagnosticoMs, typeof a.tempos!.llmJudgeMs], ['number', 'number']);
+        assert.deepEqual([a.tempoDiagnosticoSegundos, a.tempoLlmJudgeSegundos, b.tempoDiagnosticoSegundos], [0.4, 1.2, 0.4]);
+        assert.deepEqual([b.julgamentoLLM!.status, b.julgamentoLLM!.diagnostico, b.tempos!.diagnosticoMs], ['VALID', undefined, undefined]);
+    });
+
+    await teste('caso 13 — registro antigo, sem diagnostico: lido como estava, e as metricas contam o juiz UNRESOLVED do mesmo jeito', async () => {
+        const antigo = '{"dominio":"med","lado":"arquitetura","linha":1,"intencao":"x","plano":"p","naoAvaliado":false,"validacaoSintatica":{"veredito":"VALID"},"validacaoSemantica":{"veredito":"VALID"},"oraculo":{"veredito":"VALID","origem":"semantica"},"julgamentoLLM":{"status":"UNRESOLVED","justificativa":"falta dado"},"concordancia":false,"classificacao":"DISCORDANCIA_LLM","tempos":{"sintaxeMs":1,"oraculoMs":2,"llmJudgeMs":3,"totalMs":6},"tempoLlmJudgeSegundos":0.1}';
+        const [r] = parseRegistrosAvaliacao(antigo);
+        assert.deepEqual([r.julgamentoLLM!.status, r.julgamentoLLM!.diagnostico, r.tempos!.diagnosticoMs, r.tempoDiagnosticoSegundos], ['UNRESOLVED', undefined, undefined, undefined]);
+        const comDiagnostico = await avaliar(registroDe(REF, planoRef), juizQueResponde('UNRESOLVED'), { diagnosticador: diagnosticadorQueResponde() });
+        const semDiagnosticoLado = await avaliar(registroDe(REF, planoRef), juizQueResponde('UNRESOLVED'));
+        assert.deepEqual(agregarMetricas([comDiagnostico]), agregarMetricas([semDiagnosticoLado]), 'o diagnostico nao entra nas metricas do juiz nem do oraculo');
     });
 
     // =========================================================================

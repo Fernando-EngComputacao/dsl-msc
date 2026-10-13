@@ -20,7 +20,11 @@ const itens = computed(() => [
     { rotulo: 'Total', dica: 'Duração da avaliação inteira (oráculo e juiz rodam em paralelo)', valor: props.resposta.tempoTotalSegundos },
     { rotulo: 'Sintaxe', dica: 'Soma da validação sintática de todos os planos', valor: props.resposta.tempoSintaxeSegundos },
     { rotulo: 'Oráculo', dica: 'Soma da validação semântica de todos os planos', valor: props.resposta.tempoOraculoSegundos },
-    { rotulo: 'LLM Judge', dica: 'Soma das chamadas ao LLM Judge de todos os planos', valor: props.resposta.tempoLlmJudgeSegundos }
+    { rotulo: 'LLM Judge', dica: 'Soma das chamadas ao LLM Judge de todos os planos', valor: props.resposta.tempoLlmJudgeSegundos },
+    // Só existe quando algum plano teve o juiz UNRESOLVED diagnosticado; avaliações antigas não têm.
+    ...(typeof props.resposta.tempoDiagnosticoSegundos === 'number'
+        ? [{ rotulo: 'Diagnóstico', dica: 'Soma dos diagnósticos de indeterminação do LLM Judge (fora do tempo do juiz)', valor: props.resposta.tempoDiagnosticoSegundos }]
+        : [])
 ]);
 
 const algumTempo = computed(() => itens.value.some(i => typeof i.valor === 'number'));
@@ -59,7 +63,7 @@ const semTempos = computed(() =>
         </div>
     <section class="max-w-5xl rounded-2xl border border-neutral-200 p-4 dark:border-white/10">
         <p class="mb-3 text-sm font-medium text-neutral-800 dark:text-neutral-100">Tempo da avaliação</p>
-        <div v-if="algumTempo" class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div v-if="algumTempo" class="grid grid-cols-2 gap-3" :class="itens.length > 4 ? 'sm:grid-cols-5' : 'sm:grid-cols-4'">
             <div v-for="item in itens" :key="item.rotulo" :title="item.dica">
                 <p class="text-[11px] tracking-wide text-neutral-400 uppercase dark:text-neutral-500">{{ item.rotulo }}</p>
                 <p class="text-sm font-medium text-neutral-800 dark:text-neutral-100">

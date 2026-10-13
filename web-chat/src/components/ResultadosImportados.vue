@@ -62,8 +62,8 @@ function detalhe(r: RegistroAvaliacaoImportado): DetalheLado {
 
 /** O total gravado no arquivo; sem ele (JSONL com `tempos` por plano), a soma dos tempos dos planos. */
 function totalDoArquivo(
-    campo: 'tempoSintaxeSegundos' | 'tempoOraculoSegundos' | 'tempoLlmJudgeSegundos',
-    porPlano: 'sintaxeMs' | 'oraculoMs' | 'llmJudgeMs'
+    campo: 'tempoSintaxeSegundos' | 'tempoOraculoSegundos' | 'tempoLlmJudgeSegundos' | 'tempoDiagnosticoSegundos',
+    porPlano: 'sintaxeMs' | 'oraculoMs' | 'llmJudgeMs' | 'diagnosticoMs'
 ): number | undefined {
     const gravado = props.registros.find(r => typeof r[campo] === 'number')?.[campo];
     if (typeof gravado === 'number') return gravado;
@@ -107,6 +107,8 @@ const resposta = computed<RespostaAvaliacao>(() => {
         tempoSintaxeSegundos: totalDoArquivo('tempoSintaxeSegundos', 'sintaxeMs'),
         tempoOraculoSegundos: totalDoArquivo('tempoOraculoSegundos', 'oraculoMs'),
         tempoLlmJudgeSegundos: totalDoArquivo('tempoLlmJudgeSegundos', 'llmJudgeMs'),
+        // Ausente em arquivos de antes do diagnóstico (nem total, nem `diagnosticoMs` por plano).
+        tempoDiagnosticoSegundos: totalDoArquivo('tempoDiagnosticoSegundos', 'diagnosticoMs'),
         // Tempos de GERAÇÃO: diferente dos de cima, não há sub-objeto por plano
         // para recalcular — são repetidos em todo registro quando o servidor os
         // agregou (registrosJsonl). Sem o campo, fica ausente: nada é inventado.

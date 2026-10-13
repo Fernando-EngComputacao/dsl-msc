@@ -42,6 +42,7 @@ from julgamento import (  # noqa: E402
     ler_julgamento,
     montar_prompt_julgamento,
 )
+from diagnostico import gramatica_do_diagnostico, montar_prompt_diagnostico  # noqa: E402
 from prompt_builder import carregar_exemplos, montar_prompt  # noqa: E402
 
 # O dominio e escolhido na subida do servico. A gramatica e os exemplares mudam;
@@ -355,6 +356,48 @@ def _validar_plano(plano: str, pedido: str, telemetria: str, conhecimento: str, 
     return ler_julgamento(saida["choices"][0]["text"])
 
 
+# Diagnostico da indeterminacao do juiz (so depois de um UNRESOLVED): prompt e
+# gramatica em diagnostico.py. A gramatica e montada por pedido, com os
+# identificadores do catalogo que o lado TypeScript enviou — nenhuma referencia
+# fora dele e exprimivel. Os tetos de diagnostico.py cabem neste orcamento.
+DIAGNOSTICO_MAX_TOKENS = int(os.environ.get("SPC_CML_DIAGNOSTICO_MAX_TOKENS", "1800"))
+
+
+def _diagnosticar(req: "DiagnosticarRequest") -> dict:
+    """Decodifica o diagnostico sob a gramatica do catalogo e devolve a saida SEM
+    interpreta-la (a leitura e a conferencia sao do lado TypeScript, que tem o
+    catalogo). `cortada` diz se a saida parou no teto de tokens."""
+    from llama_cpp import LlamaGrammar
+
+    llm = get_llama()
+    prompt = montar_prompt_diagnostico(
+        req.plano, req.intencao, req.telemetria, req.contexto_neo4j, req.evidencias,
+        req.justificativa_juiz, req.evidencias_juiz, req.catalogo,
+    )
+    gramatica = gramatica_do_diagnostico(
+        req.regras, req.regras_formais, req.regras_nao_formais, req.campos_com_valor, req.campos_sem_valor
+    )
+    # A mesma guarda de _gerar: estourar n_ctx aborta o processo, nao levanta excecao.
+    n_prompt = len(llm.tokenize(prompt.encode("utf-8")))
+    if n_prompt + DIAGNOSTICO_MAX_TOKENS > N_CTX:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Prompt do diagnostico de {n_prompt} tokens mais {DIAGNOSTICO_MAX_TOKENS} de saida "
+                f"excede n_ctx={N_CTX}."
+            ),
+        )
+    with _LLAMA_LOCK:
+        saida = llm(
+            prompt,
+            grammar=LlamaGrammar.from_string(gramatica, verbose=False),
+            max_tokens=DIAGNOSTICO_MAX_TOKENS,
+            temperature=0.1,
+        )
+    escolha = saida["choices"][0]
+    return {"resposta_bruta": escolha["text"], "cortada": escolha.get("finish_reason") == "length"}
+
+
 class ValidarRequest(BaseModel):
     comando_humano: str = Field(..., description="Texto digitado pelo usuario, a validar antes de entrar no fluxo")
 
@@ -368,6 +411,21 @@ class ValidarPlanoRequest(BaseModel):
     intencao: str = Field("", description="PEDIDO: fala original do profissional/operador")
     telemetria: str = Field("", description="TELEMETRIA do cenario, uma medida por linha")
     evidencias: str = Field("", description="EVIDENCIAS da recuperacao: regras avaliadas e condicoes observadas")
+
+
+class DiagnosticarRequest(ValidarPlanoRequest):
+    """O contexto do juiz, a resposta UNRESOLVED dele e o catalogo de fundamentacao
+    (ver src/inference/diagnostico-juiz.ts) — texto para o prompt e os
+    identificadores que a gramatica deixa citar."""
+
+    justificativa_juiz: str = Field("", description="Justificativa do juiz que respondeu UNRESOLVED")
+    evidencias_juiz: list[str] = Field(default_factory=list, description="Evidencias citadas pelo juiz")
+    catalogo: str = Field("", description="O catalogo de fundamentacao como texto: regras, campos, regras citadas pelo plano")
+    regras: list[str] = Field(default_factory=list, description="Identificadores de todas as regras do catalogo")
+    regras_formais: list[str] = Field(default_factory=list, description="Regras com condicao estruturada sobre a telemetria")
+    regras_nao_formais: list[str] = Field(default_factory=list, description="Regras so em texto ou so em parte estruturadas")
+    campos_com_valor: list[str] = Field(default_factory=list, description="Campos da telemetria medidos no cenario")
+    campos_sem_valor: list[str] = Field(default_factory=list, description="Campos lidos por regra formal que o cenario nao mediu")
 
 
 class EmbedRequest(BaseModel):
@@ -536,6 +594,18 @@ def validar_plano(req: ValidarPlanoRequest):
         return _validar_plano(req.plano, req.intencao, req.telemetria, req.contexto_neo4j, req.evidencias)
     except JulgamentoIlegivel as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/diagnosticar-indeterminacao")
+def diagnosticar_indeterminacao(req: DiagnosticarRequest):
+    """
+    So depois de um UNRESOLVED do juiz (ver /validar-plano): explica por que ele
+    nao concluiu, o que falta e sob que condicoes o plano sustentaria cada
+    resultado, citando so o catalogo enviado. Nao e veredito e nao muda o do
+    juiz. Devolve a saida bruta (`resposta_bruta`, `cortada`); quem le e confere
+    e o lado TypeScript.
+    """
+    return _diagnosticar(req)
 
 
 @app.post("/embed")

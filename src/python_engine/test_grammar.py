@@ -59,6 +59,55 @@ PLANOS_INVALIDOS = {
 }
 
 
+def _nao_terminais_indefinidos(gbnf: str) -> set[str]:
+    """Nomes usados no corpo de alguma regra GBNF e nunca definidos (fora de literais e classes)."""
+    import re
+
+    definidos: set[str] = set()
+    usados: set[str] = set()
+    for linha in gbnf.splitlines():
+        if "::=" not in linha:
+            continue
+        nome, corpo = linha.split("::=", 1)
+        definidos.add(nome.strip())
+        sem_literais = re.sub(r'"(?:\\.|[^"\\])*"', " ", corpo)
+        sem_classes = re.sub(r"\[(?:\\.|[^\]\\])*\]", " ", sem_literais)
+        sem_repeticoes = re.sub(r"\{[0-9,]*\}", " ", sem_classes)
+        usados.update(re.findall(r"[a-z][a-z0-9-]*", sem_repeticoes))
+    return usados - definidos
+
+
+_VOCAB_LLAMA: list = []
+
+
+def _compila_no_llama_cpp(gbnf: str) -> bool | None:
+    """
+    True/False pelo parser NATIVO do llama.cpp; None sem o modelo GGUF em cache.
+    `LlamaGrammar.from_string` nao valida nada no llama-cpp-python 0.3.x (so
+    guarda a string), entao o teste de compilacao precisa do vocabulario do
+    modelo: carregado com vocab_only, sem pesos e sem GPU.
+    """
+    try:
+        import llama_cpp
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError:
+        return None
+    if not _VOCAB_LLAMA:
+        caminho = try_to_load_from_cache(
+            os.environ.get("SPC_CML_GGUF_REPO", "bartowski/Qwen2.5-7B-Instruct-GGUF"),
+            os.environ.get("SPC_CML_GGUF_FILE", "Qwen2.5-7B-Instruct-Q4_K_M.gguf"),
+        )
+        if not isinstance(caminho, str):
+            return None
+        llm = llama_cpp.Llama(model_path=caminho, vocab_only=True, verbose=False)
+        _VOCAB_LLAMA.extend([llm, llama_cpp.llama_model_get_vocab(llm._model.model)])
+    amostrador = llama_cpp.llama_sampler_init_grammar(_VOCAB_LLAMA[1], gbnf.encode("utf-8"), b"root")
+    if not amostrador:
+        return False
+    llama_cpp.llama_sampler_free(amostrador)
+    return True
+
+
 def main() -> int:
     falhas = 0
 
@@ -520,6 +569,61 @@ def main() -> int:
         if not ok:
             falhas += 1
         print(f"      {'ok' if ok else 'FALHA'}: {descricao}")
+
+    # --- 13. Diagnostico da indeterminacao do juiz: referencias fechadas no catalogo
+    from diagnostico import gramatica_do_diagnostico, montar_prompt_diagnostico
+
+    catalogo = dict(
+        regras=["Farmaco:Propofol/RegraSeguranca/PAM<60", "veto:Impedimento@Posicao_Legal_No_Passe", "regra_global#1"],
+        regras_formais=["Farmaco:Propofol/RegraSeguranca/PAM<60", "veto:Impedimento@Posicao_Legal_No_Passe"],
+        regras_nao_formais=["regra_global#1"],
+        campos_com_valor=["PAM", "FC"],
+        campos_sem_valor=["TFG"],
+    )
+    g_cheio = gramatica_do_diagnostico(**catalogo)
+    g_vazio = gramatica_do_diagnostico([], [], [], [], [])
+    g_sem_lacuna = gramatica_do_diagnostico(**{**catalogo, "campos_sem_valor": []})
+    g_escape = gramatica_do_diagnostico(['regra "x" \\ y'], [], ['regra "x" \\ y'], ["PAM"], [])
+    prompt_diag = montar_prompt_diagnostico(
+        "plano X { }", "sobe a nora", "- PAM = 52", "[CENARIO]\n- paciente: P", "- regra R",
+        "falta a TFG", ["PAM = 52"], "[REGRAS — os unicos identificadores que podem ser citados]\n- regra_global#1 [texto]",
+    )
+    casos_diag = [
+        ("o prompt traz o contexto do juiz, a resposta UNRESOLVED e o catalogo",
+         all(s in prompt_diag for s in (
+             "[PEDIDO]", "[TELEMETRIA]", "[CONHECIMENTO RECUPERADO]", "[EVIDENCIAS]", "[PLANO]",
+             "[JULGAMENTO ORIGINAL: UNRESOLVED]", "justificativa: falta a TFG", "[CATALOGO DE FUNDAMENTACAO]", "regra_global#1"))),
+        ("o prompt proibe inventar campo, regra, limite e telemetria, e trata caminhos como condicionais",
+         all(s in prompt_diag for s in (
+             "Nao invente campos", "Nao preencha telemetria ausente", "nao vira regra deterministica",
+             "CONDICIONAIS, nao vereditos", "Nao presuma que o caso alcanca os dois resultados"))),
+        ("cada referencia do catalogo e um literal da gramatica, e so elas",
+         all(f'"\\"{r}\\""' in g_cheio for r in catalogo["regras"] + catalogo["campos_com_valor"] + catalogo["campos_sem_valor"])
+         and "Disputa_Bola_Dividida/gatilho" not in g_cheio),
+        ("catalogo vazio: nenhuma regra afetada nem informacao ausente exprimivel; caminhos sem regra",
+         '",\\"regrasAfetadas\\":" "[]"' in g_vazio and '",\\"informacoesAusentes\\":" "[]"' in g_vazio
+         and '",\\"regras\\":" "[]"' in g_vazio and "regra ::=" not in g_vazio),
+        ("sem campo sem valor no catalogo, campo_sem_valor nao e exprimivel",
+         "campo_sem_valor" in g_cheio and "campo_sem_valor" not in g_sem_lacuna),
+        ("campo_sem_valor so com regra formal; regra_nao_formalizada so com regra em texto",
+         'campo_sem_valor\\",\\"referencia\\":" campo-sem-valor ",\\"regra\\":" regra-formal' in g_cheio
+         and 'regra_nao_formalizada\\",\\"referencia\\":" regra-nao-formal' in g_cheio),
+        ("identificador com aspas e barra vira string JSON escapada no literal", '"\\"regra \\\\\\"x\\\\\\" \\\\\\\\ y\\""' in g_escape),
+        ("nenhum nao-terminal indefinido (cheio, vazio, sem lacuna, escape)",
+         all(not _nao_terminais_indefinidos(g) for g in (g_cheio, g_vazio, g_sem_lacuna, g_escape))),
+    ]
+    nativo = [_compila_no_llama_cpp(g) for g in ("root ::= indefinida", JULGAMENTO_GBNF, g_cheio, g_vazio, g_sem_lacuna, g_escape)]
+    if nativo[0] is not None:
+        casos_diag.append(("parser nativo do llama.cpp: recusa a gramatica de controle e compila a do juiz e as do diagnostico",
+                           nativo[0] is False and all(nativo[1:])))
+
+    print("[13] Diagnostico da indeterminacao (referencias fechadas no catalogo):")
+    for descricao, ok in casos_diag:
+        if not ok:
+            falhas += 1
+        print(f"      {'ok' if ok else 'FALHA'}: {descricao}")
+    if nativo[0] is None:
+        print("      (pulado: parser nativo do llama.cpp — sem o modelo GGUF em cache para carregar o vocabulario)")
 
     print("\nRESULTADO:", "OK" if falhas == 0 else f"{falhas} falha(s)")
     return 0 if falhas == 0 else 1

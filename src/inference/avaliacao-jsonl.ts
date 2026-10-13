@@ -10,11 +10,13 @@ export interface RegistroAvaliacaoImportado {
     ast?: { $type?: string; name?: string; [campo: string]: unknown };
     validacaoSemantica?: { veredito?: string; [campo: string]: unknown };
     oraculo?: { veredito?: string; origem?: string; [campo: string]: unknown };
-    julgamentoLLM?: { status?: string; [campo: string]: unknown };
+    /** `diagnostico` só existe com status UNRESOLVED, e só em avaliações feitas depois dele (ver diagnostico-juiz.ts). */
+    julgamentoLLM?: { status?: string; diagnostico?: { status?: string; [campo: string]: unknown }; [campo: string]: unknown };
     tempoTotalSegundos?: number;
     tempoSintaxeSegundos?: number;
     tempoOraculoSegundos?: number;
     tempoLlmJudgeSegundos?: number;
+    tempoDiagnosticoSegundos?: number;
     /** Tempos de GERAÇÃO dos cenários avaliados (ver tempos-lote.ts, web-chat), repassados e agregados pela avaliação. */
     tempoGeracaoTotalSegundos?: number;
     tempoGeracaoSequenciasSegundos?: number;
@@ -22,7 +24,7 @@ export interface RegistroAvaliacaoImportado {
     tempoGeracaoValidacaoPlanosSegundos?: number;
     concordancia?: boolean;
     classificacao?: string;
-    tempos?: { sintaxeMs?: number; recuperacaoMs?: number; oraculoMs?: number | null; llmJudgeMs?: number | null; paraleloMs?: number; totalMs?: number };
+    tempos?: { sintaxeMs?: number; recuperacaoMs?: number; oraculoMs?: number | null; llmJudgeMs?: number | null; diagnosticoMs?: number; paraleloMs?: number; totalMs?: number };
     [campo: string]: unknown;
 }
 

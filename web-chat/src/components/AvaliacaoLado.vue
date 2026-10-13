@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import type { DetalheLado } from '../api';
 import { ROTULO, posicao, tomDoLado, rotuloVeredicto } from '../avaliacao';
 import { planoParaJson } from '../plano-json';
+import DiagnosticoJuiz from './DiagnosticoJuiz.vue';
 
 /** Um lado (arquitetura ou baseline) de uma linha avaliada. O resultado
  *  normativo é o do ORÁCULO (sintaxe + semântica determinística); o LLM Judge
@@ -238,6 +239,8 @@ const GRUPO = 'mb-1 text-[10px] font-semibold tracking-wide text-neutral-400 upp
                         <pre class="mt-1 max-h-40 overflow-auto rounded bg-neutral-50 p-2 font-mono text-[10px] whitespace-pre-wrap text-neutral-600 dark:bg-black/20 dark:text-neutral-400">{{ lado.julgamentoLLM.respostaBruta }}</pre>
                     </details>
                 </section>
+                <!-- Só com o juiz UNRESOLVED e diagnóstico gravado; ausente em avaliações antigas. -->
+                <DiagnosticoJuiz :julgamento="lado.julgamentoLLM" :diagnostico-ms="lado.tempos?.diagnosticoMs" />
 
                 <details v-if="lado.contextoGrafo" class="mt-2">
                     <summary class="cursor-pointer text-[11px] text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300">Contexto recuperado do grafo (o mesmo para a semântica e para o juiz)</summary>

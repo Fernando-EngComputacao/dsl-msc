@@ -1,0 +1,14 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "lib": ["ES2023", "DOM"],
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "types": ["node", "vite/client"],
+        "strict": true,
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "noEmit": true
+    },
+    "include": ["*.ts"]
+}

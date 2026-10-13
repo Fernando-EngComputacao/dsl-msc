@@ -41,6 +41,8 @@ A tese operacional do projeto é que o segundo pode ser reduzido ao primeiro: **
 20. [Limitações e divergências conhecidas](#20-limitações-e-divergências-conhecidas)
 21. [Referências](#21-referências)
 
+**Documentação dedicada:** [**Oráculo do SPC-CML — funcionamento e validação formal**](docs/oraculo.md) · [relatório de auditoria do Oráculo](docs/auditoria-oraculo.md)
+
 ---
 
 ## 1. Fluxo de execução real
@@ -643,6 +645,8 @@ flowchart LR
 
 ### Avaliação dos planos já gerados (`/api/avaliar`): sintaxe → AST → (semântica → oráculo ‖ LLM Judge) → comparação
 
+> **[Oráculo do SPC-CML — funcionamento e validação formal](docs/oraculo.md)**: explicação passo a passo do Oráculo, do que o torna determinístico e dos seus limites, com um estudo de caso na DSL de futebol. A inspeção do código, com evidências e lacunas, está no [relatório de auditoria](docs/auditoria-oraculo.md).
+
 A tela "Avaliar resultados" passa cada plano do lote por uma **cascata**, e cada camada responde uma pergunta diferente ([avaliar-sintaxe.ts](src/inference/avaliar-sintaxe.ts), [avaliar-grafo.ts](src/inference/avaliar-grafo.ts)):
 
 | camada | pergunta | como |
@@ -672,6 +676,8 @@ Planos sintaticamente inválidos (e o artefato vazio) não são enviados ao Judg
 **Dependências.** `dependeDe` não está na DSL do artefato: vem da sequência do Planner (`execucaoMultiagente.sequenciaValidada`), que o lote do web-chat passou a gravar. Sem ela, as dependências não são conferidas e os PIs são julgados sem as relações que o Planner declarou — o que muda veredito: a justificativa de um PI que cita o item de que ele depende é `justificativa_referencia_inexistente` sem a sequência, e aceita com ela. Sequência que não corresponde às cláusulas do AST não é usada (aviso `sequencia_nao_corresponde`).
 
 **Estruturado × texto.** A semântica só confere o que tem forma. `regra_global` e o mecanismo/conduta das regras relacionais são texto: aparecem em `naoFormalizado` (e no aviso `regras_globais_textuais`), vão ao juiz como evidência e nunca reprovam nem deixam indeterminado.
+
+**Diagnóstico da indeterminação do juiz.** Só quando o juiz responde `UNRESOLVED`, uma segunda chamada ao motor (`/diagnosticar-indeterminacao`, [diagnostico.py](src/python_engine/diagnostico.py) + [diagnostico-juiz.ts](src/inference/diagnostico-juiz.ts)) explica por que ele não concluiu: regras afetadas, evidências disponíveis, informações ausentes (`campo_sem_valor`, `evidencia_insuficiente`, `fato_nao_observado`, `regra_nao_formalizada`), caminhos condicionais para `VALID`/`INVALID`/`UNRESOLVED`, incerteza remanescente e limitações. Fica em `julgamentoLLM.diagnostico`, com tempo próprio (`tempos.diagnosticoMs`, fora de `llmJudgeMs`; total `tempoDiagnosticoSegundos`). **Não é veredito:** não muda o `status` do juiz, o oráculo nem a classificação, e não lê sintaxe, semântica nem oráculo — o mesmo contexto do juiz, a resposta dele e um **catálogo de fundamentação** determinístico, montado da mesma recuperação: as regras do Cypher (formais, com as lacunas), os fatos da vista do cenário (formais quando sustentados por condição observada; parciais; ou só texto, como isenções), as relações (parciais) e as `regra_global` (texto), mais os campos da telemetria e os que uma regra formal lê sem medida. A GBNF do diagnóstico só deixa citar identificadores desse catálogo; o lado TypeScript confere de novo e **rejeita** (em `referenciasRejeitadas`, com o motivo) regra, campo ou trecho que o catálogo não sustenta — nada é corrigido nem completado. Caminho `VALID`/`INVALID` sem regra do catálogo não é apresentado. As limitações do próprio conhecimento são determinísticas (ex.: o plano cita `'Disputa_Bola_Dividida/gatilho'`, que não existe no conhecimento recuperado). `status` do diagnóstico: `DIAGNOSED` \| `INSUFFICIENT_GROUNDING` (nada se apoiou no catálogo, ou catálogo sem regra — aí o modelo nem é chamado) \| `MALFORMED` \| `NO_RESPONSE` (falha técnica; o juiz fica intacto). Desligável com `SPC_CML_AVALIAR_DIAGNOSTICO=false`; teto de saída `SPC_CML_DIAGNOSTICO_MAX_TOKENS` (padrão 1800). Registros antigos simplesmente não têm o campo.
 
 Cada avaliação grava `data/avaliacoes/<data>-<dominio>.jsonl` (baixável pela tela, `GET /api/avaliacoes/:arquivo`): um registro por plano, com `validacaoSintatica`, `ast`, `validacaoSemantica` (por etapa), `oraculo`, `julgamentoLLM` (com a resposta bruta), `concordancia` e `classificacao` separados. As métricas contam sintaxe, semântica, oráculo e juiz separadamente, as concordâncias e cada par `oráculo+juiz`. Se o Prompt Semântico reconstruído diferir do gravado na geração, a semântica avisa `contexto_divergente`.
 
@@ -970,6 +976,7 @@ Valor desconhecido em qualquer das duas cai no padrão em vez de derrubar o serv
 | POST | `/verify` | plano ∈ L(Ĝ)? — no `multiagente`, a checagem de sintaxe do artefato composto |
 | POST | `/validar-comando` | filtro prévio (LLM sob gramática fixa) |
 | POST | `/validar-plano` | LLM Judge de plano já gerado (avaliação em lote): `VALID` \| `INVALID` \| `UNRESOLVED`, independente do oráculo (§10) |
+| POST | `/diagnosticar-indeterminacao` | Só depois de um `UNRESOLVED` do juiz: diagnóstico sob GBNF que só cita o catálogo de fundamentação enviado; devolve a saída bruta (`resposta_bruta`, `cortada`) para o lado TypeScript ler e conferir (§10) |
 | POST | `/embed` | vetor bge-m3 |
 | POST | `/generate-constrained` | artefato inteiro + reparse |
 | POST | `/generate-fragment` | um não-terminal, sobre um prefixo |

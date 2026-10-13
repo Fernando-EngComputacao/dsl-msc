@@ -125,6 +125,39 @@ export interface JulgamentoLLM {
     respostaBruta?: string;
     /** Em NOT_CALLED, por que não foi chamado; em NO_RESPONSE, a falha. */
     motivo?: string;
+    /** Só com status UNRESOLVED, e só em avaliações feitas depois do diagnóstico. Não muda status, oráculo nem classificação. */
+    diagnostico?: DiagnosticoIndeterminacao;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnóstico da indeterminação do juiz — espelho de src/inference/diagnostico-juiz.ts.
+// ---------------------------------------------------------------------------
+
+/** formal: condição estruturada sobre a telemetria; parcial: ligação estruturada sem medida que a decida; texto: só descrição. */
+export type FormalizacaoRegra = 'formal' | 'parcial' | 'texto';
+
+/** DIAGNOSED: fundamentado no catálogo; INSUFFICIENT_GROUNDING: nada se apoiou nele; MALFORMED: fora do formato; NO_RESPONSE: falha técnica. */
+export type StatusDiagnostico = 'DIAGNOSED' | 'INSUFFICIENT_GROUNDING' | 'MALFORMED' | 'NO_RESPONSE';
+
+export type TipoInformacaoAusente = 'campo_sem_valor' | 'fato_nao_observado' | 'evidencia_insuficiente' | 'regra_nao_formalizada';
+
+export interface DiagnosticoIndeterminacao {
+    status: StatusDiagnostico;
+    /** Fora de DIAGNOSED: por que não há diagnóstico fundamentado. */
+    motivo?: string;
+    /** Por que o juiz não concluiu. */
+    motivoIndeterminacao?: string;
+    regrasAfetadas?: { regra: string; formalizacao: FormalizacaoRegra; motivo: string }[];
+    evidenciasDisponiveis?: { fonte: 'telemetria' | 'regra' | 'pedido' | 'plano' | 'julgamento'; referencia: string; descricao: string }[];
+    informacoesAusentes?: { tipo: TipoInformacaoAusente; referencia: string; regra: string; formalizacao: FormalizacaoRegra; descricao: string }[];
+    /** Possibilidades condicionais, não vereditos. */
+    caminhosPossiveis?: { resultado: Veredito; condicoes: string; regras: string[]; fundamentacao: FormalizacaoRegra | 'nenhuma' }[];
+    incertezaRemanescente?: string;
+    /** conhecimento: derivada do catálogo (determinística); modelo: escrita pelo modelo. */
+    limitacoes: { origem: 'conhecimento' | 'modelo'; descricao: string }[];
+    /** O que a resposta citou sem apoio no catálogo — fora do diagnóstico. */
+    referenciasRejeitadas?: { secao: 'regrasAfetadas' | 'evidenciasDisponiveis' | 'informacoesAusentes' | 'caminhosPossiveis'; referencia: string; motivo: string }[];
+    respostaBruta?: string;
 }
 
 export interface DetalheLado {
@@ -151,6 +184,8 @@ export interface DetalheLado {
         recuperacaoMs?: number;
         oraculoMs: number | null;
         llmJudgeMs: number | null;
+        /** Só o diagnóstico da indeterminação (fora de llmJudgeMs). Ausente sem diagnóstico. */
+        diagnosticoMs?: number;
         paraleloMs?: number;
         totalMs?: number;
     };
@@ -183,6 +218,8 @@ export interface RespostaAvaliacao {
     tempoOraculoSegundos?: number;
     /** Soma dos tempos do LLM Judge, em segundos. */
     tempoLlmJudgeSegundos?: number;
+    /** Soma dos tempos do diagnóstico da indeterminação, em segundos. Ausente sem nenhum diagnóstico. */
+    tempoDiagnosticoSegundos?: number;
     /**
      * Tempos de GERAÇÃO dos cenários avaliados (os dois arquivos), em
      * segundos — não medidos na avaliação, repassados do lote (ver
