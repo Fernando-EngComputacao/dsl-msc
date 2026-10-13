@@ -227,14 +227,14 @@ export interface RespostaComando {
 export interface ExecucaoMultiagenteResposta {
     status: string;
     sequenciaValidada?: PIPlanejado[];
-    /** Todas as propostas do Planner, de todos os ciclos. */
-    tentativasPlanner?: { ciclo: number; metricas?: { duracaoMs: number; duracaoValidacaoMs?: number } }[];
-    /** Um registro por ciclo global, com as ondas de PI e as métricas DAQUELE ciclo. */
-    historicoGlobal?: {
-        ciclo: number;
-        ondasPI?: { duracaoMs?: number }[];
-        metricas?: { duracaoComposicaoMs?: number; duracaoValidacaoGlobalMs?: number };
-    }[];
+    /**
+     * O custo da execução inteira. `temposFases` é o relógio de parede de cada
+     * fase da geração, medido direto no pipeline (início → fim, retries e ciclos
+     * somados, mesmo com exceção); fase que não começou fica ausente.
+     */
+    metricasExecucao?: {
+        temposFases?: { sequenciasMs?: number; pisMs?: number; validacaoPlanosMs?: number };
+    };
 }
 
 /** Um PI da sequência do Planner — o que o avaliador lê (`dependeDe` não está na DSL do artefato). */
@@ -277,12 +277,14 @@ export async function avaliarResultados(
     arquiteturaJsonl: string | undefined,
     baselineJsonl: string | undefined,
     aoProgresso: (processados: number, total: number) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    /** Nome do arquivo de entrada: o servidor o usa para nomear o arquivo da avaliação (`evalueted_<nome>_<carimbo>.jsonl`). */
+    nomeEntrada?: string
 ): Promise<RespostaAvaliacao> {
     const resp = await fetch(`${BASE_URL}/api/avaliar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dominio, arquiteturaJsonl, baselineJsonl }),
+        body: JSON.stringify({ dominio, arquiteturaJsonl, baselineJsonl, nomeEntrada }),
         signal
     });
 

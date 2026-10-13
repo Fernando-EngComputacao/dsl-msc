@@ -53,6 +53,8 @@ import {
     impedimentoDeReiniciar,
     impedimentoDeReplanejar,
     medirExecucao,
+    medirFase,
+    medirFaseSincrona,
     novoContextoExecucao,
     registrarConhecimento,
     reiniciarCicloGlobal,
@@ -441,9 +443,9 @@ export async function decodificarMultiagente(
             duracoes = {};
             await planejarCiclo(ctx, universo.valor!, conhecimentoDaSequencia, motorPlanner, opts.contrato, entrada, feedbackGlobal);
             if (!em('PI_DECOMPOSED')) break;
-            await resolverPIs(ctx, motorPI);
+            await medirFase(ctx, 'pisMs', () => resolverPIs(ctx, motorPI));
             if (!em('PI_ALL_VALID')) break;   // um PI UNRESOLVED: nao ha plano completo a compor
-            duracoes = await comporEValidarPlano(ctx, conhecimentoGlobal, verificador, agora);
+            duracoes = await medirFase(ctx, 'validacaoPlanosMs', () => comporEValidarPlano(ctx, conhecimentoGlobal, verificador, agora));
             if (!em('GLOBAL_VALIDATING')) break;
 
             const validacao = ctx.validacaoGlobal!;
@@ -524,7 +526,8 @@ async function planejarCiclo(
             restricoesPorItem: restricoes,
             ...(feedback ? { feedback } : {})
         };
-        const proposta = await planejarSequencia(cp, motor);
+        // Cada chamada ao Planner entra na fase, inclusive a que termina em excecao do motor.
+        const proposta = await medirFase(ctx, 'sequenciasMs', () => planejarSequencia(cp, motor));
         avancarStatus(ctx, 'SEQUENCE_VALIDATING');
 
         // A leitura e a primeira validacao; so o que passou nela vai ao conhecimento.
@@ -535,7 +538,7 @@ async function planejarCiclo(
             fase = 'semantica';
             ctx.sequenciaCandidata = proposta.validacao.valor;
             const inicio = performance.now();
-            const julgada = validarSequencia(proposta.validacao.valor!, conhecimentoDaSequencia);
+            const julgada = medirFaseSincrona(ctx, 'sequenciasMs', () => validarSequencia(proposta.validacao.valor!, conhecimentoDaSequencia));
             duracaoValidacaoMs = Math.round((performance.now() - inicio) * 1000) / 1000;
             // Os avisos da leitura (par repetido, nome fora dos candidatos) seguem junto.
             validacao = { ...julgada, avisos: [...proposta.validacao.avisos, ...julgada.avisos] };
@@ -556,7 +559,7 @@ async function planejarCiclo(
         if (validacao.veredito === 'VALID') {
             ctx.sequenciaValidada = validacao.valor;
             avancarStatus(ctx, 'SEQUENCE_VALID');
-            decomporSequencia(ctx, { contrato, esquema: entrada.esquema });
+            medirFaseSincrona(ctx, 'pisMs', () => decomporSequencia(ctx, { contrato, esquema: entrada.esquema }));
             return;
         }
         ctx.errosValidacao.push(validacao);
@@ -566,7 +569,7 @@ async function planejarCiclo(
         }
 
         const codigos = validacao.erros.map(e => e.codigo).join(', ');
-        const proximo = montarFeedbackPlanner(fase, proposta.bruto, validacao, tentativa.sequencia);
+        const proximo = medirFaseSincrona(ctx, 'sequenciasMs', () => montarFeedbackPlanner(fase, proposta.bruto, validacao, tentativa.sequencia));
         const impedimento = impedimentoDeReplanejar(ctx);
         if (impedimento) {
             // Orcamento esgotado: o historico fica, e o feedback que iria para a
@@ -582,7 +585,7 @@ async function planejarCiclo(
         }
         tentativa.realimentacao = proximo;
         feedback = proximo;
-        restricoes = restringirAposErros(restricoes, validacao, base.condutasPorItem);
+        restricoes = medirFaseSincrona(ctx, 'sequenciasMs', () => restringirAposErros(restricoes, validacao, base.condutasPorItem));
         avancarStatus(ctx, 'PLANNING', `nova proposta apos reprovacao (${fase}): ${codigos}`);
     }
 }

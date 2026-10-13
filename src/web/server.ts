@@ -26,6 +26,7 @@ import neo4j, { type Driver } from 'neo4j-driver';
 
 import { loadModel } from '../database/neo4j.js';
 import type { ClinicalContext } from '../knowledge/graphrag.js';
+import { nomeArquivoAvaliacao } from '../inference/avaliacao-jsonl.js';
 import { gerarPlanoRestrito, montarEntradaGeracao } from '../inference/llm-client.js';
 
 import { loadAgroModel } from '../database/neo4j-agro.js';
@@ -503,13 +504,13 @@ function avaliarRegistro(dominio: 'med' | 'agro' | 'fut', registro: RegistroAval
 // chats: arquivo em data/, que o docker-compose monta.
 const AVALIACOES_DIR = path.join('data', 'avaliacoes');
 fs.mkdirSync(AVALIACOES_DIR, { recursive: true });
-const ARQUIVO_AVALIACAO_REGEX = /^[0-9]{8}-[0-9]{6}-(med|agro|fut)(-[0-9]+)?\.jsonl$/;
+// Nomes atuais (`evalueted_<nome>_<AAAAMMDD-HHmmss>[-n].jsonl`) e os antigos (`<AAAAMMDD-HHmmss>-<dominio>[-n].jsonl`).
+const ARQUIVO_AVALIACAO_REGEX = /^(evalueted_[A-Za-z0-9._-]+_[0-9]{8}-[0-9]{6}(-[0-9]+)?|[0-9]{8}-[0-9]{6}-(med|agro|fut)(-[0-9]+)?)\.jsonl$/;
 
-function gravarAvaliacao(dominio: 'med' | 'agro' | 'fut', resultado: ResultadoAvaliacaoGrafo): string {
-    const agora = new Date();
-    const pad = (n: number): string => String(n).padStart(2, '0');
-    const base = `${agora.getFullYear()}${pad(agora.getMonth() + 1)}${pad(agora.getDate())}-${pad(agora.getHours())}${pad(agora.getMinutes())}${pad(agora.getSeconds())}-${dominio}`;
-    let nome = `${base}.jsonl`;
+function gravarAvaliacao(dominio: 'med' | 'agro' | 'fut', resultado: ResultadoAvaliacaoGrafo, nomeEntrada?: string): string {
+    const inicial = nomeArquivoAvaliacao(nomeEntrada, dominio, new Date());
+    const base = inicial.replace(/\.jsonl$/, '');
+    let nome = inicial;
     for (let sufixo = 1; fs.existsSync(path.join(AVALIACOES_DIR, nome)); sufixo++) nome = `${base}-${sufixo}.jsonl`;
     const linhas = registrosJsonl(dominio, resultado).map(r => JSON.stringify(r));
     fs.writeFileSync(path.join(AVALIACOES_DIR, nome), linhas.join('\n') + (linhas.length > 0 ? '\n' : ''));
@@ -524,7 +525,8 @@ async function avaliarComGrafo(
     arquitetura: RegistroAvaliarGrafo[] | undefined,
     baseline: RegistroAvaliarGrafo[] | undefined,
     onProgresso: (processados: number, total: number) => void,
-    sinal: AbortSignal
+    sinal: AbortSignal,
+    nomeEntrada?: string
 ): Promise<ResultadoAvaliacaoGrafo> {
     const inicio = performance.now();
     const motor = dominio === 'med' ? ENGINE : dominio === 'agro' ? ENGINE_AGRO : ENGINE_FUT;
@@ -591,7 +593,7 @@ async function avaliarComGrafo(
         tempoGeracaoPIsValidasSegundos: somaSegundosGeracao('tempoPIsValidasMs'),
         tempoGeracaoValidacaoPlanosSegundos: somaSegundosGeracao('tempoValidacaoPlanosMs')
     };
-    if (!sinal.aborted) resultado.arquivoJsonl = gravarAvaliacao(dominio, resultado);
+    if (!sinal.aborted) resultado.arquivoJsonl = gravarAvaliacao(dominio, resultado, nomeEntrada);
     return resultado;
 }
 
@@ -754,6 +756,8 @@ const servidor = http.createServer(async (req, res) => {
                 dominio?: string;
                 arquiteturaJsonl?: string;
                 baselineJsonl?: string;
+                /** Nome do arquivo de entrada (o da Arquitetura; senao o da Baseline): vira o nome do arquivo da avaliacao. */
+                nomeEntrada?: string;
             };
             if (corpo.dominio !== 'med' && corpo.dominio !== 'agro' && corpo.dominio !== 'fut') {
                 jsonResponse(res, 400, { erro: "dominio deve ser 'med', 'agro' ou 'fut'" });
@@ -797,7 +801,8 @@ const servidor = http.createServer(async (req, res) => {
                     arquitetura,
                     baseline,
                     (processados, total) => emitir('progresso', { processados, total }),
-                    controlador.signal
+                    controlador.signal,
+                    corpo.nomeEntrada
                 );
                 emitir('final', resultado);
             } catch (error) {
@@ -838,7 +843,7 @@ servidor.listen(PORT, () => {
     console.log(`  POST /api/chats     { dominio: 'med'|'agro'|'fut', mensagens: [] }`);
     console.log(`  GET  /api/chats/:id`);
     console.log(`  PUT  /api/chats/:id { dominio: 'med'|'agro'|'fut', mensagens: [] }`);
-    console.log(`  POST /api/avaliar   { dominio: 'med'|'agro'|'fut', arquiteturaJsonl?: string, baselineJsonl?: string }  (SSE: event "progresso"*, "final"|"erro")`);
+    console.log(`  POST /api/avaliar   { dominio: 'med'|'agro'|'fut', arquiteturaJsonl?: string, baselineJsonl?: string, nomeEntrada?: string }  (SSE: event "progresso"*, "final"|"erro")`);
     console.log(`  GET  /api/avaliacoes/:arquivo  (JSONL experimental de uma avaliacao: oraculo e juiz LLM separados)`);
 });
 

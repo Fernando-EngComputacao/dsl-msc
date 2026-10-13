@@ -364,12 +364,73 @@ export interface CicloGlobal {
     metricas: MetricasCiclo;
 }
 
+/**
+ * O tempo de relogio de parede de cada FASE da geracao, medido direto — do
+ * inicio ao fim da fase, em todos os ciclos e em todas as tentativas, inclusive
+ * quando a fase termina em excecao. Uma fase que nao chegou a comecar fica
+ * AUSENTE (nunca zero):
+ *
+ *   sequenciasMs       Planner (cada chamada ao motor), validacao da sequencia e
+ *                      feedback/restricoes entre as propostas, de todos os retries.
+ *   pisMs              decomposicao da sequencia em PIs e a execucao e validacao
+ *                      dos PIs (onda a onda, retries dentro).
+ *   validacaoPlanosMs  composicao do plano, `/verify` e validacao global, de todos
+ *                      os ciclos.
+ *
+ * Nao e uma soma de cronometros internos: e `fim - inicio` de cada fase. As fases
+ * rodam em serie, entao a soma delas nunca passa de `duracaoTotalMs`.
+ */
+export interface TemposFases {
+    sequenciasMs?: number;
+    pisMs?: number;
+    validacaoPlanosMs?: number;
+}
+
+export type FaseMedida = keyof TemposFases;
+
+/** Soma `ms` na fase. Chamado ao fim da fase, em `finally`, para nao perder a medicao numa excecao. */
+export function acumularTempoDaFase(ctx: Pick<ContextoExecucaoMultiagente<ContextoDominio, unknown>, 'temposFases'>, fase: FaseMedida, ms: number): void {
+    ctx.temposFases[fase] = (ctx.temposFases[fase] ?? 0) + ms;
+}
+
+/** Mede UMA execucao da fase (async), mesmo quando `fn` lanca; o erro sobe intacto. */
+export async function medirFase<T>(
+    ctx: Pick<ContextoExecucaoMultiagente<ContextoDominio, unknown>, 'temposFases'>,
+    fase: FaseMedida,
+    fn: () => Promise<T>,
+    agora: () => number = () => performance.now()
+): Promise<T> {
+    const inicio = agora();
+    try {
+        return await fn();
+    } finally {
+        acumularTempoDaFase(ctx, fase, agora() - inicio);
+    }
+}
+
+/** O mesmo, para um trecho sincrono (sem introduzir `await`). */
+export function medirFaseSincrona<T>(
+    ctx: Pick<ContextoExecucaoMultiagente<ContextoDominio, unknown>, 'temposFases'>,
+    fase: FaseMedida,
+    fn: () => T,
+    agora: () => number = () => performance.now()
+): T {
+    const inicio = agora();
+    try {
+        return fn();
+    } finally {
+        acumularTempoDaFase(ctx, fase, agora() - inicio);
+    }
+}
+
 /** O custo da execucao inteira, somado dos ciclos. */
 export interface MetricasExecucao {
     requestId: string;
     ciclos: number;
     resultado: StatusMultiagente;
     duracaoTotalMs: number;
+    /** Tempo direto de cada fase (ver `TemposFases`). Ausente: nenhuma fase chegou a comecar. */
+    temposFases?: TemposFases;
     planner: { chamadas: number; tokens: number; caracteresPrompt: number; duracaoMs: number };
     pi: { pis: number; chamadas: number; retries: number; tokens: number; caracteresPrompt: number; duracaoMs: number };
     validacaoGlobal: { execucoes: number; erros: number; codigos: string[]; duracaoMs: number };
@@ -453,6 +514,8 @@ export interface ContextoExecucaoMultiagente<C extends ContextoDominio = Context
     historicoGlobal: CicloGlobal[];
     /** Ao final: o custo da execucao inteira. */
     metricasExecucao?: MetricasExecucao;
+    /** O relogio de cada fase, acumulado a medida que a execucao avanca (ver `TemposFases`). */
+    temposFases: TemposFases;
     /** Toda validacao reprovada ou sem decisao, em qualquer fase, para auditoria. */
     errosValidacao: ResultadoValidacao[];
 
@@ -505,6 +568,7 @@ export function novoContextoExecucao<C extends ContextoDominio, R = unknown>(
         execucoesPI: [],
         resultadosPI: [],
         historicoGlobal: [],
+        temposFases: {},
         errosValidacao: [],
         tentativaGlobal: 1,
         status: 'RECEIVED',
@@ -890,6 +954,7 @@ export function medirExecucao(ctx: ContextoExecucaoMultiagente<ContextoDominio, 
         ciclos: ctx.historicoGlobal.length,
         resultado: ctx.status,
         duracaoTotalMs,
+        ...(Object.keys(ctx.temposFases).length > 0 ? { temposFases: { ...ctx.temposFases } } : {}),
         planner: {
             chamadas: soma(m.map(x => x.chamadasPlanner)),
             tokens: soma(m.map(x => x.tokensPlanner)),

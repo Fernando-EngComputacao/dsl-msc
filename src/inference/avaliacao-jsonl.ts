@@ -45,3 +45,25 @@ export function parseRegistrosAvaliacao(texto: string): RegistroAvaliacaoImporta
     if (registros.length === 0) throw new Error('O arquivo não contém registros JSONL.');
     return registros;
 }
+
+/**
+ * O nome do arquivo de uma avaliacao: `evalueted_<nome>_<AAAAMMDD-HHmmss>.jsonl`.
+ *
+ * `<nome>` e o do arquivo de entrada SEM o prefixo `results_` e SEM o carimbo
+ * de data do proprio arquivo de resultados (`results_cenarios-2-fut_20261007-202028.jsonl`
+ * -> `cenarios-2-fut`); o carimbo do final e o do INSTANTE DA AVALIACAO. Sem nome de
+ * entrada (ou sem nada que sobre dele), `<nome>` e o dominio.
+ */
+export function nomeArquivoAvaliacao(nomeEntrada: string | undefined, dominio: string, agora: Date): string {
+    const base = (nomeEntrada ?? '')
+        .split(/[\\/]/)
+        .pop()!
+        .replace(/\.jsonl?$/i, '')
+        .replace(/^results_/, '')
+        .replace(/_\d{8}-\d{6}$/, '')
+        .replace(/[^A-Za-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    const p = (n: number): string => String(n).padStart(2, '0');
+    const carimbo = `${agora.getFullYear()}${p(agora.getMonth() + 1)}${p(agora.getDate())}-${p(agora.getHours())}${p(agora.getMinutes())}${p(agora.getSeconds())}`;
+    return `evalueted_${base || dominio}_${carimbo}.jsonl`;
+}

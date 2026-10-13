@@ -3,26 +3,23 @@
  *
  * O tempo total de cada cenário e o do lote inteiro são medidos aqui, no
  * runner (`rodarLote`, chat.ts), com `performance.now()`. Os três tempos de
- * etapa NÃO são medidos de novo: são lidos dos cronômetros que o próprio
- * pipeline multiagente já grava no resumo da execução que o servidor devolve
- * em `execucaoMultiagente` (ver `resumoExecucao`, src/inference/multiagente.ts):
+ * etapa NÃO são medidos de novo nem somados de cronômetros internos: são lidos
+ * de `execucaoMultiagente.metricasExecucao.temposFases`, o relógio de parede de
+ * cada fase que o próprio pipeline mede de ponta a ponta (ver `TemposFases`,
+ * src/inference/multiagente.ts), com `try/finally`, em todos os ciclos e
+ * tentativas — também quando a fase termina em exceção ou em FAILED:
  *
- *   sequências       cada proposta do Planner, de todos os ciclos, fica em
- *                    `tentativasPlanner` com `metricas.duracaoMs` (chamada ao
- *                    motor, fila incluída) e `metricas.duracaoValidacaoMs`
- *                    (`validarSequencia`, só quando a saída passou na leitura).
- *                    As propostas rodam uma depois da outra.
- *   PIs              `historicoGlobal[c].ondasPI[o].duracaoMs`: o relógio de
- *                    parede de cada onda (`executarOndas`), da primeira chamada
- *                    ao fim do último PI resolvido, com geração, validação e
- *                    retries dentro. As ondas rodam uma depois da outra, e os
- *                    PIs de uma onda também.
- *   validação        `historicoGlobal[c].metricas.duracaoComposicaoMs` +
- *                    `duracaoValidacaoGlobalMs` (`comporEValidarPlano`:
- *                    composição, `/verify` e `validarPlanoGlobal`).
+ *   sequências   Planner (cada chamada ao motor), validação da sequência e
+ *                feedback entre as propostas, de todos os retries.
+ *   PIs          decomposição da sequência e execução/validação dos PIs
+ *                (onda a onda, retries dentro).
+ *   validação    composição do plano, `/verify` e validação global, de todos os
+ *                ciclos.
  *
- * Fora do modo multiagente essas etapas não existem: os três ficam `null`.
- * Etapa que não rodou também fica `null` — nunca zero inventado.
+ * Fora do modo multiagente (`SPC_CML_DECODIFICACAO=multiagente`) essas etapas
+ * NÃO EXISTEM — o modo padrão, incremental, monta o artefato elemento a
+ * elemento, sem Planner, PIs nem validação global —: os três ficam `null`.
+ * Etapa que não chegou a começar também fica `null` — nunca zero inventado.
  */
 import type { ExecucaoMultiagenteResposta } from './api';
 
@@ -44,8 +41,6 @@ export interface TemposCenario {
     tempoValidacaoPlanosSegundos: number | null;
 }
 
-const soma = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
-
 /** Milissegundos com precisão de microssegundo. */
 export function arredondarMs(ms: number): number {
     return Math.round(ms * 1000) / 1000;
@@ -59,22 +54,12 @@ export function emSegundos(ms: number | null): number | null {
 }
 
 export function temposDasEtapas(execucao?: ExecucaoMultiagenteResposta): TemposEtapas {
-    const tentativas = execucao?.tentativasPlanner ?? [];
-    const ciclos = execucao?.historicoGlobal ?? [];
-    const ondas = ciclos.flatMap(c => c.ondasPI ?? []).filter(o => typeof o.duracaoMs === 'number');
-    const validacoes = ciclos
-        .map(c => c.metricas)
-        .filter(m => m !== undefined && (m.duracaoComposicaoMs !== undefined || m.duracaoValidacaoGlobalMs !== undefined));
+    const fases = execucao?.metricasExecucao?.temposFases;
+    const ms = (v: number | undefined): number | null => (typeof v === 'number' ? arredondarMs(v) : null);
     return {
-        tempoSequenciasMs:
-            tentativas.length === 0
-                ? null
-                : arredondarMs(soma(tentativas.map(t => (t.metricas?.duracaoMs ?? 0) + (t.metricas?.duracaoValidacaoMs ?? 0)))),
-        tempoPIsValidasMs: ondas.length === 0 ? null : arredondarMs(soma(ondas.map(o => o.duracaoMs as number))),
-        tempoValidacaoPlanosMs:
-            validacoes.length === 0
-                ? null
-                : arredondarMs(soma(validacoes.map(m => (m!.duracaoComposicaoMs ?? 0) + (m!.duracaoValidacaoGlobalMs ?? 0))))
+        tempoSequenciasMs: ms(fases?.sequenciasMs),
+        tempoPIsValidasMs: ms(fases?.pisMs),
+        tempoValidacaoPlanosMs: ms(fases?.validacaoPlanosMs)
     };
 }
 

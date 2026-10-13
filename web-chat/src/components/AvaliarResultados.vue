@@ -182,6 +182,8 @@ async function avaliar(): Promise<void> {
         progresso.value = { processados, total };
       },
       ctrl.signal,
+      // O da Arquitetura, quando avaliada; senão o da Baseline.
+      (incluirArquitetura.value && arquivos.arquitetura ? arquivos.arquitetura : arquivos.baseline)?.name,
     );
     view.value = "resultado";
   } catch (e) {
