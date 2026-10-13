@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { DetalheLado } from '../api';
 import { ROTULO, posicao, tomDoLado, rotuloVeredicto } from '../avaliacao';
+import { planoParaJson } from '../plano-json';
 
 /** Um lado (arquitetura ou baseline) de uma linha avaliada. O resultado
  *  normativo é o do ORÁCULO (sintaxe + semântica determinística); o LLM Judge
@@ -15,6 +16,10 @@ const props = defineProps<{
 const tom = computed(() => tomDoLado(props.lado));
 
 const astFormatado = computed(() => (props.lado?.ast === undefined ? '' : JSON.stringify(props.lado.ast, null, 2)));
+
+const verJson = ref(false);
+/** Só calcula quando o JSON está aberto. */
+const planoJson = computed(() => (verJson.value && props.lado?.plano ? planoParaJson(props.lado.plano) : ''));
 
 const FONTE: Record<string, string> = {
     gramatica: 'G (/verify)',
@@ -82,7 +87,24 @@ const GRUPO = 'mb-1 text-[10px] font-semibold tracking-wide text-neutral-400 upp
         </div>
 
         <template v-if="lado">
-            <pre class="max-h-72 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-neutral-700 dark:bg-black/20 dark:text-neutral-300">{{ lado.plano || '(plano vazio)' }}</pre>
+            <div class="relative">
+                <!-- Discreto: alterna entre o texto da DSL e o mesmo plano em JSON (só chave e valor). -->
+                <button
+                    v-if="lado.plano"
+                    type="button"
+                    class="absolute top-1.5 right-1.5 rounded px-1.5 py-0.5 font-mono text-[10px] transition-colors"
+                    :class="verJson ? 'bg-neutral-200 text-neutral-700 dark:bg-white/15 dark:text-neutral-200' : 'text-neutral-400 hover:bg-neutral-200/60 hover:text-neutral-600 dark:text-neutral-500 dark:hover:bg-white/10 dark:hover:text-neutral-300'"
+                    :title="verJson ? 'Voltar ao texto da DSL' : 'Formatar como JSON'"
+                    :aria-pressed="verJson"
+                    @click="verJson = !verJson"
+                >
+                    { }
+                </button>
+                <pre
+                    class="max-h-72 overflow-auto rounded-lg bg-neutral-50 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-neutral-700 dark:bg-black/20 dark:text-neutral-300"
+                    :class="lado.plano ? 'pr-10' : ''"
+                >{{ lado.plano ? (verJson ? planoJson : lado.plano) : '(plano vazio)' }}</pre>
+            </div>
 
             <p v-if="lado.naoAvaliado" class="mt-2 text-[11px] leading-relaxed text-neutral-500 dark:text-neutral-400">{{ lado.motivo }}</p>
 
