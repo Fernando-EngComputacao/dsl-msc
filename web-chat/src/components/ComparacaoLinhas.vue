@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { DetalheLado, DetalheLinha } from '../api';
+import type { DetalheLado, DetalheLinha, Veredito } from '../api';
 import { rotuloVeredicto, tomDoLado } from '../avaliacao';
 import AvaliacaoLado from './AvaliacaoLado.vue';
 
@@ -16,6 +16,63 @@ const abertas = ref<Set<number>>(new Set());
 
 const totalDivergencias = computed(() => props.linhas.filter(l => l.temDivergencia).length);
 const totalDiscordancias = computed(() => props.linhas.filter(l => l.temDiscordancia).length);
+
+// ---------------------------------------------------------------------------
+// Filtro por veredito: o do oráculo e o do LLM Judge, cada um com o seu
+// seletor. É o veredito cru da camada — um oráculo VALID com violação continua
+// em "Válido" aqui, mesmo com a pill vermelha. Os dois filtros juntos exigem o
+// MESMO lado (oráculo INVALID × LLM VALID acha a discordância daquele tipo,
+// não um lado de cada), e só contam os lados que estão na tela.
+// ---------------------------------------------------------------------------
+
+type FiltroVeredito = 'todos' | Veredito;
+
+const OPCOES_VEREDITO: Array<{ valor: Veredito; rotulo: string; ponto: string }> = [
+    { valor: 'VALID', rotulo: 'Válido', ponto: 'bg-emerald-500' },
+    { valor: 'INVALID', rotulo: 'Inválido', ponto: 'bg-rose-500' },
+    { valor: 'UNRESOLVED', rotulo: 'Não resolvido', ponto: 'bg-sky-500' }
+];
+
+const filtroOraculo = ref<FiltroVeredito>('todos');
+const filtroJuiz = ref<FiltroVeredito>('todos');
+const filtrandoVeredito = computed(() => filtroOraculo.value !== 'todos' || filtroJuiz.value !== 'todos');
+
+function ladosNaTela(l: DetalheLinha): DetalheLado[] {
+    const lados: DetalheLado[] = [];
+    if (props.mostrarArquitetura && l.arquitetura) lados.push(l.arquitetura);
+    if (props.mostrarBaseline && l.baseline) lados.push(l.baseline);
+    return lados;
+}
+
+function ladoCasa(lado: DetalheLado, oraculo: FiltroVeredito, juiz: FiltroVeredito): boolean {
+    if (lado.naoAvaliado) return false;
+    if (oraculo !== 'todos' && lado.oraculo?.veredito !== oraculo) return false;
+    if (juiz !== 'todos' && lado.julgamentoLLM?.status !== juiz) return false;
+    return true;
+}
+
+function linhaCasa(l: DetalheLinha, oraculo: FiltroVeredito, juiz: FiltroVeredito): boolean {
+    if (oraculo === 'todos' && juiz === 'todos') return true;
+    return ladosNaTela(l).some(lado => ladoCasa(lado, oraculo, juiz));
+}
+
+/** Quantas linhas cada opção mostraria, já com o outro seletor aplicado — o número no botão é o que aparece ao clicar. */
+const contagemOraculo = computed(() =>
+    Object.fromEntries(OPCOES_VEREDITO.map(o => [o.valor, props.linhas.filter(l => linhaCasa(l, o.valor, filtroJuiz.value)).length])) as Record<Veredito, number>
+);
+const contagemJuiz = computed(() =>
+    Object.fromEntries(OPCOES_VEREDITO.map(o => [o.valor, props.linhas.filter(l => linhaCasa(l, filtroOraculo.value, o.valor)).length])) as Record<Veredito, number>
+);
+
+const seletoresVeredito = computed(() => [
+    { titulo: 'Oráculo', valor: filtroOraculo.value, contagem: contagemOraculo.value, definir: (v: FiltroVeredito) => (filtroOraculo.value = v) },
+    { titulo: 'LLM Judge', valor: filtroJuiz.value, contagem: contagemJuiz.value, definir: (v: FiltroVeredito) => (filtroJuiz.value = v) }
+]);
+
+function limparFiltrosVeredito(): void {
+    filtroOraculo.value = 'todos';
+    filtroJuiz.value = 'todos';
+}
 
 /** Sem acento e em minúsculas: quem audita digita "glicemia" e espera achar
  *  "Glicemia", "hiperglicêmico" etc. sem se preocupar com acentuação. */
@@ -33,6 +90,8 @@ const linhasVisiveis = computed(() => {
             : filtro.value === 'discordancias'
               ? props.linhas.filter(l => l.temDiscordancia)
               : props.linhas;
+
+    if (filtrandoVeredito.value) lista = lista.filter(l => linhaCasa(l, filtroOraculo.value, filtroJuiz.value));
 
     const termo = busca.value.trim();
     if (termo) {
@@ -98,7 +157,7 @@ function alternarVerTudo(): void {
 }
 
 // Filtro ou busca novos começam na primeira página; um conjunto que encolheu nunca deixa a página fora do alcance.
-watch([filtro, busca], () => (pagina.value = 1));
+watch([filtro, filtroOraculo, filtroJuiz, busca], () => (pagina.value = 1));
 watch(totalPaginas, n => {
     if (pagina.value > n) pagina.value = n;
 });
@@ -229,8 +288,50 @@ function pill(lado: DetalheLado | undefined): string {
             </div>
         </div>
 
+        <!-- Filtro por veredito: oráculo e LLM Judge, combinados no mesmo lado. -->
+        <div class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div v-for="seletor in seletoresVeredito" :key="seletor.titulo" class="flex items-center gap-2">
+                <span class="text-xs font-medium text-neutral-500 dark:text-neutral-400">{{ seletor.titulo }}</span>
+                <div class="flex rounded-full bg-neutral-100 p-0.5 dark:bg-white/10" role="group" :aria-label="`Filtrar pelo veredito do ${seletor.titulo}`">
+                    <button
+                        type="button"
+                        class="rounded-full px-3 py-1.5 text-xs font-medium transition-colors"
+                        :class="seletor.valor === 'todos' ? 'bg-white text-neutral-800 shadow-sm dark:bg-white/15 dark:text-neutral-100' : 'text-neutral-500 dark:text-neutral-400'"
+                        :aria-pressed="seletor.valor === 'todos'"
+                        @click="seletor.definir('todos')"
+                    >
+                        Todos
+                    </button>
+                    <button
+                        v-for="o in OPCOES_VEREDITO"
+                        :key="o.valor"
+                        type="button"
+                        class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors"
+                        :class="seletor.valor === o.valor ? 'bg-white text-neutral-800 shadow-sm dark:bg-white/15 dark:text-neutral-100' : 'text-neutral-500 dark:text-neutral-400'"
+                        :aria-pressed="seletor.valor === o.valor"
+                        :title="`${seletor.titulo}: ${o.valor}`"
+                        @click="seletor.definir(o.valor)"
+                    >
+                        <span class="h-1.5 w-1.5 rounded-full" :class="o.ponto" aria-hidden="true" />
+                        {{ o.rotulo }}
+                        <span class="tabular-nums text-neutral-400 dark:text-neutral-500">{{ seletor.contagem[o.valor] }}</span>
+                    </button>
+                </div>
+            </div>
+
+            <button
+                v-if="filtrandoVeredito"
+                type="button"
+                class="text-xs text-neutral-500 underline-offset-2 transition-colors hover:text-neutral-800 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+                @click="limparFiltrosVeredito"
+            >
+                Limpar vereditos
+            </button>
+        </div>
+
         <p v-if="linhasVisiveis.length === 0" class="rounded-2xl border border-dashed border-neutral-200 px-4 py-8 text-center text-sm text-neutral-400 dark:border-white/10 dark:text-neutral-500">
             <template v-if="busca.trim()">Nenhum caso encontrado para “{{ busca.trim() }}”.</template>
+            <template v-else-if="filtrandoVeredito">Nenhum caso com essa combinação de vereditos nos lados exibidos.</template>
             <template v-else-if="filtro === 'discordancias'">Nenhuma discordância — o LLM Judge concordou com o oráculo em todos os casos avaliados.</template>
             <template v-else>Nenhum caso reprovado — todos os casos avaliados foram aceitos pelo oráculo determinístico.</template>
         </p>
