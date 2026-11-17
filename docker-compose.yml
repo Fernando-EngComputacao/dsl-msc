@@ -16,7 +16,11 @@ services:
     depends_on:
       - neo4j
     ports:
-      - "8000:8000"
+      - "8000:8000"   # motor medico
+      - "8001:8001"   # motor agro
+      - "8002:8002"   # motor futebol
+      - "4000:4000"   # API web
+      - "5173:5173"   # chat (Vite)
     volumes:
       - .:/app
       - /app/node_modules

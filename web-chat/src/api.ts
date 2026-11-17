@@ -283,7 +283,10 @@ export interface PIPlanejado {
     motivo?: string;
 }
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+// Usa o mesmo host pelo qual o chat foi aberto (localhost, IP do Tailscale etc.),
+// para que o navegador de outra maquina alcance a API na porta 4000.
+const BASE_URL =
+    import.meta.env.VITE_API_URL ?? `${window.location.protocol}//${window.location.hostname}:4000`;
 
 export async function buscarDominios(): Promise<Dominio[]> {
     const resp = await fetch(`${BASE_URL}/api/dominios`);
