@@ -231,6 +231,89 @@ export interface RespostaAvaliacao {
     tempoGeracaoValidacaoPlanosSegundos?: number;
 }
 
+// ---------------------------------------------------------------------------
+// Gate da geração em lote — espelho de src/inference/geracao-validada.ts.
+// O lote (ChatView) liga isto em POST /api/comando: cada cenário gera o plano,
+// passa pela MESMA cascata da tela de avaliação e, quando a avaliação reprova,
+// volta para a geração, até aprovar ou bater o teto de tentativas.
+// ---------------------------------------------------------------------------
+
+/**
+ * Quem reprova o plano e manda gerar de novo:
+ * `oraculo` só o veredito normativo (o juiz, se rodar, só entra no registro);
+ * `juiz` o LLM Judge decide — e aí pode ficar plano que o oráculo reprovou;
+ * `ambos` o plano só fica se os dois derem VALID (o mais estrito).
+ */
+export type CriterioGate = 'oraculo' | 'juiz' | 'ambos';
+
+/**
+ * O veredito que fechou (ou não) o gate. `NAO_AVALIADO`: falha técnica — nenhuma
+ * camada deu veredito. `NOT_CALLED`/`NO_RESPONSE`: o juiz era critério e não
+ * respondeu (ou não foi chamado).
+ */
+export type VereditoGate = Veredito | 'NAO_AVALIADO' | 'NOT_CALLED' | 'NO_RESPONSE';
+
+/** Uma geração reprovada e descartada pelo gate. */
+export interface TentativaDescartada {
+    tentativa: number;
+    plano: string;
+    /** O veredito que reprovou. */
+    veredito: VereditoGate;
+    /** Quem reprovou. */
+    fonte: 'oraculo' | 'juiz';
+    /** O veredito normativo desta tentativa, mesmo quando quem reprovou foi o juiz. */
+    oraculo?: Veredito;
+    /** O status do juiz nesta tentativa, mesmo quando quem reprovou foi o oráculo. */
+    juiz?: StatusJuiz;
+    /** A camada do oráculo que reprovou, quando foi ele. */
+    origem?: 'sintaxe' | 'semantica';
+    /** Em falha técnica, o motivo. */
+    motivo?: string;
+    /** Códigos dos erros de sintaxe/semântica e os dados que faltaram. */
+    codigos: string[];
+    /** O que o juiz escreveu ao reprovar. */
+    justificativaJuiz?: string;
+    tempoGeracaoMs: number;
+    tempoAvaliacaoMs: number | null;
+}
+
+/** O desfecho e o custo do gate num cenário. */
+export interface ResumoGate {
+    /** Quantas gerações rodaram (1 = aprovado de primeira). */
+    tentativas: number;
+    maxTentativas: number;
+    criterio: CriterioGate;
+    /** O critério aprovou o plano que ficou. */
+    aceita: boolean;
+    /** O veredito que decidiu a tentativa que ficou. */
+    veredito: VereditoGate;
+    /** Quem decidiu. */
+    fonte: 'oraculo' | 'juiz';
+    /** O veredito normativo do plano que ficou. */
+    oraculo?: Veredito;
+    /** O status do juiz no plano que ficou. */
+    juiz?: StatusJuiz;
+    /** Teto batido sem aprovação: o plano que ficou é o último reprovado. */
+    limiteAtingido: boolean;
+    /** A geração que ficou — é este o tempo de geração do cenário. */
+    tempoGeracaoAceitaMs: number;
+    /** Soma das gerações descartadas: o custo do gate, fora do tempo do plano que ficou. */
+    tempoGeracaoDescartadaMs: number;
+    /** Soma das avaliações de todas as tentativas. */
+    tempoAvaliacaoMs: number;
+    descartadas: TentativaDescartada[];
+}
+
+/** O que o lote manda para ligar o gate (ausente: a geração roda como sempre, sem avaliar). */
+export interface OpcoesGateLote {
+    ativa: boolean;
+    maxTentativas: number;
+    criterio: CriterioGate;
+    /** Com `criterio: 'oraculo'`, chamar o juiz só para o registro. Ignorado nos outros critérios. */
+    juiz?: boolean;
+    repetirNaoAvaliado?: boolean;
+}
+
 export interface RespostaComando {
     aceito: boolean;
     motivoValidacao?: string;
@@ -253,6 +336,14 @@ export interface RespostaComando {
     erro?: string;
     /** Só no modo multiagente (`SPC_CML_DECODIFICACAO=multiagente`): a execução resumida. */
     execucaoMultiagente?: ExecucaoMultiagenteResposta;
+    /**
+     * Só com o gate ligado: a avaliação do plano que ficou, nas MESMAS camadas
+     * separadas que /api/avaliar devolve (sintaxe, semântica, oráculo, juiz) —
+     * sem `contextoGrafo`, que já vem em `promptSemantico`.
+     */
+    avaliacao?: DetalheLado;
+    /** Só com o gate ligado: tentativas, vereditos descartados e o custo de cada parte. */
+    geracaoValidada?: ResumoGate;
 }
 
 /**
@@ -400,12 +491,14 @@ export async function enviarComandoStream(
     texto: string,
     aoEstagio: (texto: string) => void,
     signal?: AbortSignal,
-    contexto?: Record<string, unknown>
+    contexto?: Record<string, unknown>,
+    /** Gate da geração (só o lote manda): gera, avalia e regera até ser aprovado. */
+    validacao?: OpcoesGateLote
 ): Promise<RespostaComando> {
     const resp = await fetch(`${BASE_URL}/api/comando`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(contexto ? { dominio, texto, contexto } : { dominio, texto }),
+        body: JSON.stringify({ dominio, texto, ...(contexto ? { contexto } : {}), ...(validacao?.ativa ? { validacao } : {}) }),
         signal
     });
 

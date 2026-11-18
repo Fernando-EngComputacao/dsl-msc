@@ -1,11 +1,32 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { Mensagem } from '../types';
+import { resumoVereditos } from '../resultados-lote';
 
 const props = defineProps<{ mensagem: Mensagem }>();
 const emit = defineEmits<{ baixar: [] }>();
 
 const lote = computed(() => props.mensagem.lote!);
+
+/** Só com o gate ligado: o que a avaliação decidiu nas linhas já prontas. */
+const vereditos = computed(() => (lote.value.validacao ? resumoVereditos(lote.value.resultados) : null));
+
+/** Gerações além de uma por cenário — o que o gate cobrou para chegar nos planos aprovados. */
+const regeracoes = computed(() => {
+    const v = vereditos.value;
+    if (!v) return 0;
+    return Math.max(0, v.geracoes - lote.value.resultados.length);
+});
+
+/** O juiz participou da decisão de repetir? (muda o que os selos querem dizer) */
+const juizNoCriterio = computed(() => lote.value.validacao?.criterio !== 'oraculo');
+
+const rotuloCriterio = computed(() => {
+    const criterio = lote.value.validacao?.criterio;
+    if (criterio === 'juiz') return 'juiz LLM';
+    if (criterio === 'oraculo') return 'oráculo';
+    return 'oráculo + juiz';
+});
 
 const percentual = computed(() => {
     const l = lote.value;
@@ -59,6 +80,50 @@ const statusTexto = computed(() => {
             <p v-if="!lote.finalizado && lote.estagioAtual" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
                 {{ lote.estagioAtual }}
             </p>
+
+            <!-- Gate: o veredito de cada linha já sai aqui, e o arquivo baixado já vem avaliado. -->
+            <div v-if="vereditos" class="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                <!-- Os selos de veredito sao do ORACULO; o criterio (quem manda regerar) vai no title. -->
+                <span
+                    class="text-neutral-400 dark:text-neutral-500"
+                    :title="`Critério do gate: ${rotuloCriterio}`"
+                    >oráculo:</span
+                >
+                <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                    {{ vereditos.valid }} VALID
+                </span>
+                <span
+                    v-if="vereditos.invalid > 0"
+                    class="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"
+                >
+                    {{ vereditos.invalid }} INVALID
+                </span>
+                <span
+                    v-if="vereditos.unresolved > 0"
+                    class="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
+                >
+                    {{ vereditos.unresolved }} UNRESOLVED
+                </span>
+                <span
+                    v-if="vereditos.naoAvaliados > 0"
+                    class="rounded-full bg-neutral-100 px-2 py-0.5 text-neutral-500 dark:bg-white/10 dark:text-neutral-400"
+                >
+                    {{ vereditos.naoAvaliados }} não avaliado(s)
+                </span>
+                <span
+                    v-if="juizNoCriterio && vereditos.juizReprovou > 0"
+                    class="rounded-full bg-violet-50 px-2 py-0.5 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
+                >
+                    juiz reprovou {{ vereditos.juizReprovou }}
+                </span>
+                <span v-if="regeracoes > 0" class="text-neutral-400 dark:text-neutral-500">
+                    · {{ regeracoes }} regeração(ões) ({{ vereditos.descartesPeloOraculo }} pelo
+                    oráculo, {{ vereditos.descartesPeloJuiz }} pelo juiz)
+                </span>
+                <span v-if="vereditos.limiteAtingido > 0" class="text-amber-600 dark:text-amber-400">
+                    · {{ vereditos.limiteAtingido }} no teto de {{ lote.validacao?.maxTentativas }} tentativas
+                </span>
+            </div>
 
             <button
                 v-if="lote.finalizado"

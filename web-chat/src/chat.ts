@@ -4,11 +4,22 @@ import {
     enviarComandoStream,
     criarChat,
     atualizarChat,
+    type CriterioGate,
     type Dominio,
+    type OpcoesGateLote,
+    type ResumoGate,
 } from './api';
 import type { Mensagem, ItemResultadoLote } from './types';
 import { parseArquivoLote, type CenarioLote } from './lote';
-import { arredondarMs, emSegundos, nomeArquivoResultados, temposDasEtapas, temposDoCenario, type TemposEtapas } from './tempos-lote';
+import {
+    arredondarMs,
+    nomeArquivoResultados,
+    temposDasEtapas,
+    temposDoCenario,
+    temposDoGate,
+    type TemposEtapas
+} from './tempos-lote';
+import { conteudoDoArquivo } from './resultados-lote';
 
 /** Estado do chat vive fora de qualquer componente (mesmo padrao de theme.ts)
  *  para sobreviver a navegacao entre "/" e "/avaliar" sem depender de
@@ -36,6 +47,35 @@ export const loteControlador = ref<AbortController | null>(null);
 export const modalPararLoteAberto = ref(false);
 export const modalEscolherModeloLoteAberto = ref(false);
 export const dominioLoteSelecionado = ref<'med' | 'agro' | 'fut' | null>(null);
+
+/**
+ * Gate do lote: cada cenário gera o plano, ele passa pela MESMA cascata da tela
+ * de avaliação (sintaxe → semântica → oráculo, e o juiz LLM) e, se a avaliação
+ * reprovar, o plano volta para a geração — até aprovar ou bater o teto.
+ *
+ * `criterio` diz QUEM reprova. O padrão `ambos` é o mais estrito: o plano só
+ * passa para a próxima linha do arquivo se o oráculo E o juiz derem VALID.
+ * `juiz` sozinho deixa passar plano que o oráculo reprovou (o registro mostra);
+ * `oraculo` sozinho ignora o juiz na decisão, que segue só como registro.
+ *
+ * `maxTentativas` existe porque nada garante que uma hora saia VALID: o que
+ * muda o plano entre tentativas é a amostragem do motor. Batido o teto, a linha
+ * sai com o último plano reprovado e com `limiteAtingido` no registro — nunca
+ * com um plano de mentira.
+ *
+ * Desligar é uma condição experimental legítima: com o gate, o arquivo mede a
+ * arquitetura COM reparo por reamostragem; sem ele, mede o acerto da primeira
+ * geração. (Mesmo ligado o arquivo guarda as tentativas descartadas, então a
+ * taxa de acerto de primeira continua recuperável — o que importa sobretudo
+ * quando o juiz entra no critério: nas linhas que ficaram ele deixa de ser um
+ * observador independente, porque foram escolhidas por agradá-lo.)
+ */
+export const gateLote = ref<{ ativa: boolean; maxTentativas: number; criterio: CriterioGate; juiz: boolean }>({
+    ativa: true,
+    maxTentativas: 5,
+    criterio: 'ambos',
+    juiz: true
+});
 
 export function nomeDominio(id: 'med' | 'agro' | 'fut'): string {
     return dominios.value.find((d) => d.id === id)?.nome ?? id;
@@ -286,6 +326,16 @@ export async function aoSelecionarArquivo(evento: Event): Promise<void> {
             nomeArquivo: arquivo.name,
             total: cenarios.length,
             concluidos: 0,
+            ...(gateLote.value.ativa
+                ? {
+                      validacao: {
+                          maxTentativas: gateLote.value.maxTentativas,
+                          criterio: gateLote.value.criterio,
+                          // Nos criterios com juiz ele e obrigatorio (o servidor forca).
+                          juiz: gateLote.value.criterio === 'oraculo' ? gateLote.value.juiz : true,
+                      },
+                  }
+                : {}),
             cancelado: false,
             finalizado: false,
             resultados: [],
@@ -310,11 +360,23 @@ async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med'
     // Instrumentacao (tempos-lote.ts): so le o relogio e os cronometros que o
     // pipeline ja devolve; nada abaixo muda o que e enviado nem a ordem.
     const inicioBatch = performance.now();
+    // O gate vai no pedido de cada cenario: o servidor gera, avalia e regera
+    // dentro da MESMA chamada (ver processarComGate, src/web/server.ts) — o
+    // lote continua vendo um cenario por vez, agora com a avaliacao pronta.
+    const gate: OpcoesGateLote | undefined = gateLote.value.ativa
+        ? {
+              ativa: true,
+              maxTentativas: gateLote.value.maxTentativas,
+              criterio: gateLote.value.criterio,
+              juiz: gateLote.value.criterio === 'oraculo' ? gateLote.value.juiz : true,
+          }
+        : undefined;
     for (const [i, cenario] of cenarios.entries()) {
         if (controlador.signal.aborted) break;
 
         const inicioCenario = performance.now();
         let etapas: TemposEtapas = temposDasEtapas(undefined);
+        let resumoGate: ResumoGate | undefined;
         let item: ItemResultadoLote;
         try {
             const resposta = await enviarComandoStream(
@@ -325,8 +387,10 @@ async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med'
                 },
                 controlador.signal,
                 cenario.contexto,
+                gate,
             );
             etapas = temposDasEtapas(resposta.execucaoMultiagente);
+            resumoGate = resposta.geracaoValidada;
             item = {
                 linha: i + 1,
                 intencao: cenario.intencao,
@@ -349,6 +413,9 @@ async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med'
                           },
                       }
                     : {}),
+                // Com o gate ligado: a avaliacao do plano que ficou e o historico das tentativas.
+                ...(resposta.avaliacao ? { avaliacao: resposta.avaliacao } : {}),
+                ...(resposta.geracaoValidada ? { geracaoValidada: resposta.geracaoValidada } : {}),
             };
         } catch (error) {
             if ((error as Error).name === 'AbortError') break;
@@ -359,7 +426,16 @@ async function rodarLote(cenarios: CenarioLote[], idLote: number, dominio: 'med'
                 erro: (error as Error).message,
             };
         }
-        item = { ...item, ...temposDoCenario(performance.now() - inicioCenario, etapas) };
+        // `tempoTotalMs` e SO a geracao do plano que ficou — e o numero que a tela
+        // de avaliacao agrega como tempo de geracao. Com o gate, essa parte vem
+        // medida do servidor; o resto (gerações descartadas, avaliações, relogio
+        // do cenario inteiro) fica nos campos proprios do gate.
+        const tempoCenarioMs = performance.now() - inicioCenario;
+        item = {
+            ...item,
+            ...temposDoCenario(resumoGate?.tempoGeracaoAceitaMs ?? tempoCenarioMs, etapas),
+            ...(resumoGate ? temposDoGate(resumoGate, tempoCenarioMs) : {}),
+        };
 
         msg.lote.resultados.push(item);
         msg.lote.concluidos++;
@@ -394,19 +470,10 @@ export function baixarResultadosLote(msg: Mensagem): void {
     const l = msg.lote;
     if (!l) return;
 
-    const linhas = l.resultados.map((r) => JSON.stringify(r));
-    // A linha final de resumo ja existia (e /api/avaliar a ignora: nao tem
-    // `plano`). Os campos de tempo do lote entram nela.
-    linhas.push(
-        JSON.stringify({
-            duracaoSegundos: l.duracaoSegundos ?? Number(((Date.now() - l.iniciadoEm) / 1000).toFixed(1)),
-            quantidadeCenariosProcessados: l.resultados.length,
-            ...(l.tempoTotalBatchMs !== undefined
-                ? { tempoTotalBatchMs: l.tempoTotalBatchMs, tempoTotalBatchSegundos: emSegundos(l.tempoTotalBatchMs) }
-                : {}),
-        }),
-    );
-    const conteudo = linhas.join('\n');
+    // O formato da linha (e a linha final de resumo, que /api/avaliar ignora
+    // porque nao tem `plano`) fica em resultados-lote.ts: com o gate ligado ela
+    // sai no mesmo formato do JSONL da avaliacao, ja com as camadas separadas.
+    const conteudo = conteudoDoArquivo(msg.dominio, l);
     const blob = new Blob([conteudo], { type: 'application/x-ndjson;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

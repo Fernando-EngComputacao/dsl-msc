@@ -759,6 +759,17 @@ export interface DependenciasAvaliacao {
      * é julgado.
      */
     julgarSintaxeInvalida?: boolean;
+    /**
+     * Não chamar o juiz LLM nesta avaliação: só as camadas determinísticas
+     * (sintaxe, semântica) e o oráculo. O juiz fica `NOT_CALLED` com o motivo, e
+     * `llmJudgeMs` fica `null` — nada é inventado.
+     *
+     * Existe para o gate da geração em lote (geracao-validada.ts), e só quando o
+     * critério de reprovação é o oráculo sozinho: nos critérios em que o juiz
+     * decide, ele é obrigatório. A tela de avaliação nunca passa isto: lá o
+     * juiz é o objeto do experimento.
+     */
+    pularJuiz?: boolean;
 }
 
 /** Linha que não pôde ser avaliada por falha técnica: sem nenhum veredito. */
@@ -826,15 +837,20 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
     const sintaxeMs = duracaoMs(inicioSintaxe);
     const { sintaxe: validacaoSintatica, ast } = sintatica;
     const vazio = plano.trim().length === 0;
-    const julgar = !vazio && (!!ast || deps.julgarSintaxeInvalida === true);
+    const julgar = !vazio && deps.pularJuiz !== true && (!!ast || deps.julgarSintaxeInvalida === true);
     const semAst = 'a sintaxe saiu INVALID: sem AST, nao ha o que validar semanticamente';
+    const juizDesligado = 'juiz desligado nesta avaliacao (pularJuiz): so as camadas deterministicas e o oraculo';
 
     if (!ast && !julgar) {
         const validacaoSemantica = semanticaNaoAvaliada(semAst);
         const oraculo = oraculoDe(validacaoSintatica, validacaoSemantica);
         const julgamentoLLM: JulgamentoLLM = {
             status: 'NOT_CALLED',
-            motivo: vazio ? 'artefato vazio: nao ha plano a julgar' : 'sintaxe INVALID: o texto nao pertence a DSL, e o juiz so julga o que o parser reconheceu'
+            motivo: vazio
+                ? 'artefato vazio: nao ha plano a julgar'
+                : deps.pularJuiz === true
+                  ? juizDesligado
+                  : 'sintaxe INVALID: o texto nao pertence a DSL, e o juiz so julga o que o parser reconheceu'
         };
         return {
             plano, sujeito, naoAvaliado: false,
@@ -922,7 +938,8 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
             return { status: 'NO_RESPONSE', motivo: `Defeito interno no diagnostico: ${(error as Error).message}`, limitacoes: [] };
         }
     };
-    const executarJuiz = async (): Promise<{ julgamentoLLM: JulgamentoLLM; ms: number; diagnosticoMs?: number }> => {
+    const executarJuiz = async (): Promise<{ julgamentoLLM: JulgamentoLLM; ms: number | null; diagnosticoMs?: number }> => {
+        if (deps.pularJuiz === true) return { julgamentoLLM: { status: 'NOT_CALLED', motivo: juizDesligado }, ms: null };
         const inicio = performance.now();
         const pedidoJuiz = pedidoDoJuiz(adaptador.dominio, plano, pedido, contexto.telemetria, conhecimento);
         let julgamentoLLM: JulgamentoLLM;

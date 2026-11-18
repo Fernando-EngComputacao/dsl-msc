@@ -21,7 +21,7 @@
  * elemento, sem Planner, PIs nem validação global —: os três ficam `null`.
  * Etapa que não chegou a começar também fica `null` — nunca zero inventado.
  */
-import type { ExecucaoMultiagenteResposta } from './api';
+import type { ExecucaoMultiagenteResposta, ResumoGate } from './api';
 
 export interface TemposEtapas {
     tempoSequenciasMs: number | null;
@@ -74,6 +74,45 @@ export function temposDoCenario(tempoTotalMs: number, etapas: TemposEtapas): Tem
         tempoPIsValidasSegundos: emSegundos(etapas.tempoPIsValidasMs),
         tempoValidacaoPlanosMs: etapas.tempoValidacaoPlanosMs,
         tempoValidacaoPlanosSegundos: emSegundos(etapas.tempoValidacaoPlanosMs)
+    };
+}
+
+/**
+ * Os tempos do GATE DO ORÁCULO de um cenário (só quando o lote roda com a
+ * validação ligada). Eles não entram em `TemposCenario`: lá `tempoTotalMs`
+ * continua sendo SÓ a geração do plano que ficou (é o que a tela de avaliação
+ * agrega como tempo de geração), e o que o gate acrescenta — as gerações
+ * descartadas e as avaliações — fica separado, para nunca inflar aquele número.
+ *
+ * `tempoCenarioMs` é o relógio de parede do cenário inteiro, medido no runner
+ * (`rodarLote`): todas as gerações mais todas as avaliações, incluindo a ida e
+ * volta HTTP. Os outros três vêm medidos do servidor (`ResumoGate`), onde cada
+ * parte é cronometrada em volta da chamada que a executa.
+ */
+export interface TemposGateCenario {
+    /** Quantas gerações rodaram neste cenário (1 = o oráculo aceitou de primeira). */
+    tentativasGeracao: number;
+    tempoGeracaoDescartadaMs: number;
+    tempoGeracaoDescartadaSegundos: number;
+    /** Soma das avaliações de todas as tentativas (sintaxe + semântica [+ juiz]). */
+    tempoValidacaoMs: number;
+    tempoValidacaoSegundos: number;
+    tempoCenarioMs: number;
+    tempoCenarioSegundos: number;
+}
+
+export function temposDoGate(resumo: ResumoGate, tempoCenarioMs: number): TemposGateCenario {
+    const descartada = arredondarMs(resumo.tempoGeracaoDescartadaMs);
+    const validacao = arredondarMs(resumo.tempoAvaliacaoMs);
+    const cenario = arredondarMs(tempoCenarioMs);
+    return {
+        tentativasGeracao: resumo.tentativas,
+        tempoGeracaoDescartadaMs: descartada,
+        tempoGeracaoDescartadaSegundos: emSegundos(descartada),
+        tempoValidacaoMs: validacao,
+        tempoValidacaoSegundos: emSegundos(validacao),
+        tempoCenarioMs: cenario,
+        tempoCenarioSegundos: emSegundos(cenario)
     };
 }
 

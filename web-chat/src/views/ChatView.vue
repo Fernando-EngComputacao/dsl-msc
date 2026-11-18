@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed, onMounted } from "vue";
 import DomainPicker from "../components/DomainPicker.vue";
 import DomainModal from "../components/DomainModal.vue";
 import ChatMessage from "../components/ChatMessage.vue";
 import ModelSwitchDivider from "../components/ModelSwitchDivider.vue";
 import BatchProgress from "../components/BatchProgress.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
+import type { CriterioGate } from "../api";
 import {
   dominios,
   dominioAtual,
@@ -17,6 +18,7 @@ import {
   modalTrocaAberto,
   dominioPendente,
   inputArquivoLote,
+  gateLote,
   loteAtivo,
   modalPararLoteAberto,
   modalEscolherModeloLoteAberto,
@@ -41,6 +43,15 @@ import {
 
 onMounted(() => {
   if (dominios.value.length === 0) carregarDominios();
+});
+
+/** O que o critério escolhido implica para a leitura dos resultados. */
+const explicacaoCriterio = computed(() => {
+  if (gateLote.value.criterio === 'juiz')
+    return "O juiz decide sozinho: pode ficar plano que o oráculo reprovou (o registro mostra).";
+  if (gateLote.value.criterio === 'oraculo')
+    return "O veredito normativo decide; o juiz, se chamado, só vai para o registro.";
+  return "O mais estrito. Com o juiz no critério, nas linhas que ficam ele não é mais um observador independente — a concordância só é limpa nas tentativas descartadas.";
 });
 
 function vincularAreaMensagens(el: unknown): void {
@@ -118,24 +129,91 @@ function vincularInputArquivoLote(el: unknown): void {
         @selecionar="escolherModeloLote"
         @cancelar="cancelarEscolhaModeloLote"
       >
-        <button
-          type="button"
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-200 disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-white/10"
-          :disabled="enviando || loteAtivo"
-          title="Enviar arquivo .jsonl/.csv em lote"
-          @click="abrirSeletorArquivo"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24">
-            <path
-              d="M21.44 11.05l-8.49 8.49a5 5 0 01-7.07-7.07l8.49-8.49a3.5 3.5 0 014.95 4.95l-8.49 8.49a2 2 0 01-2.83-2.83l7.78-7.78"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+        <!-- Gate do lote: cada plano gerado passa pela mesma cascata da tela de
+             avaliação e, se reprovado, é gerado de novo. Quem reprova é o
+             critério. Desligado, o lote mede o acerto da primeira geração. -->
+        <template #rodape>
+          <label class="flex cursor-pointer items-start gap-2.5">
+            <input
+              v-model="gateLote.ativa"
+              type="checkbox"
+              class="mt-0.5 h-3.5 w-3.5 shrink-0 accent-blue-600"
             />
-          </svg>
-        </button>
+            <span class="flex flex-col gap-0.5">
+              <span class="text-xs font-medium text-neutral-800 dark:text-neutral-100"
+                >Validar cada plano e repetir até ser aprovado</span
+              >
+              <span class="text-[11px] leading-snug text-neutral-500 dark:text-neutral-400"
+                >A mesma avaliação da tela "Avaliar resultados". Reprovado, o
+                cenário volta para a geração; aprovado, segue para a próxima
+                linha do arquivo.</span
+              >
+            </span>
+          </label>
+          <div
+            v-if="gateLote.ativa"
+            class="mt-2 flex flex-col gap-2 pl-6 text-[11px] text-neutral-500 dark:text-neutral-400"
+          >
+            <label class="flex flex-col gap-1">
+              <span>Quem reprova e manda gerar de novo</span>
+              <select
+                :value="gateLote.criterio"
+                class="rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-[11px] text-neutral-700 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-200"
+                @change="
+                  gateLote.criterio = ($event.target as HTMLSelectElement)
+                    .value as CriterioGate
+                "
+              >
+                <option value="ambos">Oráculo + LLM Judge (os dois precisam aprovar)</option>
+                <option value="oraculo">Só o oráculo (sintaxe → semântica)</option>
+                <option value="juiz">Só o LLM Judge</option>
+              </select>
+              <span class="leading-snug text-neutral-400 dark:text-neutral-500">{{
+                explicacaoCriterio
+              }}</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <span>Máximo de tentativas por cenário</span>
+              <input
+                v-model.number="gateLote.maxTentativas"
+                type="number"
+                min="1"
+                max="20"
+                class="w-14 rounded-lg border border-neutral-200 bg-white px-2 py-1 text-right text-neutral-700 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-200"
+              />
+            </label>
+            <label
+              v-if="gateLote.criterio === 'oraculo'"
+              class="flex cursor-pointer items-center gap-2"
+            >
+              <input v-model="gateLote.juiz" type="checkbox" class="h-3.5 w-3.5 accent-blue-600" />
+              <span>Chamar também o LLM Judge (só para o registro)</span>
+            </label>
+          </div>
+        </template>
+
+        <!-- Gatilho do modal. Com um slot nomeado em uso, filho solto seria
+             ignorado pelo Vue: vai no slot default, explicitamente. -->
+        <template #default>
+          <button
+            type="button"
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-200 disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-white/10"
+            :disabled="enviando || loteAtivo"
+            title="Enviar arquivo .jsonl/.csv em lote"
+            @click="abrirSeletorArquivo"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24">
+              <path
+                d="M21.44 11.05l-8.49 8.49a5 5 0 01-7.07-7.07l8.49-8.49a3.5 3.5 0 014.95 4.95l-8.49 8.49a2 2 0 01-2.83-2.83l7.78-7.78"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </template>
       </DomainModal>
 
       <textarea

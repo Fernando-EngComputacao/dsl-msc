@@ -59,12 +59,14 @@ import {
     parearRegistros,
     registrosJsonl,
     sinaisDe,
+    type BlocoTelemetriaGrafo,
     type DependenciasAvaliacao,
     type DetalheLado,
     type DetalheLinha,
     type RegistroAvaliarGrafo,
     type ResultadoAvaliacaoGrafo
 } from '../inference/avaliar-grafo.js';
+import { gerarComGate, type CriterioGate, type ResumoGate } from '../inference/geracao-validada.js';
 import { diagnosticadorLLMHttp } from '../inference/diagnostico-juiz.js';
 import { criarAnalisadorDsl, verificadorDaDsl } from '../inference/avaliar-sintaxe.js';
 
@@ -181,6 +183,15 @@ interface RespostaComando {
     auditoriaRecuperacao?: AuditoriaRecuperacao;
     /** So com SPC_CML_DECODIFICACAO=multiagente: status, tentativas do Planner e sequencia candidata. */
     execucaoMultiagente?: ResumoExecucao;
+    /**
+     * So quando o pedido liga o gate da geracao (`validacao.ativa`, ver
+     * /api/comando): a avaliacao do plano que ficou, com as MESMAS camadas
+     * separadas que /api/avaliar devolve (sintaxe, semantica, oraculo, juiz),
+     * menos `contextoGrafo` — o Prompt Semantico ja vai em `promptSemantico`.
+     */
+    avaliacao?: DetalheLado;
+    /** So com o gate ligado: tentativas, vereditos descartados e o custo de cada parte. */
+    geracaoValidada?: ResumoGate;
 }
 
 /** O campo `execucaoMultiagente`, quando a resposta veio do modo multiagente; nos demais, nada. */
@@ -376,6 +387,20 @@ async function processarFut(
     };
 }
 
+/** Um ponto so de despacho da geracao por dominio — a rota e o gate usam este. */
+function processarDominio(
+    dominio: 'med' | 'agro' | 'fut',
+    texto: string,
+    estagio: EmitirEstagio,
+    contexto?: Record<string, unknown>
+): Promise<RespostaComando> {
+    return dominio === 'med'
+        ? processarMed(texto, estagio, contexto)
+        : dominio === 'agro'
+          ? processarAgro(texto, estagio, contexto)
+          : processarFut(texto, estagio, contexto);
+}
+
 // Historico de chats: cada conversa vira um arquivo JSON nomeado pelo timestamp
 // de criacao em `data/chats/`. Como o docker-compose monta `.:/app`, isso
 // persiste igual tanto local quanto no container.
@@ -504,6 +529,142 @@ function avaliarRegistro(dominio: 'med' | 'agro' | 'fut', registro: RegistroAval
     return avaliarPlano(registro, { adaptador: ADAPTADOR_FUT, modelo: modeloFut, analisador: ANALISADORES.fut, contexto, montarEntrada: montarEntradaGeracaoFut }, deps);
 }
 
+/** As dependencias da cascata de avaliacao: o mesmo motor, o mesmo parser e o
+ *  mesmo grafo, seja na tela de avaliacao (/api/avaliar) ou no gate da geracao
+ *  em lote (/api/comando com `validacao.ativa`). `pularJuiz` so existe para o
+ *  gate, e so quando o criterio e `oraculo`: nos criterios com juiz ele e
+ *  obrigatorio (ver processarComGate). */
+function dependenciasAvaliacao(dominio: 'med' | 'agro' | 'fut', sinal: AbortSignal, pularJuiz = false): DependenciasAvaliacao {
+    const motor = dominio === 'med' ? ENGINE : dominio === 'agro' ? ENGINE_AGRO : ENGINE_FUT;
+    const verificador = verificadorGramaticaHttp(motor, TIMEOUT_MS);
+    return {
+        abrirSessao: () => driver.session(),
+        verificadorDsl: verificadorDaDsl(verificador),
+        verificador,
+        juiz: juizLLMHttp(motor, TIMEOUT_MS),
+        ...(DIAGNOSTICAR_INDETERMINACAO ? { diagnosticador: diagnosticadorLLMHttp(motor, TIMEOUT_MS) } : {}),
+        sinal,
+        julgarSintaxeInvalida: JULGAR_SINTAXE_INVALIDA,
+        ...(pularJuiz ? { pularJuiz: true } : {})
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Gate da geracao (ver src/inference/geracao-validada.ts) — o lote do web-chat
+// liga por `validacao.ativa` em POST /api/comando: cada cenario gera o plano,
+// passa pela MESMA cascata de /api/avaliar e, quando a avaliacao reprova, volta
+// para a geracao, ate aprovar ou bater o teto de tentativas. Quem reprova e o
+// `criterio`: o oraculo, o juiz LLM, ou os dois (padrao).
+// ---------------------------------------------------------------------------
+
+/** Opcoes do gate aceitas no corpo de POST /api/comando. */
+interface ValidacaoPedida {
+    ativa?: boolean;
+    maxTentativas?: number;
+    /**
+     * Quem reprova o plano e manda gerar de novo (ver geracao-validada.ts):
+     * `oraculo` (so o veredito normativo), `juiz` (o LLM Judge decide) ou
+     * `ambos` (o plano so fica se os dois derem VALID). Padrao: SPC_CML_GATE_CRITERIO.
+     */
+    criterio?: CriterioGate;
+    /**
+     * Chamar o juiz LLM em cada tentativa mesmo com `criterio: 'oraculo'` — ai
+     * ele vai para o registro sem decidir a repeticao. Nos criterios `juiz` e
+     * `ambos` o juiz e obrigatorio e esta opcao e ignorada. Padrao: SPC_CML_GATE_JUIZ.
+     */
+    juiz?: boolean;
+    repetirNaoAvaliado?: boolean;
+}
+
+// Teto de geracoes por cenario. Existe para o lote nao ficar preso num cenario
+// que o oraculo nunca aceita (a amostragem do motor e que faz o plano mudar
+// entre tentativas; nada garante que uma hora saia VALID).
+const GATE_MAX_TENTATIVAS = Math.max(1, Math.floor(Number(process.env.SPC_CML_GATE_MAX_TENTATIVAS ?? 3)));
+// Teto duro do que o pedido pode pedir: cada tentativa e um pipeline de geracao
+// inteiro, e o motor atende um pedido por vez.
+const GATE_TETO_TENTATIVAS = Math.max(GATE_MAX_TENTATIVAS, Math.floor(Number(process.env.SPC_CML_GATE_TETO_TENTATIVAS ?? 20)));
+// O juiz LLM dentro do gate quando ele NAO e critério: uma geracao a mais por
+// tentativa. Ligado por padrao, para a linha sair com a MESMA avaliacao da tela
+// (oraculo + juiz).
+const GATE_JUIZ = process.env.SPC_CML_GATE_JUIZ !== 'false';
+// Quem reprova por padrao. `ambos` e o mais estrito: o plano so fica se o
+// oraculo E o juiz derem VALID.
+const GATE_CRITERIO: CriterioGate = (() => {
+    const valor = process.env.SPC_CML_GATE_CRITERIO;
+    return valor === 'oraculo' || valor === 'juiz' || valor === 'ambos' ? valor : 'ambos';
+})();
+
+/** O critério pedido, se for um dos tres; senao o padrao do servidor. */
+function criterioDoPedido(valor: unknown): CriterioGate {
+    return valor === 'oraculo' || valor === 'juiz' || valor === 'ambos' ? valor : GATE_CRITERIO;
+}
+
+const ROTULO_ARTEFATO: Record<'med' | 'agro' | 'fut', string> = { med: 'plano', agro: 'missão', fut: 'decisão' };
+
+/** O registro que a avaliacao le, montado do que a geracao acabou de devolver —
+ *  os MESMOS campos que o lote grava no JSONL de resultados (`telemetria` e o
+ *  `sorteio`), para que avaliar aqui e avaliar depois pelo arquivo seja a mesma coisa. */
+function registroDaGeracao(texto: string, resposta: RespostaComando): RegistroAvaliarGrafo {
+    return {
+        intencao: texto,
+        plano: resposta.resultado,
+        valido: resposta.valido,
+        telemetria: resposta.sorteio as BlocoTelemetriaGrafo | undefined,
+        promptSemantico: resposta.promptSemantico,
+        ...(resposta.execucaoMultiagente
+            ? {
+                  execucaoMultiagente: {
+                      status: resposta.execucaoMultiagente.status,
+                      sequenciaValidada: resposta.execucaoMultiagente.sequenciaValidada
+                  }
+              }
+            : {})
+    };
+}
+
+/** Gera com o gate e devolve a resposta da geracao que ficou, mais a avaliacao dela. */
+async function processarComGate(
+    dominio: 'med' | 'agro' | 'fut',
+    texto: string,
+    estagio: EmitirEstagio,
+    /** O estagio do gate, SEM a pausa minima de UI: num lote de centenas de
+     *  linhas, a pausa cosmetica de cada mensagem do gate viraria minutos. */
+    estagioDoGate: EmitirEstagio,
+    contexto: Record<string, unknown> | undefined,
+    pedido: ValidacaoPedida,
+    sinal: AbortSignal
+): Promise<RespostaComando> {
+    const criterio = criterioDoPedido(pedido.criterio);
+    // Com o juiz no critério, ele e obrigatorio: sem o julgamento nao ha o que decidir.
+    const juiz = criterio === 'oraculo' ? (pedido.juiz ?? GATE_JUIZ) : true;
+    const deps = dependenciasAvaliacao(dominio, sinal, !juiz);
+    const tentativasPedidas = Number(pedido.maxTentativas);
+    const maxTentativas = Number.isFinite(tentativasPedidas)
+        ? Math.min(GATE_TETO_TENTATIVAS, Math.max(1, Math.floor(tentativasPedidas)))
+        : GATE_MAX_TENTATIVAS;
+
+    const { resposta, avaliacao, resumo } = await gerarComGate<RespostaComando>(
+        {
+            gerar: () => processarDominio(dominio, texto, estagio, contexto),
+            avaliar: r => avaliarRegistro(dominio, registroDaGeracao(texto, r), deps),
+            // Sem plano (comando recusado, geracao sem artefato): nada a avaliar nem a repetir.
+            planoDe: r => (r.aceito && typeof r.resultado === 'string' ? r.resultado : undefined),
+            aoEstagio: estagioDoGate,
+            sinal
+        },
+        { maxTentativas, criterio, repetirNaoAvaliado: pedido.repetirNaoAvaliado === true, rotulo: ROTULO_ARTEFATO[dominio] }
+    );
+
+    // `contextoGrafo` sai: e o Prompt Semantico reconstruido pela avaliacao, que
+    // a resposta ja manda em `promptSemantico` (o da geracao).
+    const { contextoGrafo: _contextoGrafo, ...avaliacaoSemPrompt } = avaliacao ?? ({} as DetalheLado);
+    return {
+        ...resposta,
+        ...(avaliacao ? { avaliacao: avaliacaoSemPrompt as DetalheLado } : {}),
+        geracaoValidada: resumo
+    };
+}
+
 // O JSONL experimental de cada avaliacao: um registro por plano, com cada camada
 // (sintaxe, semantica, oraculo, juiz) separada (ver `registrosJsonl`). Mesmo esquema de persistencia dos
 // chats: arquivo em data/, que o docker-compose monta.
@@ -534,17 +695,7 @@ async function avaliarComGrafo(
     nomeEntrada?: string
 ): Promise<ResultadoAvaliacaoGrafo> {
     const inicio = performance.now();
-    const motor = dominio === 'med' ? ENGINE : dominio === 'agro' ? ENGINE_AGRO : ENGINE_FUT;
-    const verificador = verificadorGramaticaHttp(motor, TIMEOUT_MS);
-    const deps: DependenciasAvaliacao = {
-        abrirSessao: () => driver.session(),
-        verificadorDsl: verificadorDaDsl(verificador),
-        verificador,
-        juiz: juizLLMHttp(motor, TIMEOUT_MS),
-        ...(DIAGNOSTICAR_INDETERMINACAO ? { diagnosticador: diagnosticadorLLMHttp(motor, TIMEOUT_MS) } : {}),
-        sinal,
-        julgarSintaxeInvalida: JULGAR_SINTAXE_INVALIDA
-    };
+    const deps = dependenciasAvaliacao(dominio, sinal);
 
     const total = (arquitetura?.length ?? 0) + (baseline?.length ?? 0);
     let processados = 0;
@@ -651,6 +802,8 @@ const servidor = http.createServer(async (req, res) => {
                 dominio?: string;
                 texto?: string;
                 contexto?: Record<string, unknown>;
+                /** Gate: gera, avalia (oraculo e/ou juiz) e regera ate aprovar (ver processarComGate). */
+                validacao?: ValidacaoPedida;
             };
             const dominio = corpo.dominio;
             const texto = (corpo.texto ?? '').trim();
@@ -681,14 +834,23 @@ const servidor = http.createServer(async (req, res) => {
                 emitir('estagio', { texto });
                 await pausa(PAUSA_ESTAGIO_MS);
             };
+            // O gate anuncia validacao e regeracao sem a pausa cosmetica: essas
+            // mensagens acompanham trabalho que leva segundos, nao milissegundos.
+            const estagioDoGate: EmitirEstagio = async texto => {
+                emitir('estagio', { texto });
+            };
+
+            // Cliente que desiste (o lote cancelado, a aba fechada) aborta o que
+            // ainda nao comecou: sem isto o gate seguiria gerando tentativa apos
+            // tentativa para ninguem, prendendo o motor.
+            const controlador = new AbortController();
+            req.on('close', () => controlador.abort());
 
             try {
                 const resultado =
-                    dominio === 'med'
-                        ? await processarMed(texto, estagio, corpo.contexto)
-                        : dominio === 'agro'
-                          ? await processarAgro(texto, estagio, corpo.contexto)
-                          : await processarFut(texto, estagio, corpo.contexto);
+                    corpo.validacao?.ativa === true
+                        ? await processarComGate(dominio, texto, estagio, estagioDoGate, corpo.contexto, corpo.validacao, controlador.signal)
+                        : await processarDominio(dominio, texto, estagio, corpo.contexto);
                 emitir('final', resultado);
             } catch (error) {
                 emitir('erro', { erro: (error as Error).message });
@@ -846,7 +1008,12 @@ const servidor = http.createServer(async (req, res) => {
 servidor.listen(PORT, () => {
     console.log(`API do SPC-CML no ar em http://localhost:${PORT}`);
     console.log(`  GET  /api/dominios`);
-    console.log(`  POST /api/comando   { dominio: 'med'|'agro'|'fut', texto: string }  (SSE: event "estagio"*, "final"|"erro")`);
+    console.log(
+        `  POST /api/comando   { dominio: 'med'|'agro'|'fut', texto: string, contexto?: {}, validacao?: { ativa, maxTentativas, juiz } }  (SSE: event "estagio"*, "final"|"erro")`
+    );
+    console.log(
+        `                      validacao.ativa: gate — gera, avalia (sintaxe/semantica/oraculo [+ juiz LLM]) e regera ate aprovar (criterio ${GATE_CRITERIO}, teto ${GATE_MAX_TENTATIVAS}, juiz ${GATE_JUIZ ? 'on' : 'off'})`
+    );
     console.log(`  GET  /api/chats`);
     console.log(`  POST /api/chats     { dominio: 'med'|'agro'|'fut', mensagens: [] }`);
     console.log(`  GET  /api/chats/:id`);

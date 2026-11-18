@@ -87,11 +87,12 @@ const resposta = computed<RespostaAvaliacao>(() => {
         const numero = registro.linha ?? indice + 1;
         const linha = grupos.get(numero) ?? { linha: numero, intencao: registro.intencao ?? '', temDivergencia: false, temDiscordancia: false };
         const lado = registro.lado;
-        if (lado === 'arquitetura' || lado === 'baseline') {
-            linha[lado] = detalhe(registro);
-            linha.temDivergencia ||= registro.violacao === true || (registro.oraculo?.veredito !== undefined && registro.oraculo.veredito !== 'VALID');
-            linha.temDiscordancia ||= registro.concordancia === false || registro.classificacao === 'DISCORDANCIA_LLM';
-        }
+        // Registro sem lado não é um plano avaliado (ex.: a linha de resumo que o
+        // lote escreve no fim do arquivo): não vira linha da tabela.
+        if (lado !== 'arquitetura' && lado !== 'baseline') return;
+        linha[lado] = detalhe(registro);
+        linha.temDivergencia ||= registro.violacao === true || (registro.oraculo?.veredito !== undefined && registro.oraculo.veredito !== 'VALID');
+        linha.temDiscordancia ||= registro.concordancia === false || registro.classificacao === 'DISCORDANCIA_LLM';
         grupos.set(numero, linha);
     });
     const linhas = [...grupos.values()].sort((a, b) => a.linha - b.linha);
@@ -103,7 +104,12 @@ const resposta = computed<RespostaAvaliacao>(() => {
         naoAvaliados: props.registros.filter(r => r.naoAvaliado === true).length,
         linhas,
         arquivoJsonl: props.nomeArquivo,
-        tempoTotalSegundos: props.registros.find(r => typeof r.tempoTotalSegundos === 'number')?.tempoTotalSegundos,
+        // Num arquivo de resultados do lote, `tempoTotalSegundos` é o tempo de
+        // GERAÇÃO de um cenário — lá o total da avaliação vem em
+        // `tempoAvaliacaoTotalSegundos`, que por isso tem preferência.
+        tempoTotalSegundos:
+            props.registros.find(r => typeof r.tempoAvaliacaoTotalSegundos === 'number')?.tempoAvaliacaoTotalSegundos ??
+            props.registros.find(r => typeof r.tempoTotalSegundos === 'number')?.tempoTotalSegundos,
         tempoSintaxeSegundos: totalDoArquivo('tempoSintaxeSegundos', 'sintaxeMs'),
         tempoOraculoSegundos: totalDoArquivo('tempoOraculoSegundos', 'oraculoMs'),
         tempoLlmJudgeSegundos: totalDoArquivo('tempoLlmJudgeSegundos', 'llmJudgeMs'),

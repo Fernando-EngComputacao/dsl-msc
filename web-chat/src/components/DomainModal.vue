@@ -11,6 +11,15 @@ const emit = defineEmits<{
     selecionar: [id: string];
     cancelar: [];
 }>();
+
+// `any` e o tipo que o proprio Vue usa nos exemplos de `defineSlots`: o retorno
+// de um slot precisa ser compativel com `Slot` (VNode[]).
+defineSlots<{
+    /** O gatilho do modal: o botão que o abre. */
+    default?(): any;
+    /** Opções de quem abriu o modal — no lote, o gate da geração. */
+    rodape?(): any;
+}>();
 </script>
 
 <template>
@@ -38,6 +47,12 @@ const emit = defineEmits<{
                     <span class="text-xs text-neutral-500 dark:text-neutral-400">{{ d.descricao }}</span>
                 </span>
             </button>
+
+            <!-- Opções de quem abre o modal (no lote: o gate da geração). Fora do painel
+                 de escolha, para um clique aqui não selecionar um modelo sem querer. -->
+            <div v-if="$slots.rodape" class="mt-1.5 border-t border-neutral-200 px-3 pt-2.5 pb-1 dark:border-white/10">
+                <slot name="rodape" />
+            </div>
         </div>
     </div>
 </template>

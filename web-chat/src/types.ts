@@ -1,8 +1,8 @@
-import type { PIPlanejado, RespostaComando } from './api';
-import type { TemposCenario } from './tempos-lote';
+import type { CriterioGate, DetalheLado, PIPlanejado, RespostaComando, ResumoGate } from './api';
+import type { TemposCenario, TemposGateCenario } from './tempos-lote';
 
 /** Os campos de tempo (ver tempos-lote.ts) vêm depois dos campos de resultado, em toda linha. */
-export interface ItemResultadoLote extends Partial<TemposCenario> {
+export interface ItemResultadoLote extends Partial<TemposCenario>, Partial<TemposGateCenario> {
     linha: number;
     intencao: string;
     aceito: boolean;
@@ -20,12 +20,22 @@ export interface ItemResultadoLote extends Partial<TemposCenario> {
      * dependências (e sem as relações que cada PI Agent viu no prompt).
      */
     execucaoMultiagente?: { status: string; sequenciaValidada?: PIPlanejado[] };
+    /**
+     * Só com o gate da geração ligado: a avaliação do plano que ficou, nas
+     * mesmas camadas separadas da tela de avaliação (sintaxe, semântica,
+     * oráculo, juiz). É o que torna o JSONL do lote já avaliado.
+     */
+    avaliacao?: DetalheLado;
+    /** Só com o gate ligado: tentativas, vereditos descartados e o custo de cada parte. */
+    geracaoValidada?: ResumoGate;
 }
 
 export interface LoteEstado {
     nomeArquivo: string;
     total: number;
     concluidos: number;
+    /** O gate pedido quando este lote começou (ausente: lote sem validação). */
+    validacao?: { maxTentativas: number; criterio: CriterioGate; juiz: boolean };
     cancelado: boolean;
     finalizado: boolean;
     estagioAtual?: string;

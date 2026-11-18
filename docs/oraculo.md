@@ -59,6 +59,45 @@ Gerar o plano é tarefa do LLM, sob uma gramática que restringe o que ele conse
 
 O Oráculo é a parte determinística da avaliação de planos **já gerados**: a tela "Avaliar resultados", `POST /api/avaliar`. O ponto de entrada é [`avaliarPlano`](../src/inference/avaliar-grafo.ts#L806) e a sintaxe fica em [avaliar-sintaxe.ts](../src/inference/avaliar-sintaxe.ts). Os validadores semânticos são **os mesmos** que a geração multiagente usa para aceitar ou recusar o que o Planner e cada PI Agent propõem. O Oráculo não tem critério próprio.
 
+O mesmo Oráculo também fecha o laço da **geração em lote** (§2.4): lá ele decide, sozinho ou junto com o LLM Judge, se o plano fica ou se o cenário volta para a geração.
+
+### 2.4 O gate da geração em lote
+
+No chat, um arquivo `.jsonl`/`.csv` de cenários pode ser processado em lote. Com o gate ligado, cada cenário não termina na geração: o plano passa pela cascata completa deste documento e, se for **reprovado**, é descartado e gerado outra vez — até ser aprovado ou bater o teto de tentativas. Só então o lote passa para a próxima linha do arquivo.
+
+```mermaid
+flowchart LR
+    C["cenário do .jsonl"] --> G["geração restrita<br/>(pipeline completo)"]
+    G --> O["avaliação<br/>sintaxe → semântica → Oráculo<br/>‖ LLM Judge"]
+    O -->|"critério aprova"| F["linha pronta:<br/>plano + avaliação"]
+    F --> C
+    O -->|reprova| T{"sobrou<br/>tentativa?"}
+    T -->|sim| G
+    T -->|não| L["linha com o último plano<br/>reprovado e limiteAtingido"]
+```
+
+**Quem reprova é o `criterio`**, escolhido no modal de upload do lote:
+
+| critério | quem decide repetir | efeito |
+|---|---|---|
+| `ambos` (padrão) | Oráculo **e** LLM Judge | o plano só fica com `VALID` nos dois — o mais estrito |
+| `oraculo` | só o veredito normativo | o juiz pode rodar e entra no registro, sem decidir nada |
+| `juiz` | só o LLM Judge | **deixa passar plano que o Oráculo reprovou** (o registro mostra os dois vereditos) |
+
+Pontos que importam para a leitura dos resultados:
+
+- **O Oráculo continua o veredito normativo**, qualquer que seja o critério: em `ambos` ele é consultado primeiro, e o veredito dele vai para o registro de toda linha — inclusive quando o critério é `juiz` e ele foi contrariado. Nada é sobrescrito.
+- **Efeito de seleção, quando o juiz participa do critério.** Nas linhas que ficaram ele não é mais um observador independente: elas foram escolhidas por agradá-lo. A concordância Oráculo × Juiz medida *sobre essas linhas* não é mais uma comparação limpa (§7) — a medida limpa está nas **tentativas descartadas**, que o arquivo guarda (plano, os dois vereditos, a justificativa do juiz, os códigos do Oráculo e os tempos).
+- **Repetir só muda algo porque a geração é amostrada** (temperatura > 0 no motor): a mesma entrada produz planos diferentes. Nada garante que uma hora seja aprovado, e é por isso que existe um teto.
+- **O teto batido não é maquiado.** A linha sai com o último plano reprovado, o veredito real, quem reprovou (`fonte`) e `limiteAtingido`.
+- **Falha técnica não é defeito do plano.** `naoAvaliado` (grafo fora, motor fora, telemetria insuficiente) e juiz `NO_RESPONSE`/`NOT_CALLED` por padrão não disparam nova geração — gerar de novo não conserta a causa: a linha sai marcada com o motivo. Exceção legítima: juiz `NOT_CALLED` **porque a sintaxe saiu `INVALID`** (o juiz só julga o que o parser reconheceu) é defeito do plano, e aí o gate repete.
+- **A taxa de acerto da primeira geração continua recuperável** do arquivo, ligado o gate ou não.
+- **Os tempos não se misturam.** `tempoTotalMs` da linha continua sendo só a geração do plano que ficou; as gerações descartadas, as avaliações e o relógio do cenário inteiro têm campos próprios.
+
+Onde está: o laço e a tabela de decisão (`decidirGate`) em [geracao-validada.ts](../src/inference/geracao-validada.ts), ligados a `POST /api/comando` por `validacao.ativa` ([`processarComGate`](../src/web/server.ts)); as dependências da cascata são as mesmas de `/api/avaliar` (`dependenciasAvaliacao`). Os padrões do servidor são `SPC_CML_GATE_CRITERIO` (`ambos`), `SPC_CML_GATE_MAX_TENTATIVAS` (3), `SPC_CML_GATE_TETO_TENTATIVAS` (20) e `SPC_CML_GATE_JUIZ` (ligado — só vale no critério `oraculo`; nos outros o juiz é obrigatório).
+
+Consequência prática: o arquivo baixado pelo lote **já sai avaliado**, no mesmo formato do JSONL da avaliação (com `dominio`, `lado` e as camadas separadas), e pode ser aberto direto em "Importar resultado" — reavaliar em "Julgar resultado" passa a ser uma escolha, não uma etapa obrigatória.
+
 ## 3. Funcionamento de ponta a ponta
 
 ```mermaid
@@ -320,6 +359,8 @@ A linha do foco é a mais delicada. O foco é **aproximado** (similaridade de ve
 **Tratamento da discordância** ([`compararAvaliacoes`](../src/inference/avaliar-grafo.ts#L636)): se os dois dão o mesmo veredito, a linha é classificada pelo Oráculo (`VALIDO_PELO_ORACULO`, `INVALIDO_PELO_ORACULO`, `UNRESOLVIDO_PELO_ORACULO`). Qualquer outra combinação é `DISCORDANCIA_LLM`, e o veredito do Oráculo **fica como estava**: `UNRESOLVED` continua `UNRESOLVED`, mesmo que o juiz diga `VALID` ou `INVALID` (teste "caso 4 / teste D"). O juiz nunca corrige o Oráculo, e o Oráculo nunca corrige o juiz. A discordância é registrada e medida.
 
 Discordância não prova que o Oráculo errou: o juiz pode estar inventando uma regra, ou o Oráculo pode não ter formalizada uma regra que o juiz percebeu. Concordância também não prova correção absoluta: os dois podem compartilhar a mesma lacuna do conhecimento. Quando o juiz responde `UNRESOLVED`, um diagnóstico opcional ([diagnostico-juiz.ts](../src/inference/diagnostico-juiz.ts)) explica a indeterminação **dele**. Também não é veredito e não altera nada.
+
+> ⚠️ Tudo acima vale para a avaliação de planos já gerados, onde o juiz é um observador. No **gate da geração** (§2.4) ele pode, por escolha explícita, participar do critério que manda o plano de volta para a geração. Isso não muda nada na tabela — ele continua sem ver as camadas determinísticas, e o veredito do Oráculo continua intacto no registro —, mas muda o que a *concordância medida sobre as linhas que ficaram* significa: elas foram selecionadas por agradar ao juiz. Para essa medida, use as tentativas descartadas (ou um lote com `criterio: 'oraculo'`, ou com o gate desligado).
 
 ## 8. Estudo de caso: impedimento na DSL de futebol
 

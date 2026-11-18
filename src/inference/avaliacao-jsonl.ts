@@ -12,7 +12,15 @@ export interface RegistroAvaliacaoImportado {
     oraculo?: { veredito?: string; origem?: string; [campo: string]: unknown };
     /** `diagnostico` só existe com status UNRESOLVED, e só em avaliações feitas depois dele (ver diagnostico-juiz.ts). */
     julgamentoLLM?: { status?: string; diagnostico?: { status?: string; [campo: string]: unknown }; [campo: string]: unknown };
+    /** Total da AVALIACAO inteira (arquivo `evalueted_*.jsonl`). */
     tempoTotalSegundos?: number;
+    /**
+     * Total da AVALIACAO num arquivo de RESULTADOS do lote (`results_*.jsonl`
+     * gerado com o gate da geracao, ver web-chat/src/resultados-lote.ts): lá
+     * `tempoTotalSegundos` ja e o tempo de GERACAO de um cenario, então o total
+     * da avaliacao tem nome proprio. Quem lê prefere este quando existe.
+     */
+    tempoAvaliacaoTotalSegundos?: number;
     tempoSintaxeSegundos?: number;
     tempoOraculoSegundos?: number;
     tempoLlmJudgeSegundos?: number;

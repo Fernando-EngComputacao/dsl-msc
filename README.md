@@ -643,6 +643,29 @@ flowchart LR
     style OK fill:#e6f4ea
 ```
 
+### O gate da geração em lote (`/api/comando` com `validacao.ativa`)
+
+O lote do chat pode fechar o laço na própria geração: cada cenário gera o plano, o plano passa pela **mesma** cascata da seção seguinte e, se for **reprovado**, é descartado e **gerado de novo**, até ser aprovado ou bater o teto de tentativas — só então o lote vai para a próxima linha do arquivo. O laço e a tabela de decisão (`decidirGate`) estão em [geracao-validada.ts](src/inference/geracao-validada.ts), ligados por `processarComGate` ([server.ts](src/web/server.ts)); as dependências da cascata são as mesmas de `/api/avaliar` (`dependenciasAvaliacao`).
+
+**Quem reprova é o `criterio`** (escolhido no modal de upload do lote; padrão `SPC_CML_GATE_CRITERIO`):
+
+| critério | decide repetir | efeito |
+|---|---|---|
+| `ambos` (padrão) | oráculo **e** LLM Judge | o plano só fica com `VALID` nos dois — o mais estrito |
+| `oraculo` | só o veredito normativo | o juiz pode rodar (`juiz: true`) e vai para o registro, sem decidir |
+| `juiz` | só o LLM Judge | **deixa passar plano que o oráculo reprovou**; o registro guarda os dois vereditos |
+
+- O **oráculo continua o veredito normativo** em qualquer critério, e vai para o registro de toda linha — inclusive quando o critério é `juiz` e ele foi contrariado. Nada é sobrescrito.
+- **Efeito de seleção com o juiz no critério:** nas linhas que ficaram ele não é mais observador independente (foram escolhidas por agradá-lo), então a concordância medida sobre elas não é comparação limpa. A medida limpa está nas tentativas descartadas, que guardam plano, os dois vereditos, a justificativa do juiz, os códigos do oráculo e os tempos.
+- Repetir só muda algo porque a geração é **amostrada** (`SPC_CML_TEMPERATURA` > 0): nada garante que uma hora seja aprovado, e por isso há teto (`SPC_CML_GATE_MAX_TENTATIVAS`, 3; o pedido do lote pode subir até `SPC_CML_GATE_TETO_TENTATIVAS`, 20).
+- Teto batido **não é maquiado**: a linha sai com o último plano reprovado, o veredito real, quem reprovou (`fonte`) e `limiteAtingido`.
+- **Falha técnica não é defeito do plano** e por padrão não dispara nova geração (`repetirNaoAvaliado: true` muda): `naoAvaliado` (grafo, motor, telemetria insuficiente) e juiz `NO_RESPONSE`/`NOT_CALLED`. Exceção: juiz `NOT_CALLED` **porque a sintaxe saiu `INVALID`** é defeito do plano — aí o gate repete.
+- A taxa de acerto da **primeira** geração continua recuperável do arquivo, com o gate ligado ou não.
+- Os tempos não se misturam: `tempoTotalMs` da linha continua sendo só a geração do plano que ficou; gerações descartadas, avaliações e o relógio do cenário inteiro têm campos próprios (`tempoGeracaoDescartadaMs`, `tempoValidacaoMs`, `tempoCenarioMs`, `tentativasGeracao`).
+- Cliente que desiste (lote cancelado) aborta o laço: nenhuma tentativa nova começa depois do `close` da conexão.
+
+Com o gate ligado, o JSONL que o lote baixa **já sai avaliado**, no mesmo formato do JSONL da avaliação (`dominio`, `lado` e as camadas separadas, ver [resultados-lote.ts](web-chat/src/resultados-lote.ts)): ele pode ser aberto direto em "Importar resultado", e continua aceito em "Julgar resultado" — reavaliar passa a ser escolha, não etapa obrigatória.
+
 ### Avaliação dos planos já gerados (`/api/avaliar`): sintaxe → AST → (semântica → oráculo ‖ LLM Judge) → comparação
 
 > **[Oráculo do SPC-CML — funcionamento e validação formal](docs/oraculo.md)**: explicação passo a passo do Oráculo, do que o torna determinístico e dos seus limites, com um estudo de caso na DSL de futebol. A inspeção do código, com evidências e lacunas, está no [relatório de auditoria](docs/auditoria-oraculo.md).
@@ -1017,14 +1040,29 @@ Nenhum campo de política da resposta anuncia uma decisão que a gramática inic
 
 ```jsonc
 // entrada
-{ "dominio": "med", "texto": "PAM 52, sobe a nora", "contexto": { /* opcional */ } }
+{ "dominio": "med", "texto": "PAM 52, sobe a nora", "contexto": { /* opcional */ },
+  // opcional, so o lote manda: gate da geracao
+  // criterio: "ambos" (padrao) | "oraculo" | "juiz" — quem reprova e manda gerar de novo
+  "validacao": { "ativa": true, "maxTentativas": 5, "criterio": "ambos" } }
 
 // event: final
 { "aceito": true, "sorteio": {...}, "foco": {...}, "promptSemantico": "...",
   "decisoesAdmissiveis": [...], "resultado": "plano ...", "valido": true,
   "erroMotor": null, "regrasEmGHat": ...,
   "auditoriaRecuperacao": { "id": "rec-...", "modo": "...", "validacao": [...],
-                            "politicas": [...], "reconciliacaoPolitica": {...} } }
+                            "politicas": [...], "reconciliacaoPolitica": {...} },
+  // so com "validacao.ativa": a avaliacao do plano que ficou e o desfecho do gate
+  "avaliacao": { "validacaoSintatica": {...}, "ast": {...}, "validacaoSemantica": {...},
+                 "oraculo": { "veredito": "VALID", "origem": "semantica" },
+                 "julgamentoLLM": {...}, "classificacao": "...", "tempos": {...} },
+  "geracaoValidada": { "tentativas": 2, "maxTentativas": 5, "criterio": "ambos",
+                       "aceita": true, "veredito": "VALID", "fonte": "juiz",
+                       "oraculo": "VALID", "juiz": "VALID", "limiteAtingido": false,
+                       "tempoGeracaoAceitaMs": ..., "tempoGeracaoDescartadaMs": ...,
+                       "tempoAvaliacaoMs": ..., "descartadas": [ { "tentativa": 1,
+                         "plano": "...", "veredito": "INVALID", "fonte": "juiz",
+                         "oraculo": "VALID", "juiz": "INVALID", "codigos": [],
+                         "justificativaJuiz": "..." } ] } }
 ```
 
 Com `contexto`, o cenário vem do corpo em vez do sorteio. `focoIndisponivel` aparece quando o foco falhou. Com `SPC_CML_VALIDACAO_ATIVA=true` e o comando recusado, o `final` traz `aceito: false`, `motivoValidacao`, `sorteio`, `foco` e `promptSemantico`, sem `decisoesAdmissiveis` nem `auditoriaRecuperacao`. `violacoes`, `conforme`, `tentativas` e `historico` da decodificação nunca são repassados.
@@ -1058,6 +1096,10 @@ Os três do multiagente são limitados a [1, 10]: valor não numérico cai no pa
 ### Motor
 
 `SPC_CML_DOMINIO` (`medico`) · `SPC_CML_BACKEND` (`llamacpp`) · `SPC_CML_GGUF_REPO` / `_FILE` · `SPC_CML_EMBED_GGUF_REPO` / `_FILE` · `SPC_CML_N_CTX` (8192) · `SPC_CML_MAX_TOKENS` (1024) · `SPC_CML_MAX_ITENS` (4) · `SPC_CML_N_GPU_LAYERS` (-1) · `SPC_CML_TEMPERATURA` (0.3) · `SPC_CML_REPEAT_PENALTY` (1.15) · `SPC_CML_GRAMMAR` · `SPC_CML_EXAMPLES` · `SPC_CML_INICIO`
+
+### Avaliação e gate da geração
+
+`SPC_CML_AVALIAR_DIAGNOSTICO` (ligado) · `SPC_CML_AVALIAR_JULGAR_SINTAXE_INVALIDA` (`false`) · `SPC_CML_DIAGNOSTICO_MAX_TOKENS` (1800) · `SPC_CML_GATE_CRITERIO` (`ambos`: quem reprova no gate do lote — `ambos` \| `oraculo` \| `juiz`) · `SPC_CML_GATE_MAX_TENTATIVAS` (3: gerações por cenário, quando o pedido não diz) · `SPC_CML_GATE_TETO_TENTATIVAS` (20: o máximo que o pedido pode pedir) · `SPC_CML_GATE_JUIZ` (ligado: chama o LLM Judge mesmo no critério `oraculo`, só para o registro; nos critérios com juiz ele é obrigatório)
 
 ### Serviços
 
