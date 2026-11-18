@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ChatSidebar from "./components/ChatSidebar.vue";
+import ComplexidadeModal from "./components/ComplexidadeModal.vue";
 import { novoChat } from "./chat";
 import { escuro, iniciarTema, alternarTema } from "./theme";
 import logoUfg from "./assets/imgs/logo_ufg.png";
@@ -10,6 +11,8 @@ const route = useRoute();
 const router = useRouter();
 
 const sidebarAberta = ref(false);
+/** Modal da complexidade da arquitetura (botão no header). */
+const complexidadeAberta = ref(false);
 
 const emAvaliacao = computed(() => route.path === "/avaliar");
 
@@ -187,6 +190,25 @@ function aoClicarNovoChat(): void {
           <button
             type="button"
             class="flex h-9 w-9 items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-white/10"
+            title="Complexidade da arquitetura e do código"
+            @click="complexidadeAberta = true"
+          >
+            <!-- Ω: a notação assintótica é o assunto do modal -->
+            <svg width="18" height="18" viewBox="0 0 24 24">
+              <path
+                d="M7 20h3.2a6 6 0 113.6 0H17"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            class="flex h-9 w-9 items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-white/10"
             @click="alternarTema"
             :title="escuro ? 'Mudar para tema claro' : 'Mudar para tema escuro'"
           >
@@ -222,5 +244,7 @@ function aoClicarNovoChat(): void {
 
       <RouterView />
     </div>
+
+    <ComplexidadeModal :aberto="complexidadeAberta" @fechar="complexidadeAberta = false" />
   </div>
 </template>

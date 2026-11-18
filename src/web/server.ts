@@ -53,6 +53,7 @@ import {
     agregarMetricas,
     avaliarPlano,
     detalheNaoAvaliado,
+    geracaoDoPlano,
     juizLLMHttp,
     listaDe,
     montarLinha,
@@ -61,6 +62,7 @@ import {
     sinaisDe,
     type BlocoTelemetriaGrafo,
     type DependenciasAvaliacao,
+    type GeracaoDoPlano,
     type DetalheLado,
     type DetalheLinha,
     type RegistroAvaliarGrafo,
@@ -68,6 +70,7 @@ import {
 } from '../inference/avaliar-grafo.js';
 import { gerarComGate, type CriterioGate, type ResumoGate } from '../inference/geracao-validada.js';
 import { diagnosticadorLLMHttp } from '../inference/diagnostico-juiz.js';
+import { tokenizadorHttp, type Tokenizador } from '../inference/motor-http.js';
 import { criarAnalisadorDsl, verificadorDaDsl } from '../inference/avaliar-sintaxe.js';
 
 const ENGINE = process.env.SPC_CML_ENDPOINT ?? 'http://127.0.0.1:8000';
@@ -534,8 +537,12 @@ function avaliarRegistro(dominio: 'med' | 'agro' | 'fut', registro: RegistroAval
  *  em lote (/api/comando com `validacao.ativa`). `pularJuiz` so existe para o
  *  gate, e so quando o criterio e `oraculo`: nos criterios com juiz ele e
  *  obrigatorio (ver processarComGate). */
+function motorDoDominio(dominio: 'med' | 'agro' | 'fut'): string {
+    return dominio === 'med' ? ENGINE : dominio === 'agro' ? ENGINE_AGRO : ENGINE_FUT;
+}
+
 function dependenciasAvaliacao(dominio: 'med' | 'agro' | 'fut', sinal: AbortSignal, pularJuiz = false): DependenciasAvaliacao {
-    const motor = dominio === 'med' ? ENGINE : dominio === 'agro' ? ENGINE_AGRO : ENGINE_FUT;
+    const motor = motorDoDominio(dominio);
     const verificador = verificadorGramaticaHttp(motor, TIMEOUT_MS);
     return {
         abrirSessao: () => driver.session(),
@@ -595,7 +602,7 @@ const GATE_CRITERIO: CriterioGate = (() => {
 })();
 
 /** O critério pedido, se for um dos tres; senao o padrao do servidor. */
-function criterioDoPedido(valor: unknown): CriterioGate {
+function criterioDoPedido(valor: string | undefined): CriterioGate {
     return valor === 'oraculo' || valor === 'juiz' || valor === 'ambos' ? valor : GATE_CRITERIO;
 }
 
@@ -683,6 +690,49 @@ function gravarAvaliacao(dominio: 'med' | 'agro' | 'fut', resultado: ResultadoAv
     return nome;
 }
 
+/**
+ * Conta tokens do Prompt Semantico e do plano no motor, uma linha por vez.
+ * Assim que o motor diz que nao sabe (rota ausente, backend sem tokenizador),
+ * DESISTE: nao repete a chamada condenada em cada uma das N linhas. Sem tokens,
+ * os campos simplesmente nao existem — a analise mostra "—" e nenhuma
+ * estimativa toma o lugar deles.
+ */
+function contadorDeTokens(tokenizar: Tokenizador): (
+    prompt: string | undefined,
+    plano: string | undefined,
+    sinal: AbortSignal
+) => Promise<Pick<GeracaoDoPlano, 'tokensPrompt' | 'tokensPlano'>> {
+    let disponivel = true;
+    return async (prompt, plano, sinal) => {
+        const temPrompt = typeof prompt === 'string' && prompt.length > 0;
+        const temPlano = typeof plano === 'string' && plano.length > 0;
+        if (!disponivel || (!temPrompt && !temPlano)) return {};
+        const tokens = await tokenizar([prompt ?? '', plano ?? ''], sinal);
+        if (tokens === null) {
+            disponivel = false;
+            return {};
+        }
+        return {
+            ...(temPrompt ? { tokensPrompt: tokens[0] } : {}),
+            ...(temPlano ? { tokensPlano: tokens[1] } : {})
+        };
+    };
+}
+
+/** Anexa ao lado avaliado o bloco `geracao` (tempos repassados + tamanhos). */
+async function comGeracao(
+    registro: RegistroAvaliarGrafo,
+    lado: DetalheLado,
+    contar: ReturnType<typeof contadorDeTokens>,
+    sinal: AbortSignal
+): Promise<DetalheLado> {
+    const geracao: GeracaoDoPlano = {
+        ...(geracaoDoPlano(registro, lado.plano) ?? {}),
+        ...(await contar(registro.promptSemantico, lado.plano, sinal))
+    };
+    return Object.keys(geracao).length > 0 ? { ...lado, geracao } : lado;
+}
+
 /** Julga arquitetura e depois baseline, sequencialmente — a engine ja serializa
  *  geracao via um lock interno (um modelo, uma chamada por vez), entao
  *  paralelizar aqui so complicaria o cancelamento sem ganhar tempo real. */
@@ -700,17 +750,22 @@ async function avaliarComGrafo(
     const total = (arquitetura?.length ?? 0) + (baseline?.length ?? 0);
     let processados = 0;
 
+    // Tokens do Prompt Semantico e do plano: medidos no motor, por linha.
+    const contarTokens = contadorDeTokens(tokenizadorHttp(motorDoDominio(dominio), TIMEOUT_MS));
+
     const ladosArq = new Map<RegistroAvaliarGrafo, DetalheLado>();
     for (const registro of arquitetura ?? []) {
         if (sinal.aborted) break;
-        ladosArq.set(registro, await avaliarRegistro(dominio, registro, deps));
+        const lado = await avaliarRegistro(dominio, registro, deps);
+        ladosArq.set(registro, await comGeracao(registro, lado, contarTokens, sinal));
         onProgresso(++processados, total);
     }
 
     const ladosBase = new Map<RegistroAvaliarGrafo, DetalheLado>();
     for (const registro of baseline ?? []) {
         if (sinal.aborted) break;
-        ladosBase.set(registro, await avaliarRegistro(dominio, registro, deps));
+        const lado = await avaliarRegistro(dominio, registro, deps);
+        ladosBase.set(registro, await comGeracao(registro, lado, contarTokens, sinal));
         onProgresso(++processados, total);
     }
 

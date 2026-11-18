@@ -33,6 +33,29 @@ export interface RegistroAvaliacaoImportado {
     concordancia?: boolean;
     classificacao?: string;
     tempos?: { sintaxeMs?: number; recuperacaoMs?: number; oraculoMs?: number | null; llmJudgeMs?: number | null; diagnosticoMs?: number; paraleloMs?: number; totalMs?: number };
+    /**
+     * Tempos e tamanhos da GERACAO deste plano (ver `GeracaoDoPlano`,
+     * avaliar-grafo.ts): escrito pela avaliacao em cada registro. Num
+     * `results_*.jsonl` do lote esses campos estao no nivel de cima do registro
+     * (`tempoTotalMs`, `tempoValidacaoMs`, ...) em vez de aqui — a tela de
+     * importacao aceita as duas formas.
+     */
+    geracao?: {
+        tempoTotalMs?: number;
+        tempoSequenciasMs?: number | null;
+        tempoPIsValidasMs?: number | null;
+        tempoValidacaoPlanosMs?: number | null;
+        tempoValidacaoMs?: number;
+        tempoGeracaoDescartadaMs?: number;
+        tempoCenarioMs?: number;
+        tentativasGeracao?: number;
+        charsPedido?: number;
+        charsPrompt?: number;
+        charsPlano?: number;
+        tokensPrompt?: number;
+        tokensPlano?: number;
+        [campo: string]: unknown;
+    };
     [campo: string]: unknown;
 }
 

@@ -27,7 +27,8 @@
 
 import assert from 'node:assert/strict';
 
-import type { DetalheLado, StatusJuiz, Veredito } from '../inference/avaliar-grafo.js';
+import type { Veredito } from '../knowledge/validacao.js';
+import type { DetalheLado, StatusJuiz } from '../inference/avaliar-grafo.js';
 import {
     codigosReprovacao,
     decidirGate,

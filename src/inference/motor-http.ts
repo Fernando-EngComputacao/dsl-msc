@@ -34,3 +34,29 @@ export async function postarJsonNoMotor(motor: string, rota: string, corpo: unkn
     }
     return response.json();
 }
+
+/**
+ * Contagem de tokens no motor (`/tokenizar`), com o MESMO tokenizador do modelo
+ * que gerou os planos — é o que permite medir tempo por token sem estimar nada.
+ *
+ * Nunca derruba quem chama: motor antigo (sem a rota), backend sem tokenizador
+ * (responde 501) ou qualquer falha devolvem `null`, e a análise mostra "—" em
+ * vez de um número inventado. Só o cancelamento propaga.
+ */
+export type Tokenizador = (textos: readonly string[], sinal: AbortSignal) => Promise<number[] | null>;
+
+export function tokenizadorHttp(motor: string, timeoutMs: number): Tokenizador {
+    return async (textos, sinal) => {
+        if (textos.length === 0) return [];
+        let resposta: unknown;
+        try {
+            resposta = await postarJsonNoMotor(motor, '/tokenizar', { textos }, timeoutMs, sinal);
+        } catch (error) {
+            if (sinal.aborted) throw error;
+            return null;
+        }
+        const tokens = (resposta as { tokens?: unknown }).tokens;
+        if (!Array.isArray(tokens) || tokens.length !== textos.length) return null;
+        return tokens.every(t => typeof t === 'number' && Number.isFinite(t)) ? (tokens as number[]) : null;
+    };
+}

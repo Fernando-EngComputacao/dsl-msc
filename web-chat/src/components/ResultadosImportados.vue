@@ -7,6 +7,10 @@ import ComparacaoLinhas from './ComparacaoLinhas.vue';
 import GraficosAvaliacao from './GraficosAvaliacao.vue';
 import TemposAvaliacao from './TemposAvaliacao.vue';
 import TempoGeracaoPlanos from './TempoGeracaoPlanos.vue';
+import TempoPilha from './TempoPilha.vue';
+import TempoPorTamanho from './TempoPorTamanho.vue';
+import TempoPorPlano from './TempoPorPlano.vue';
+import { geracaoDoRegistroImportado } from '../tempos-plano';
 import AvaliacaoLLM from './AvaliacaoLLM.vue';
 import NavegacaoResultado, { type AbaResultado } from './NavegacaoResultado.vue';
 
@@ -56,7 +60,10 @@ function detalhe(r: RegistroAvaliacaoImportado): DetalheLado {
         julgamentoLLM: r.julgamentoLLM as unknown as DetalheLado['julgamentoLLM'],
         concordancia: r.concordancia,
         classificacao: r.classificacao as DetalheLado['classificacao'],
-        tempos: r.tempos as DetalheLado['tempos']
+        tempos: r.tempos as DetalheLado['tempos'],
+        // Tempos/tamanhos da geração: o bloco que a avaliação grava, ou os campos
+        // soltos que o results_…jsonl do lote traz — as duas formas chegam aqui.
+        geracao: geracaoDoRegistroImportado(r)
     };
 }
 
@@ -174,6 +181,9 @@ function veredito(valor: unknown): valor is Veredito {
             <div v-show="mostra('tempo')" class="animate-fade-in-up flex flex-col gap-6">
                 <TempoGeracaoPlanos :resposta="resposta" origem="importacao" />
                 <TemposAvaliacao :resposta="resposta" origem="importacao" />
+                <TempoPilha :resposta="resposta" origem="importacao" />
+                <TempoPorTamanho :resposta="resposta" origem="importacao" />
+                <TempoPorPlano :resposta="resposta" origem="importacao" />
             </div>
         </div>
         <!-- 

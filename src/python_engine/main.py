@@ -432,6 +432,10 @@ class EmbedRequest(BaseModel):
     texto: str = Field(..., description="Texto a converter em vetor para busca por similaridade no Neo4j")
 
 
+class TokenizarRequest(BaseModel):
+    textos: list[str] = Field(..., description="Textos a contar em tokens, com o tokenizador do modelo de geracao")
+
+
 class ICURequest(BaseModel):
     comando_humano: str = Field(..., description="Fala do profissional, em linguagem natural")
     contexto_neo4j: str = Field("", description="Prompt Semantico: regras recuperadas do grafo")
@@ -619,6 +623,32 @@ def embed(req: EmbedRequest):
     with _LLAMA_LOCK:
         vetor = get_embedder().create_embedding(req.texto)["data"][0]["embedding"]
     return {"vetor": vetor, "dimensoes": len(vetor)}
+
+
+@app.post("/tokenizar")
+def tokenizar(req: TokenizarRequest):
+    """
+    Conta tokens com o MESMO tokenizador do modelo que gerou os planos.
+
+    Existe para a analise de tempos da avaliacao (tempo por token, tamanho do
+    input em tokens): sem isto o lado TypeScript so teria caracteres, e estimar
+    token a partir de caractere seria inventar numero. Nao gera nada — so
+    tokeniza, em milissegundos.
+
+    So no backend llamacpp (o padrao). Com SPC_CML_BACKEND=outlines nao ha
+    tokenizador GGUF carregado, e carregar o modelo inteiro so para contar seria
+    pior do que nao contar: responde 501, e a avaliacao segue sem a coluna de
+    tokens (nenhuma estimativa toma o lugar dela).
+    """
+    if BACKEND != "llamacpp":
+        raise HTTPException(
+            status_code=501,
+            detail="contagem de tokens disponivel apenas com SPC_CML_BACKEND=llamacpp",
+        )
+    llm = get_llama()
+    with _LLAMA_LOCK:
+        tokens = [len(llm.tokenize(texto.encode("utf-8"))) for texto in req.textos]
+    return {"tokens": tokens}
 
 
 @app.post("/generate-constrained")

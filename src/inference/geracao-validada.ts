@@ -36,7 +36,8 @@
  * o que torna o laço testável sem motor nem Neo4j.
  */
 
-import type { DetalheLado, Oraculo, StatusJuiz, Veredito } from './avaliar-grafo.js';
+import type { Veredito } from '../knowledge/validacao.js';
+import type { DetalheLado, Oraculo, StatusJuiz } from './avaliar-grafo.js';
 
 /** Quem reprova o plano e manda gerar de novo. */
 export type CriterioGate = 'oraculo' | 'juiz' | 'ambos';

@@ -178,6 +178,8 @@ export interface DetalheLado {
     julgamentoLLM?: JulgamentoLLM;
     concordancia?: boolean;
     classificacao?: ClassificacaoAvaliacao;
+    /** Tempos e tamanhos da GERAÇÃO deste plano — repassados, não medidos na avaliação. */
+    geracao?: GeracaoDoPlano;
     /** Durações do plano em ms; oráculo e juiz rodam concorrentes (paraleloMs ≈ max dos dois). */
     tempos?: {
         sintaxeMs?: number;
@@ -189,6 +191,31 @@ export interface DetalheLado {
         paraleloMs?: number;
         totalMs?: number;
     };
+}
+
+/**
+ * Espelho de `GeracaoDoPlano` (src/inference/avaliar-grafo.ts): o que se sabe da
+ * GERAÇÃO de cada plano — tempos repassados do registro (a avaliação não os
+ * mede) e tamanhos. Campo ausente é campo que o arquivo não trouxe: a tela
+ * mostra "—", nunca uma estimativa.
+ */
+export interface GeracaoDoPlano {
+    /** Geração do plano que ficou (sem as tentativas que o gate descartou). */
+    tempoTotalMs?: number;
+    tempoSequenciasMs?: number | null;
+    tempoPIsValidasMs?: number | null;
+    tempoValidacaoPlanosMs?: number | null;
+    /** Validação feita DURANTE a geração (o gate), somando as tentativas do cenário. */
+    tempoValidacaoMs?: number;
+    tempoGeracaoDescartadaMs?: number;
+    tempoCenarioMs?: number;
+    tentativasGeracao?: number;
+    charsPedido?: number;
+    charsPrompt?: number;
+    charsPlano?: number;
+    /** Contados no motor (`/tokenizar`), com o tokenizador do modelo da geração. */
+    tokensPrompt?: number;
+    tokensPlano?: number;
 }
 
 export interface DetalheLinha {

@@ -299,7 +299,7 @@ teste('as tentativas descartadas ficam no registro: a taxa de acerto de primeira
     assert.deepEqual(g.descartadas[0].codigos, ['item_bloqueado']);
 });
 
-teste('sem o gate, o formato antigo fica intacto', () => {
+teste('sem o gate, a linha do cenario fica exatamente como era', () => {
     const semGate: ItemResultadoLote = {
         linha: 1,
         intencao: 'sobe a nora',
@@ -313,14 +313,19 @@ teste('sem o gate, o formato antigo fica intacto', () => {
     const registros = parseRegistrosAvaliacao(conteudoDoArquivo('med', lote([semGate], false)));
     assert.equal(registros.length, 2);
     const linha = registros[0];
+    // Nada de novo na linha do cenario: o arquivo de um lote sem gate e o de antes.
+    assert.deepEqual(Object.keys(linha).sort(), Object.keys(semGate).sort(), 'nenhum campo a mais, nenhum a menos');
     assert.equal(linha.plano, 'PLANO');
     assert.equal(linha.lado, undefined, 'sem avaliacao nao ha lado');
     assert.equal(linha.oraculo, undefined);
     assert.equal(linha.dominio, undefined);
-    assert.equal(linha.tempoAvaliacaoTotalSegundos, undefined, 'nenhum tempo de avaliacao inventado');
-    assert.equal(linha.tempoGeracaoTotalSegundos, 0.9, 'o tempo de geracao continua agregado');
-    assert.equal(registros[1].gate, undefined, 'o resumo nao fala de um gate que nao rodou');
     assert.equal(ehRegistroDeResultado(linha), true, 'continua valendo para "Julgar resultado"');
+
+    // Os agregados do arquivo ficam na linha de RESUMO, que ja era o lugar deles.
+    const resumo = registros[1];
+    assert.equal(resumo.tempoGeracaoTotalSegundos, 0.9, 'o tempo de geracao continua agregado no resumo');
+    assert.equal(resumo.tempoAvaliacaoTotalSegundos, undefined, 'nenhum tempo de avaliacao inventado');
+    assert.equal(resumo.gate, undefined, 'o resumo nao fala de um gate que nao rodou');
 });
 
 teste('linha que falhou na geracao continua saindo, com o erro', () => {

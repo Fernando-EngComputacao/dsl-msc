@@ -666,6 +666,30 @@ O lote do chat pode fechar o laço na própria geração: cada cenário gera o p
 
 Com o gate ligado, o JSONL que o lote baixa **já sai avaliado**, no mesmo formato do JSONL da avaliação (`dominio`, `lado` e as camadas separadas, ver [resultados-lote.ts](web-chat/src/resultados-lote.ts)): ele pode ser aberto direto em "Importar resultado", e continua aceito em "Julgar resultado" — reavaliar passa a ser escolha, não etapa obrigatória.
 
+### Complexidade da arquitetura (modal do header)
+
+O botão **Ω** no header do chat abre um catálogo da complexidade de cada operação do caminho crítico, com três informações por item: a notação (tempo e espaço), **como o número foi obtido** e **de onde veio**. As origens são identificadas: leitura do nosso código (com `arquivo:linha`), documentação oficial da ferramenta (com a frase citada) ou artigo. Quando a ferramenta **não documenta** a complexidade — é o caso do sampler sob GBNF do llama.cpp e do parser do Langium —, o item aparece marcado como lacuna, com o indício que existe e a ressalva, em vez de um O(...) inventado.
+
+Cobre as quatro camadas (DSL/gramática, grafo, geração, avaliação) mais a aplicação, o **custo composto** de ponta a ponta (gerar um plano, avaliar um plano, rodar um lote de n cenários, abrir a análise de m planos) e o **tamanho do código** medido por camada. Dados e fontes em [complexidade.ts](web-chat/src/complexidade.ts); o teste `test:web-complexidade` confere a procedência — que cada `arquivo:linha` ainda aponta para o trecho citado (por âncora de texto), que todo item sem origem no código tem fonte com URL, que lacuna tem ressalva, e que o modal renderiza tudo isso (SSR real, via Vite).
+
+Complexidade ciclomática **não** é medida (o repositório não tem a ferramenta, e contar ramos à mão daria número sem procedência), e nada ali é benchmark: as medições reais de tempo estão na aba "Tempo" da tela de avaliação.
+
+### Análise de tempo da avaliação (aba "Tempo")
+
+Cinco seções, nesta ordem, em "Avaliar resultados" e em "Importar resultado":
+
+| seção | o que mede | de onde vem |
+|---|---|---|
+| Tempo de geração dos planos | soma do pipeline de geração (Planner, PIs, validação global) | agregados que o lote gravou e a avaliação repassa |
+| Tempo da avaliação | soma de sintaxe, oráculo, LLM Judge e diagnóstico | medido nesta tela |
+| **Tempo total da pilha** | **geração + avaliação** — o custo de ponta a ponta | soma das duas acima; a validação do gate e as gerações descartadas aparecem **fora** do total, com o total ampliado ao lado |
+| **Tempo de geração por tamanho** | ms por caractere e por token, tamanho médio do input, e quanto o tamanho explica do tempo (`r`, `r²`) | por plano, duas taxas: agregada (Σtempo/Σtamanho) e por plano (média das razões) |
+| **Tempo por plano (geração + validação)** | o custo de UM plano: geração mais a validação do gate, com média, desvio padrão amostral, IC 95% da média (t de Student), mediana, quartis, mín–máx e CV | por plano, com as parcelas ao lado para a soma poder ser conferida |
+
+As contas ficam em [estatistica-tempos.ts](src/inference/estatistica-tempos.ts) (fórmulas nomeadas, testadas em `test:estatistica-tempos`) e a leitura/montagem em [tempos-plano.ts](web-chat/src/tempos-plano.ts) (`test:web-tempos`).
+
+Três pontos de método: **(1)** a validação do gate (§ gate da geração) não entra em "tempo de geração" nem em "tempo da avaliação" — ela é de outra etapa, e é a razão de existir a última seção; **(2)** as medidas são **por plano**, o que exige o bloco `geracao` em cada registro (tempos repassados do lote + tamanhos) — arquivo anterior a isso mostra "—", não zero; **(3)** tokens são contados no motor (`/tokenizar`), com o tokenizador do modelo que gerou os planos; sem o motor (ou com outro backend) a coluna fica vazia, e nenhuma estimativa a partir dos caracteres toma o lugar dela.
+
 ### Avaliação dos planos já gerados (`/api/avaliar`): sintaxe → AST → (semântica → oráculo ‖ LLM Judge) → comparação
 
 > **[Oráculo do SPC-CML — funcionamento e validação formal](docs/oraculo.md)**: explicação passo a passo do Oráculo, do que o torna determinístico e dos seus limites, com um estudo de caso na DSL de futebol. A inspeção do código, com evidências e lacunas, está no [relatório de auditoria](docs/auditoria-oraculo.md).
@@ -1001,6 +1025,7 @@ Valor desconhecido em qualquer das duas cai no padrão em vez de derrubar o serv
 | POST | `/validar-plano` | LLM Judge de plano já gerado (avaliação em lote): `VALID` \| `INVALID` \| `UNRESOLVED`, independente do oráculo (§10) |
 | POST | `/diagnosticar-indeterminacao` | Só depois de um `UNRESOLVED` do juiz: diagnóstico sob GBNF que só cita o catálogo de fundamentação enviado; devolve a saída bruta (`resposta_bruta`, `cortada`) para o lado TypeScript ler e conferir (§10) |
 | POST | `/embed` | vetor bge-m3 |
+| POST | `/tokenizar` | conta tokens de uma lista de textos com o tokenizador do modelo que gera os planos — usado pela análise de tempo da avaliação (tempo por token, tamanho do input em tokens). Não gera nada. Só com `SPC_CML_BACKEND=llamacpp`; nos outros responde 501 e a análise fica sem a coluna de tokens, sem estimar nada |
 | POST | `/generate-constrained` | artefato inteiro + reparse |
 | POST | `/generate-fragment` | um não-terminal, sobre um prefixo |
 | POST | `/generate-planner` | sequência de pares (item, conduta) do Planner, sob a gramática do Planner |

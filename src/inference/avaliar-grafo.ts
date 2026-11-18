@@ -122,6 +122,17 @@ export interface RegistroAvaliarGrafo {
     tempoSequenciasMs?: number | null;
     tempoPIsValidasMs?: number | null;
     tempoValidacaoPlanosMs?: number | null;
+    /**
+     * Tempos do GATE da geração (web-chat/src/tempos-lote.ts), quando o lote
+     * rodou com validação ligada: a validação feita DURANTE a geração (oráculo
+     * e/ou juiz, uma vez por tentativa), as gerações descartadas e o relógio do
+     * cenário inteiro. São de outra etapa que não esta: a avaliação só os
+     * repassa, como faz com os tempos de geração.
+     */
+    tempoValidacaoMs?: number;
+    tempoGeracaoDescartadaMs?: number;
+    tempoCenarioMs?: number;
+    tentativasGeracao?: number;
 }
 
 // =============================================================================
@@ -216,6 +227,45 @@ export interface ResultadoAvaliacaoPlano {
     classificacao: ClassificacaoAvaliacao;
 }
 
+/**
+ * O que se sabe da GERAÇÃO de um plano, por plano — tempos repassados do
+ * registro de entrada (a avaliação não os mede) e tamanhos medidos aqui.
+ *
+ * Existe porque `ResultadoAvaliacaoGrafo` só carregava os tempos de geração
+ * SOMADOS do arquivo inteiro: com a soma não se calcula média, desvio padrão,
+ * intervalo de confiança nem tempo por caractere/token. Este bloco acompanha
+ * cada plano no resultado E no JSONL da avaliação (`registrosJsonl`), então a
+ * análise funciona igual na avaliação ao vivo e num arquivo importado.
+ *
+ * Campo ausente é campo que o registro não trouxe (arquivo de antes da medição,
+ * lote sem gate, motor sem `/tokenizar`): nada aqui é estimado.
+ */
+export interface GeracaoDoPlano {
+    /** Geração do plano que ficou, em ms (não inclui tentativas descartadas pelo gate). */
+    tempoTotalMs?: number;
+    tempoSequenciasMs?: number | null;
+    tempoPIsValidasMs?: number | null;
+    tempoValidacaoPlanosMs?: number | null;
+    /** Validação feita DURANTE a geração (o gate), somando todas as tentativas do cenário. */
+    tempoValidacaoMs?: number;
+    /** Gerações que o gate reprovou e jogou fora. */
+    tempoGeracaoDescartadaMs?: number;
+    /** Relógio de parede do cenário inteiro no lote (gerações + validações + rede). */
+    tempoCenarioMs?: number;
+    /** Gerações rodadas no cenário (1 = aprovado de primeira). */
+    tentativasGeracao?: number;
+    /** Caracteres do pedido em linguagem natural (`intencao`). */
+    charsPedido?: number;
+    /** Caracteres do Prompt Semântico gravado na geração — o contexto recuperado + o pedido. */
+    charsPrompt?: number;
+    /** Caracteres do plano gerado. */
+    charsPlano?: number;
+    /** Tokens do Prompt Semântico, contados no motor (`/tokenizar`). Ausente sem o motor. */
+    tokensPrompt?: number;
+    /** Tokens do plano gerado, contados no motor. Ausente sem o motor. */
+    tokensPlano?: number;
+}
+
 export interface DetalheLado extends Partial<ResultadoAvaliacaoPlano> {
     plano: string;
     /** Identificador do cenário (paciente/talhão/partida), quando o registro o traz. */
@@ -232,6 +282,8 @@ export interface DetalheLado extends Partial<ResultadoAvaliacaoPlano> {
     motivo?: string;
     /** Tempos deste plano (ver `TemposPlano`). */
     tempos?: TemposPlano;
+    /** Tempos e tamanhos da GERAÇÃO deste plano (ver `GeracaoDoPlano`). Repassados, não medidos aqui. */
+    geracao?: GeracaoDoPlano;
 }
 
 /**
@@ -1054,6 +1106,37 @@ export interface RegistroAvaliacaoJsonl extends Partial<ResultadoAvaliacaoPlano>
     tempoGeracaoSequenciasSegundos?: number;
     tempoGeracaoPIsValidasSegundos?: number;
     tempoGeracaoValidacaoPlanosSegundos?: number;
+}
+
+/** Só os campos definidos entram no objeto — ausente continua ausente. */
+function sePresente<T extends object>(valores: T): Partial<T> {
+    return Object.fromEntries(Object.entries(valores).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+/**
+ * Monta o bloco `geracao` de um plano a partir do registro de ENTRADA: repassa
+ * os tempos que o lote mediu (geração e, se houve gate, a validação durante a
+ * geração) e mede os tamanhos em caracteres do que o registro traz.
+ *
+ * Tokens não entram aqui: dependem do motor (`/tokenizar`) e são preenchidos
+ * por quem tem a conexão — ver `tokensDaGeracao` no servidor. Bloco vazio
+ * devolve `undefined`, para não gravar um objeto sem informação.
+ */
+export function geracaoDoPlano(registro: RegistroAvaliarGrafo, plano?: string): GeracaoDoPlano | undefined {
+    const bloco = sePresente<GeracaoDoPlano>({
+        tempoTotalMs: registro.tempoTotalMs,
+        tempoSequenciasMs: registro.tempoSequenciasMs,
+        tempoPIsValidasMs: registro.tempoPIsValidasMs,
+        tempoValidacaoPlanosMs: registro.tempoValidacaoPlanosMs,
+        tempoValidacaoMs: registro.tempoValidacaoMs,
+        tempoGeracaoDescartadaMs: registro.tempoGeracaoDescartadaMs,
+        tempoCenarioMs: registro.tempoCenarioMs,
+        tentativasGeracao: registro.tentativasGeracao,
+        charsPedido: registro.intencao?.length,
+        charsPrompt: registro.promptSemantico?.length,
+        charsPlano: plano?.length
+    });
+    return Object.keys(bloco).length > 0 ? bloco : undefined;
 }
 
 /** O resultado da avaliação no formato do JSONL experimental — um registro por plano avaliado. */

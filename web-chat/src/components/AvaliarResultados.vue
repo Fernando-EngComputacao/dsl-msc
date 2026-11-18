@@ -12,6 +12,9 @@ import GraficosAvaliacao from "./GraficosAvaliacao.vue";
 import ResultadosImportados from "./ResultadosImportados.vue";
 import TemposAvaliacao from "./TemposAvaliacao.vue";
 import TempoGeracaoPlanos from "./TempoGeracaoPlanos.vue";
+import TempoPilha from "./TempoPilha.vue";
+import TempoPorTamanho from "./TempoPorTamanho.vue";
+import TempoPorPlano from "./TempoPorPlano.vue";
 import AvaliacaoLLM from "./AvaliacaoLLM.vue";
 import NavegacaoResultado, { type AbaResultado } from "./NavegacaoResultado.vue";
 import { parseRegistrosAvaliacao, type RegistroAvaliacaoImportado } from "../../../src/inference/avaliacao-jsonl";
@@ -884,9 +887,13 @@ async function importarArquivo(evento: Event): Promise<void> {
           <AvaliacaoLLM :resposta="resultado" :dominio="dominioSelecionado" />
         </div>
 
+        <!-- Tempo: as duas etapas, a soma delas (a pilha), o custo por tamanho e o custo de um plano. -->
         <div v-show="mostra('tempo')" class="animate-fade-in-up flex flex-col gap-6">
           <TempoGeracaoPlanos :resposta="resultado" origem="avaliacao" />
           <TemposAvaliacao :resposta="resultado" origem="avaliacao" />
+          <TempoPilha :resposta="resultado" origem="avaliacao" />
+          <TempoPorTamanho :resposta="resultado" origem="avaliacao" />
+          <TempoPorPlano :resposta="resultado" origem="avaliacao" />
         </div>
       </div>
     </div>
