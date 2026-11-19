@@ -17,6 +17,16 @@ import TempoPorTamanho from "./TempoPorTamanho.vue";
 import TempoPorPlano from "./TempoPorPlano.vue";
 import AvaliacaoLLM from "./AvaliacaoLLM.vue";
 import NavegacaoResultado, { type AbaResultado } from "./NavegacaoResultado.vue";
+import RelatorioCapa from "./RelatorioCapa.vue";
+import RelatorioModal from "./RelatorioModal.vue";
+import {
+  SEM_RESULTADO,
+  definicaoTopico,
+  disponibilidade,
+  resumoDaCapa,
+  type TopicoRelatorio,
+} from "../relatorio";
+import { usarExportacaoDoRelatorio } from "../relatorio-impressao";
 import { parseRegistrosAvaliacao, type RegistroAvaliacaoImportado } from "../../../src/inference/avaliacao-jsonl";
 
 const DOMINIOS = [
@@ -82,6 +92,42 @@ const erroImportacao = ref<string | null>(null);
 // Qual seção do resultado aparece (só estado local: nenhuma rota muda). "Todas" mostra as outras.
 const aba = ref<AbaResultado>("todas");
 const mostra = (a: AbaResultado): boolean => aba.value === "todas" || aba.value === a;
+
+// ---------------------------------------------------------------------------
+// Exportar relatório (PDF): o modal escolhe os tópicos e, enquanto `exportando`
+// vale, a tela mostra SÓ os escolhidos — a aba aberta deixa de mandar, para o
+// PDF não depender de onde o usuário estava navegando. Ver relatorio.ts.
+// ---------------------------------------------------------------------------
+const {
+  modalAberto: relatorioAberto,
+  selecao: selecaoRelatorio,
+  exportando,
+  gerar: gerarRelatorio,
+} = usarExportacaoDoRelatorio();
+
+const respostaOuVazia = computed(() => resultado.value ?? SEM_RESULTADO);
+const disponibilidadeRelatorio = computed(() => disponibilidade(respostaOuVazia.value));
+const capaRelatorio = computed(() =>
+  resumoDaCapa(respostaOuVazia.value, selecaoRelatorio.value, {
+    dominio: dominioSelecionado.value,
+  }),
+);
+
+/** A seção aparece? Exportando: só se o tópico foi marcado. Na tela: a aba decide. */
+function visivel(topico: TopicoRelatorio): boolean {
+  if (exportando.value) return selecaoRelatorio.value[topico] === true;
+  const secao = definicaoTopico(topico).secao;
+  return secao ? mostra(secao) : false;
+}
+
+const TOPICOS_TEMPO: TopicoRelatorio[] = [
+  "tempoGeracao",
+  "tempoAvaliacao",
+  "tempoPilha",
+  "tempoTamanho",
+  "tempoPlano",
+];
+const algumTempoVisivel = computed(() => TOPICOS_TEMPO.some((t) => visivel(t)));
 
 function modeloIncluido(chave: "arquitetura" | "baseline"): boolean {
   return chave === "arquitetura"
@@ -720,18 +766,33 @@ async function importarArquivo(evento: Event): Promise<void> {
               Métricas consolidadas e comparação detalhada das linhas avaliadas.
             </p>
           </div>
-          <button
-            type="button"
-            class="rounded-full border border-neutral-200 px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/10"
-            @click="novaAnalise"
-          >
-            Fazer nova análise
-          </button>
+          <div class="sem-impressao flex items-center gap-2">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/10"
+              title="Escolher os tópicos e gerar o PDF do relatório"
+              @click="relatorioAberto = true"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 3v5h5" />
+                <path d="M19 10v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7z" />
+                <path d="M9 13h6M9 17h4" />
+              </svg>
+              Exportar relatório
+            </button>
+            <button
+              type="button"
+              class="rounded-full border border-neutral-200 px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/10"
+              @click="novaAnalise"
+            >
+              Fazer nova análise
+            </button>
+          </div>
       </div>
     </div>
 
     <!-- Opções de navegação: só trocam a seção mostrada, sem mudar de rota -->
-    <NavegacaoResultado v-if="view === 'resultado' && resultado" v-model="aba" />
+    <NavegacaoResultado v-if="view === 'resultado' && resultado" v-model="aba" class="sem-impressao" />
 
     <!-- Importar resultado -->
     <section v-if="view === 'importar'" class="max-w-5xl py-4">
@@ -786,6 +847,9 @@ async function importarArquivo(evento: Event): Promise<void> {
 
     <!-- Resultado da avaliação: a aba escolhida decide quais seções aparecem (v-show: filtros e linhas abertas não se perdem) -->
     <div v-if="resultado && view === 'resultado'" class="animate-fade-in-up">
+      <!-- Só no PDF: identifica o que foi avaliado e o que o arquivo traz. -->
+      <RelatorioCapa :resumo="capaRelatorio" />
+
       <p
         v-if="resultado.naoAvaliados > 0"
         class="mb-4 flex max-w-5xl items-start gap-2.5 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
@@ -826,7 +890,7 @@ async function importarArquivo(evento: Event): Promise<void> {
         <a
           :href="urlAvaliacaoJsonl(resultado.arquivoJsonl)"
           :download="resultado.arquivoJsonl"
-          class="inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1 text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
+          class="sem-impressao inline-flex items-center gap-1 rounded-full border border-neutral-200 px-3 py-1 text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
         >
           <svg width="12" height="12" viewBox="0 0 24 24">
             <path
@@ -844,7 +908,7 @@ async function importarArquivo(evento: Event): Promise<void> {
 
 
       <div class="flex flex-col gap-10">
-        <div v-show="mostra('metricas')" class="animate-fade-in-up">
+        <div v-show="visivel('metricas')" class="animate-fade-in-up evitar-quebra">
           <div
             class="grid gap-4"
             :class="
@@ -867,7 +931,7 @@ async function importarArquivo(evento: Event): Promise<void> {
           </div>
         </div>
 
-        <div v-show="mostra('analise')" class="animate-fade-in-up">
+        <div v-show="visivel('analise')" class="animate-fade-in-up">
           <ComparacaoLinhas
             v-if="resultado.linhas.length > 0"
             :linhas="resultado.linhas"
@@ -876,27 +940,45 @@ async function importarArquivo(evento: Event): Promise<void> {
           />
         </div>
 
-        <div v-show="mostra('graficos')" class="animate-fade-in-up">
+        <div v-show="visivel('graficos')" class="animate-fade-in-up evitar-quebra">
           <GraficosAvaliacao
             :arquitetura="resultado.arquitetura"
             :baseline="resultado.baseline"
           />
         </div>
 
-        <div v-show="mostra('avaliacaoLlm')" class="animate-fade-in-up">
+        <div v-show="visivel('estatisticos')" class="animate-fade-in-up">
           <AvaliacaoLLM :resposta="resultado" :dominio="dominioSelecionado" />
         </div>
 
         <!-- Tempo: as duas etapas, a soma delas (a pilha), o custo por tamanho e o custo de um plano. -->
-        <div v-show="mostra('tempo')" class="animate-fade-in-up flex flex-col gap-6">
-          <TempoGeracaoPlanos :resposta="resultado" origem="avaliacao" />
-          <TemposAvaliacao :resposta="resultado" origem="avaliacao" />
-          <TempoPilha :resposta="resultado" origem="avaliacao" />
-          <TempoPorTamanho :resposta="resultado" origem="avaliacao" />
-          <TempoPorPlano :resposta="resultado" origem="avaliacao" />
+        <div v-show="algumTempoVisivel" class="animate-fade-in-up flex flex-col gap-6">
+          <div v-show="visivel('tempoGeracao')" class="evitar-quebra">
+            <TempoGeracaoPlanos :resposta="resultado" origem="avaliacao" />
+          </div>
+          <div v-show="visivel('tempoAvaliacao')" class="evitar-quebra">
+            <TemposAvaliacao :resposta="resultado" origem="avaliacao" />
+          </div>
+          <div v-show="visivel('tempoPilha')" class="evitar-quebra">
+            <TempoPilha :resposta="resultado" origem="avaliacao" />
+          </div>
+          <div v-show="visivel('tempoTamanho')" class="evitar-quebra">
+            <TempoPorTamanho :resposta="resultado" origem="avaliacao" />
+          </div>
+          <div v-show="visivel('tempoPlano')" class="evitar-quebra">
+            <TempoPorPlano :resposta="resultado" origem="avaliacao" />
+          </div>
         </div>
       </div>
     </div>
+
+    <RelatorioModal
+      :aberto="relatorioAberto"
+      :disponibilidade="disponibilidadeRelatorio"
+      :selecao-inicial="selecaoRelatorio"
+      @fechar="relatorioAberto = false"
+      @gerar="(sel) => gerarRelatorio(sel, { dominio: dominioSelecionado })"
+    />
   </div>
 </template>
 

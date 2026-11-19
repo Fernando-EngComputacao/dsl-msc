@@ -13,6 +13,10 @@ import TempoPorPlano from './TempoPorPlano.vue';
 import { geracaoDoRegistroImportado } from '../tempos-plano';
 import AvaliacaoLLM from './AvaliacaoLLM.vue';
 import NavegacaoResultado, { type AbaResultado } from './NavegacaoResultado.vue';
+import RelatorioCapa from './RelatorioCapa.vue';
+import RelatorioModal from './RelatorioModal.vue';
+import { definicaoTopico, disponibilidade, resumoDaCapa, type TopicoRelatorio } from '../relatorio';
+import { usarExportacaoDoRelatorio } from '../relatorio-impressao';
 
 const props = defineProps<{ registros: RegistroAvaliacaoImportado[]; nomeArquivo: string }>();
 const emit = defineEmits<{ novaAnalise: [] }>();
@@ -139,6 +143,30 @@ const aba = ref<AbaResultado>('todas');
 const dominioDoArquivo = computed(() => props.registros.find(r => typeof r.dominio === 'string')?.dominio);
 const mostra = (a: AbaResultado): boolean => aba.value === 'todas' || aba.value === a;
 
+// Exportar relatório (PDF) — o mesmo mecanismo da tela de avaliação: o modal
+// escolhe os tópicos e, enquanto `exportando` vale, só eles aparecem.
+const {
+    modalAberto: relatorioAberto,
+    selecao: selecaoRelatorio,
+    exportando,
+    gerar: gerarRelatorio
+} = usarExportacaoDoRelatorio();
+
+const disponibilidadeRelatorio = computed(() => disponibilidade(resposta.value));
+const capaRelatorio = computed(() =>
+    resumoDaCapa(resposta.value, selecaoRelatorio.value, { dominio: dominioDoArquivo.value })
+);
+
+/** A seção aparece? Exportando: só se o tópico foi marcado. Na tela: a aba decide. */
+function visivel(topico: TopicoRelatorio): boolean {
+    if (exportando.value) return selecaoRelatorio.value[topico] === true;
+    const secao = definicaoTopico(topico).secao;
+    return secao ? mostra(secao) : false;
+}
+
+const TOPICOS_TEMPO: TopicoRelatorio[] = ['tempoGeracao', 'tempoAvaliacao', 'tempoPilha', 'tempoTamanho', 'tempoPlano'];
+const algumTempoVisivel = computed(() => TOPICOS_TEMPO.some(t => visivel(t)));
+
 function veredito(valor: unknown): valor is Veredito {
     return valor === 'VALID' || valor === 'INVALID' || valor === 'UNRESOLVED';
 }
@@ -156,36 +184,70 @@ function veredito(valor: unknown): valor is Veredito {
                 </div>
                 <div><h1 class="text-2xl font-medium text-neutral-900 dark:text-neutral-100">Resultado da avaliação</h1><p class="text-sm text-neutral-500 dark:text-neutral-400">Resultado importado · {{ registros.length }} registros · {{ nomeArquivo }}</p></div>
             </div>
-            <button type="button" class="rounded-full border border-neutral-200 px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/10" @click="emit('novaAnalise')">Fazer nova análise</button>
+            <div class="sem-impressao flex items-center gap-2">
+                <button
+                    type="button"
+                    class="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/10"
+                    title="Escolher os tópicos e gerar o PDF do relatório"
+                    @click="relatorioAberto = true"
+                >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 3v5h5" />
+                        <path d="M19 10v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7z" />
+                        <path d="M9 13h6M9 17h4" />
+                    </svg>
+                    Exportar relatório
+                </button>
+                <button type="button" class="rounded-full border border-neutral-200 px-4 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/10" @click="emit('novaAnalise')">Fazer nova análise</button>
+            </div>
         </header>
 
-        <NavegacaoResultado v-model="aba" />
+        <RelatorioCapa :resumo="capaRelatorio" />
+
+        <NavegacaoResultado v-model="aba" class="sem-impressao" />
 
         <p v-if="resposta.naoAvaliados > 0" class="mb-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{{ resposta.naoAvaliados }} registro(s) não foram avaliados no arquivo original.</p>
         <div class="flex flex-col gap-10 w-screen max-w-full">
-            <div v-show="mostra('metricas')" class="animate-fade-in-up">
+            <div v-show="visivel('metricas')" class="animate-fade-in-up evitar-quebra">
                 <div class="grid gap-4" :class="resposta.arquitetura && resposta.baseline ? 'lg:grid-cols-2' : 'grid-cols-1'">
                     <MetricasCard v-if="resposta.arquitetura" variante="arquitetura" :metricas="resposta.arquitetura" :comparar="resposta.baseline" />
                     <MetricasCard v-if="resposta.baseline" variante="baseline" :metricas="resposta.baseline" />
                 </div>
             </div>
-            <div v-show="mostra('analise')" class="animate-fade-in-up">
+            <div v-show="visivel('analise')" class="animate-fade-in-up">
                 <ComparacaoLinhas v-if="resposta.linhas.length" :linhas="resposta.linhas" :mostrar-arquitetura="!!resposta.arquitetura" :mostrar-baseline="!!resposta.baseline" />
             </div>
-            <div v-show="mostra('graficos')" class="animate-fade-in-up">
+            <div v-show="visivel('graficos')" class="animate-fade-in-up evitar-quebra">
                 <GraficosAvaliacao :arquitetura="resposta.arquitetura" :baseline="resposta.baseline" />
             </div>
-            <div v-show="mostra('avaliacaoLlm')" class="animate-fade-in-up">
+            <div v-show="visivel('estatisticos')" class="animate-fade-in-up">
                 <AvaliacaoLLM :resposta="resposta" :dominio="dominioDoArquivo" />
             </div>
-            <div v-show="mostra('tempo')" class="animate-fade-in-up flex flex-col gap-6">
-                <TempoGeracaoPlanos :resposta="resposta" origem="importacao" />
-                <TemposAvaliacao :resposta="resposta" origem="importacao" />
-                <TempoPilha :resposta="resposta" origem="importacao" />
-                <TempoPorTamanho :resposta="resposta" origem="importacao" />
-                <TempoPorPlano :resposta="resposta" origem="importacao" />
+            <div v-show="algumTempoVisivel" class="animate-fade-in-up flex flex-col gap-6">
+                <div v-show="visivel('tempoGeracao')" class="evitar-quebra">
+                    <TempoGeracaoPlanos :resposta="resposta" origem="importacao" />
+                </div>
+                <div v-show="visivel('tempoAvaliacao')" class="evitar-quebra">
+                    <TemposAvaliacao :resposta="resposta" origem="importacao" />
+                </div>
+                <div v-show="visivel('tempoPilha')" class="evitar-quebra">
+                    <TempoPilha :resposta="resposta" origem="importacao" />
+                </div>
+                <div v-show="visivel('tempoTamanho')" class="evitar-quebra">
+                    <TempoPorTamanho :resposta="resposta" origem="importacao" />
+                </div>
+                <div v-show="visivel('tempoPlano')" class="evitar-quebra">
+                    <TempoPorPlano :resposta="resposta" origem="importacao" />
+                </div>
             </div>
         </div>
+        <RelatorioModal
+            :aberto="relatorioAberto"
+            :disponibilidade="disponibilidadeRelatorio"
+            :selecao-inicial="selecaoRelatorio"
+            @fechar="relatorioAberto = false"
+            @gerar="(sel) => gerarRelatorio(sel, { dominio: dominioDoArquivo })"
+        />
         <!-- 
         <details v-for="(registro, indice) in registros" :key="`${registro.lado}-${registro.linha}-${indice}`" class="mt-3 rounded-xl border border-neutral-200 px-4 py-3 dark:border-white/10">
             <summary class="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-200">Linha {{ registro.linha ?? indice + 1 }} · {{ registro.lado ?? 'resultado' }} · Oráculo {{ veredito(registro.oraculo?.veredito) ? registro.oraculo?.veredito : 'não informado' }} · Judge {{ statusJuiz(registro.julgamentoLLM?.status) ? (registro.julgamentoLLM?.status === 'NOT_CALLED' ? 'não executado' : registro.julgamentoLLM?.status) : 'não informado' }}</summary>

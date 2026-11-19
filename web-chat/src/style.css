@@ -62,3 +62,71 @@ body {
 ::-webkit-scrollbar-thumb {
     @apply bg-neutral-300 dark:bg-neutral-700 rounded-full;
 }
+
+/* ---------------------------------------------------------------------------
+   Impressão — o PDF do relatório ("Exportar relatório" no Resultado da
+   avaliação, ver relatorio-impressao.ts).
+
+   O PDF é a própria tela impressa: as seções escolhidas no modal continuam
+   renderizadas, as não escolhidas ficam escondidas (v-show), e aqui se tira do
+   papel o que é da tela — barra lateral, header, abas, botões — e se soltam os
+   contêineres de rolagem, senão tudo seria cortado na primeira página.
+   --------------------------------------------------------------------------- */
+
+/* Elemento que só existe no papel (a capa do relatório). */
+.somente-impressao {
+    display: none;
+}
+
+@media print {
+    /* O app vive em `h-screen overflow-hidden`: no papel, altura automática. */
+    html,
+    body,
+    #app {
+        height: auto !important;
+        overflow: visible !important;
+    }
+
+    body {
+        /* As cores dos cartões e dos gráficos fazem parte do resultado. */
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+    }
+
+    /* Rolagem e alturas travadas são da tela; no papel o conteúdo corre nas
+       páginas. Vale para qualquer utilitário do Tailwind (overflow-y-auto,
+       max-h-96, h-screen…), e só dentro de @media print. */
+    [class*='overflow-'] {
+        overflow: visible !important;
+    }
+
+    [class*='max-h-'] {
+        max-height: none !important;
+    }
+
+    [class*='h-screen'],
+    [class*='h-dvh'] {
+        height: auto !important;
+    }
+
+    .sem-impressao {
+        display: none !important;
+    }
+
+    .somente-impressao {
+        display: block !important;
+    }
+
+    /* Cartão/seção não parte no meio entre duas páginas quando dá para evitar. */
+    .evitar-quebra {
+        break-inside: avoid;
+    }
+
+    .quebrar-antes {
+        break-before: page;
+    }
+
+    @page {
+        margin: 14mm;
+    }
+}

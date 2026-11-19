@@ -690,6 +690,20 @@ As contas ficam em [estatistica-tempos.ts](src/inference/estatistica-tempos.ts) 
 
 Três pontos de método: **(1)** a validação do gate (§ gate da geração) não entra em "tempo de geração" nem em "tempo da avaliação" — ela é de outra etapa, e é a razão de existir a última seção; **(2)** as medidas são **por plano**, o que exige o bloco `geracao` em cada registro (tempos repassados do lote + tamanhos) — arquivo anterior a isso mostra "—", não zero; **(3)** tokens são contados no motor (`/tokenizar`), com o tokenizador do modelo que gerou os planos; sem o motor (ou com outro backend) a coluna fica vazia, e nenhuma estimativa a partir dos caracteres toma o lugar dela.
 
+### Exportar relatório em PDF (escolhendo os tópicos)
+
+No "Resultado da avaliação" — tanto depois de julgar (`/api/avaliar`) quanto depois de importar um JSONL já avaliado — o botão **Exportar relatório** abre um modal com **os dez tópicos do relatório**, cada um com uma linha dizendo o que traz, agrupados em Documento (capa), Resultado (métricas, comparação por linha, gráficos, testes estatísticos) e Tempo (as cinco seções acima, separadas). Marque o que deve entrar e **Gerar PDF**.
+
+Três regras, em [relatorio.ts](web-chat/src/relatorio.ts):
+
+- **tópico sem dado no arquivo não é oferecido**: aparece desabilitado com o motivo ("o arquivo não traz tempos de geração", "nenhum plano tem tempo medido"…). A disponibilidade das seções de tempo é decidida pelas **mesmas funções que as desenham** (`pilhaDeTempos`, `tempoPorTamanho`, `tempoPorPlano`), para o modal nunca prometer uma página que diria "sem medições";
+- **capa sozinha não é relatório**: "Gerar PDF" só habilita com pelo menos um tópico de conteúdo;
+- a **capa** (só no papel) identifica domínio, arquivo, lados avaliados, cenários, planos, não avaliados, data da exportação e a lista numerada dos tópicos incluídos — para o PDF se explicar longe da tela que o gerou. Campo que o resultado não informa não vira linha.
+
+**Como o PDF é feito:** não há biblioteca de PDF. Os tópicos escolhidos continuam sendo as seções **já renderizadas** na tela, as não escolhidas ficam escondidas, e a janela de impressão do navegador ("Salvar como PDF") grava o arquivo — texto vetorial e selecionável, gráficos em SVG, fórmulas em KaTeX, sem rasterizar nada e sem dependência nova. O que [relatorio-impressao.ts](web-chat/src/relatorio-impressao.ts) prepara antes de chamar `window.print()`: a seleção passa a mandar na visibilidade (a aba aberta deixa de importar), o `document.title` vira `relatorio-avaliacao-<domínio>-<data>_<hora>` (o nome que o navegador sugere ao salvar) e o **tema escuro é desligado** durante a impressão — fundo escuro não é impresso, e o texto claro sairia branco no branco. Tudo é desfeito quando a janela fecha. O contrato de CSS (`.sem-impressao`, `.somente-impressao`, soltar as rolagens, evitar quebra no meio dos cartões) está no bloco `@media print` de [style.css](web-chat/src/style.css).
+
+O teste `test:web-relatorio` (20 casos) cobra as três juntas que podem se soltar em silêncio: que **todo tópico esteja ligado nas duas telas** (`visivel('<tópico>')`) e que nenhuma seção tenha ficado presa na aba — senão o tópico existiria no modal sem mudar o PDF; que as abas declaradas em `NavegacaoResultado.vue` e os tópicos sejam **o mesmo conjunto**; que a disponibilidade siga as funções das seções; e que o contrato de impressão continue no `style.css` e aplicado no header e na barra lateral. Mais o modal e a capa renderizando de verdade (SSR via Vite): os dez tópicos com rótulo e descrição, o indisponível desabilitado com o motivo à vista, e "Gerar PDF" barrado com só a capa.
+
 ### Avaliação dos planos já gerados (`/api/avaliar`): sintaxe → AST → (semântica → oráculo ‖ LLM Judge) → comparação
 
 > **[Oráculo do SPC-CML — funcionamento e validação formal](docs/oraculo.md)**: explicação passo a passo do Oráculo, do que o torna determinístico e dos seus limites, com um estudo de caso na DSL de futebol. A inspeção do código, com evidências e lacunas, está no [relatório de auditoria](docs/auditoria-oraculo.md).
