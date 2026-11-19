@@ -26,6 +26,12 @@ const rotas = [
             { modo: 'julgar', titulo: 'Julgar resultado' },
             { modo: 'importar', titulo: 'Importar resultado' }
         ]
+    },
+    {
+        caminho: '/fundir',
+        titulo: 'Fundir resultados',
+        icone: 'fundir',
+        sub: [] as { modo: string; titulo: string }[]
     }
 ];
 
@@ -100,6 +106,11 @@ const visivel = (caminho: string): boolean => !!fixado.value[caminho] || pairand
                         >
                             <template v-if="rota.icone === 'chat'">
                                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                            </template>
+                            <template v-else-if="rota.icone === 'fundir'">
+                                <path d="M3 5h7l3 4h8" />
+                                <path d="M3 19h7l3-4h8" />
+                                <path d="M18 5l3 4-3 4" />
                             </template>
                             <template v-else>
                                 <line x1="18" y1="20" x2="18" y2="10" />

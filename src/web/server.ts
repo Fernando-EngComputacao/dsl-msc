@@ -26,7 +26,23 @@ import neo4j, { type Driver } from 'neo4j-driver';
 
 import { loadModel } from '../database/neo4j.js';
 import type { ClinicalContext } from '../knowledge/graphrag.js';
-import { nomeArquivoAvaliacao } from '../inference/avaliacao-jsonl.js';
+import { nomeArquivoAvaliacao, parseRegistrosAvaliacao } from '../inference/avaliacao-jsonl.js';
+import {
+    baseDoArquivoAvaliacao,
+    CHAVE_SUJEITO,
+    DOMINIOS,
+    ehDominio,
+    ehParte,
+    fundirAvaliacoes,
+    fusaoParaCsv,
+    fusaoParaJsonl,
+    nomeArquivoFusao,
+    PARTES,
+    type FonteFusao,
+    type OpcoesFusao,
+    type ParteFusao,
+    type RegistroCenario
+} from '../inference/fusao-avaliacoes.js';
 import { gerarPlanoRestrito, montarEntradaGeracao } from '../inference/llm-client.js';
 
 import { loadAgroModel } from '../database/neo4j-agro.js';
@@ -820,6 +836,223 @@ function lerCorpo(req: http.IncomingMessage): Promise<string> {
     });
 }
 
+// ===========================================================================
+// Fusão de cenários, resultados e avaliações (ver inference/fusao-avaliacoes.ts)
+// ===========================================================================
+
+const EXEMPLOS_DIR = path.join('src', 'examples');
+
+/** Lê um JSONL de cenários/desenho sem transformar nada. Linha inválida aborta. */
+function lerJsonl(caminho: string): RegistroCenario[] {
+    const registros: RegistroCenario[] = [];
+    for (const [i, linha] of fs.readFileSync(caminho, 'utf-8').split(/\r?\n/).entries()) {
+        if (!linha.trim()) continue;
+        try {
+            registros.push(JSON.parse(linha) as RegistroCenario);
+        } catch {
+            throw new Error(`${caminho}: JSON invalido na linha ${i + 1}`);
+        }
+    }
+    return registros;
+}
+
+/**
+ * Acha o `cenarios-*.jsonl` da entrada de uma avaliação pelo nome do arquivo:
+ * `evalueted_<base>_<carimbo>.jsonl` -> `src/examples/<dominio>/<base>.jsonl`.
+ * Com o domínio conhecido procura só nele; sem domínio, nos três — e o `.meta`
+ * do mesmo lote entra quando existir.
+ */
+function cenarioDaAvaliacao(
+    nomeAvaliacao: string,
+    dominio: string | null
+): { cenarios?: FonteFusao['cenarios']; meta?: FonteFusao['meta'] } {
+    const base = baseDoArquivoAvaliacao(nomeAvaliacao);
+    if (!base) return {};
+    const onde = ehDominio(dominio) ? [dominio] : DOMINIOS;
+    for (const d of onde) {
+        const caminho = path.join(EXEMPLOS_DIR, d, `${base}.jsonl`);
+        if (!fs.existsSync(caminho)) continue;
+        const caminhoMeta = path.join(EXEMPLOS_DIR, d, `${base}.meta.jsonl`);
+        return {
+            cenarios: { arquivo: caminho, registros: lerJsonl(caminho) },
+            ...(fs.existsSync(caminhoMeta)
+                ? { meta: { arquivo: caminhoMeta, registros: lerJsonl(caminhoMeta) } }
+                : {})
+        };
+    }
+    return {};
+}
+
+/**
+ * Um cenário escolhível na tela, identificado por `<dominio>/<arquivo>`. Só
+ * `cenarios-*.jsonl` de `src/examples/<dominio>/`, e nunca os derivados
+ * (`.meta.jsonl`, `.contrastes.jsonl`), que não são entrada de nada.
+ */
+const ARQUIVO_CENARIO_REGEX = /^cenarios[A-Za-z0-9._-]*\.jsonl$/;
+const DERIVADO_REGEX = /\.(meta|contrastes)\.jsonl$/;
+
+interface CenarioDisponivel {
+    /** `<dominio>/<arquivo>` — o identificador que a rota aceita. */
+    id: string;
+    dominio: string;
+    arquivo: string;
+    caminho: string;
+    linhas: number;
+    bytes: number;
+    /** O campo que identifica o sujeito neste domínio (`talhao`, `partida`, `paciente`). */
+    chaveSujeito: string;
+    /** Existe `<base>.meta.jsonl` ao lado: a fusão pode trazer o desenho do lote. */
+    desenho: boolean;
+}
+
+/** Valida e resolve um `<dominio>/<arquivo>` para um caminho dentro de src/examples. */
+function resolverCenario(id: string): { dominio: string; arquivo: string; caminho: string } | null {
+    const barra = id.indexOf('/');
+    if (barra < 0) return null;
+    const dominio = id.slice(0, barra);
+    const arquivo = id.slice(barra + 1);
+    if (!ehDominio(dominio) || !ARQUIVO_CENARIO_REGEX.test(arquivo) || DERIVADO_REGEX.test(arquivo)) return null;
+    const caminho = path.join(EXEMPLOS_DIR, dominio, arquivo);
+    if (!fs.existsSync(caminho)) return null;
+    return { dominio, arquivo, caminho };
+}
+
+const cacheCenarios = new Map<string, CenarioDisponivel>();
+
+function listarCenarios(): CenarioDisponivel[] {
+    const saida: CenarioDisponivel[] = [];
+    for (const dominio of DOMINIOS) {
+        const dir = path.join(EXEMPLOS_DIR, dominio);
+        if (!fs.existsSync(dir)) continue;
+        for (const arquivo of fs.readdirSync(dir).sort()) {
+            if (!ARQUIVO_CENARIO_REGEX.test(arquivo) || DERIVADO_REGEX.test(arquivo)) continue;
+            const caminho = path.join(dir, arquivo);
+            const st = fs.statSync(caminho);
+            const chave = `${dominio}/${arquivo}|${st.mtimeMs}|${st.size}`;
+            let item = cacheCenarios.get(chave);
+            if (!item) {
+                item = {
+                    id: `${dominio}/${arquivo}`,
+                    dominio,
+                    arquivo,
+                    caminho,
+                    linhas: lerJsonl(caminho).length,
+                    bytes: st.size,
+                    chaveSujeito: CHAVE_SUJEITO[dominio],
+                    desenho: fs.existsSync(caminho.replace(/\.jsonl$/, '.meta.jsonl'))
+                };
+                cacheCenarios.set(chave, item);
+            }
+            saida.push(item);
+        }
+    }
+    return saida;
+}
+
+/** O cenário de um id escolhido na tela, com o desenho ao lado quando existe. */
+function cenarioEscolhido(id: string): { cenarios?: FonteFusao['cenarios']; meta?: FonteFusao['meta'] } {
+    const alvo = resolverCenario(id);
+    if (!alvo) return {};
+    const caminhoMeta = alvo.caminho.replace(/\.jsonl$/, '.meta.jsonl');
+    return {
+        cenarios: { arquivo: alvo.caminho, registros: lerJsonl(alvo.caminho) },
+        ...(fs.existsSync(caminhoMeta) ? { meta: { arquivo: caminhoMeta, registros: lerJsonl(caminhoMeta) } } : {})
+    };
+}
+
+interface ResumoArquivoAvaliacao {
+    arquivo: string;
+    bytes: number;
+    modificadoEm: string;
+    registros: number;
+    dominios: string[];
+    lados: string[];
+    base: string | null;
+    /** O cenário de entrada, quando localizado pelo nome — o que a fusão vai juntar. */
+    cenario: { arquivo: string; linhas: number; desenho: boolean } | null;
+    /** Cenários sem registro de avaliação: a assinatura de lote interrompido. */
+    semAvaliacao: number | null;
+}
+
+/** Releitura é caro (dezenas de MB): memoriza por nome + mtime + tamanho. */
+const cacheResumo = new Map<string, ResumoArquivoAvaliacao>();
+
+function resumirArquivoAvaliacao(nome: string): ResumoArquivoAvaliacao {
+    const caminho = path.join(AVALIACOES_DIR, nome);
+    const st = fs.statSync(caminho);
+    const chave = `${nome}|${st.mtimeMs}|${st.size}`;
+    const emCache = cacheResumo.get(chave);
+    if (emCache) return emCache;
+
+    const avaliacoes = parseRegistrosAvaliacao(fs.readFileSync(caminho, 'utf-8'));
+    const dominios = [...new Set(avaliacoes.map(r => r.dominio).filter((d): d is string => !!d))].sort();
+    const { cenarios, meta } = cenarioDaAvaliacao(nome, dominios.length === 1 ? dominios[0] : null);
+    const linhasComAvaliacao = new Set(avaliacoes.map(r => r.linha).filter((l): l is number => typeof l === 'number'));
+
+    const resumo: ResumoArquivoAvaliacao = {
+        arquivo: nome,
+        bytes: st.size,
+        modificadoEm: st.mtime.toISOString(),
+        registros: avaliacoes.length,
+        dominios,
+        lados: [...new Set(avaliacoes.map(r => r.lado).filter((l): l is string => !!l))].sort(),
+        base: baseDoArquivoAvaliacao(nome),
+        cenario: cenarios ? { arquivo: cenarios.arquivo, linhas: cenarios.registros.length, desenho: !!meta } : null,
+        semAvaliacao: cenarios
+            ? cenarios.registros.filter((_, i) => !linhasComAvaliacao.has(i + 1)).length
+            : null
+    };
+    cacheResumo.set(chave, resumo);
+    return resumo;
+}
+
+function listarArquivosAvaliacao(): string[] {
+    return fs
+        .readdirSync(AVALIACOES_DIR)
+        .filter(n => ARQUIVO_AVALIACAO_REGEX.test(n))
+        .sort((a, b) => b.localeCompare(a));
+}
+
+/**
+ * As fontes da fusão.
+ *
+ * `avaliacoes` são os `evalueted_*.jsonl`; cada um recebe o cenário que
+ * `cenarioPorAvaliacao` mandar (escolha da tela), ou o descoberto pelo nome, ou
+ * NENHUM quando a escolha for `nenhum` — o caso de querer só o veredito, sem
+ * arriscar casar com o cenário errado. `cenariosAvulsos` entram como fontes
+ * próprias, sem avaliação: é como se pede um conjunto só de entradas.
+ */
+function montarFontes(
+    avaliacoes: string[],
+    cenariosAvulsos: string[],
+    cenarioPorAvaliacao: Map<string, string>
+): FonteFusao[] {
+    const fontes: FonteFusao[] = avaliacoes.map(nome => {
+        const registros = parseRegistrosAvaliacao(fs.readFileSync(path.join(AVALIACOES_DIR, nome), 'utf-8'));
+        const dominios = [...new Set(registros.map(r => r.dominio).filter((d): d is string => !!d))];
+        const escolha = cenarioPorAvaliacao.get(nome);
+        const cenario =
+            escolha === 'nenhum'
+                ? {}
+                : escolha
+                  ? cenarioEscolhido(escolha)
+                  : cenarioDaAvaliacao(nome, dominios.length === 1 ? dominios[0] : null);
+        return { arquivo: nome, tipo: 'avaliacao' as const, avaliacoes: registros, ...cenario };
+    });
+
+    for (const id of cenariosAvulsos) {
+        const alvo = resolverCenario(id)!;
+        fontes.push({
+            arquivo: alvo.caminho,
+            tipo: 'cenario' as const,
+            dominio: alvo.dominio,
+            avaliacoes: [],
+            ...cenarioEscolhido(id)
+        });
+    }
+    return fontes;
+}
+
 function jsonResponse(res: http.ServerResponse, status: number, body: unknown): void {
     const texto = JSON.stringify(body);
     res.writeHead(status, {
@@ -1038,6 +1271,154 @@ const servidor = http.createServer(async (req, res) => {
             return;
         }
 
+        // Lista as avaliacoes gravadas, cada uma com o cenario de entrada que a
+        // fusao vai juntar e quantas linhas daquele cenario ficaram sem avaliacao.
+        if (req.method === 'GET' && (req.url === '/api/avaliacoes' || req.url === '/api/avaliacoes/')) {
+            const arquivos = listarArquivosAvaliacao().map(nome => {
+                try {
+                    return resumirArquivoAvaliacao(nome);
+                } catch (error) {
+                    // Arquivo corrompido nao derruba a listagem: ele aparece com o erro.
+                    const st = fs.statSync(path.join(AVALIACOES_DIR, nome));
+                    return {
+                        arquivo: nome,
+                        bytes: st.size,
+                        modificadoEm: st.mtime.toISOString(),
+                        registros: 0,
+                        dominios: [],
+                        lados: [],
+                        base: baseDoArquivoAvaliacao(nome),
+                        cenario: null,
+                        semAvaliacao: null,
+                        erro: (error as Error).message
+                    };
+                }
+            });
+            jsonResponse(res, 200, arquivos);
+            return;
+        }
+
+        // Os cenarios escolhiveis na tela da fusao: um id `<dominio>/<arquivo>`
+        // por `cenarios-*.jsonl` de src/examples, sem os derivados.
+        if (req.method === 'GET' && (req.url === '/api/cenarios' || req.url === '/api/cenarios/')) {
+            jsonResponse(res, 200, listarCenarios());
+            return;
+        }
+
+        // A FUSAO: cenario + resultado + avaliacao, de quantos arquivos (e
+        // dominios) se pedir. `formato=resumo` devolve so a cobertura, para a
+        // tela conferir antes de baixar; `jsonl` e `csv` devolvem o arquivo.
+        if (req.method === 'GET' && req.url?.startsWith('/api/fusao')) {
+            const url = new URL(req.url, 'http://localhost');
+            const lerLista = (...nomesParam: string[]): string[] =>
+                nomesParam
+                    .flatMap(n => url.searchParams.getAll(n))
+                    .flatMap(v => v.split(','))
+                    .map(v => v.trim())
+                    .filter(v => v.length > 0);
+
+            // `arquivo` continua valendo como nome do parametro de avaliacao.
+            const pedidos = [...new Set(lerLista('avaliacao', 'avaliacoes', 'arquivo', 'arquivos'))];
+            const invalidos = pedidos.filter(n => !ARQUIVO_AVALIACAO_REGEX.test(n));
+            if (invalidos.length > 0) {
+                jsonResponse(res, 400, { erro: `nome de avaliacao invalido: ${invalidos.join(', ')}` });
+                return;
+            }
+            const ausentes = pedidos.filter(n => !fs.existsSync(path.join(AVALIACOES_DIR, n)));
+            if (ausentes.length > 0) {
+                jsonResponse(res, 404, { erro: `avaliacao nao encontrada: ${ausentes.join(', ')}` });
+                return;
+            }
+
+            // Cenarios avulsos: fontes sem avaliacao, para o modo que quer so a entrada.
+            const cenariosPedidos = [...new Set(lerLista('cenario', 'cenarios'))];
+            const cenariosInvalidos = cenariosPedidos.filter(id => resolverCenario(id) === null);
+            if (cenariosInvalidos.length > 0) {
+                jsonResponse(res, 400, {
+                    erro: `cenario invalido ou inexistente: ${cenariosInvalidos.join(', ')} (use <dominio>/<arquivo>)`
+                });
+                return;
+            }
+
+            // `cenarioDe=<avaliacao>:<dominio>/<arquivo>` escolhe o cenario de UMA
+            // avaliacao; `:nenhum` desliga a juncao dela.
+            const cenarioPorAvaliacao = new Map<string, string>();
+            for (const par of lerLista('cenarioDe')) {
+                const corte = par.indexOf(':');
+                const alvo = corte < 0 ? '' : par.slice(0, corte);
+                const escolha = corte < 0 ? '' : par.slice(corte + 1);
+                if (!pedidos.includes(alvo)) {
+                    jsonResponse(res, 400, { erro: `cenarioDe aponta para avaliacao fora da selecao: ${par}` });
+                    return;
+                }
+                if (escolha !== 'nenhum' && resolverCenario(escolha) === null) {
+                    jsonResponse(res, 400, { erro: `cenarioDe com cenario invalido: ${par}` });
+                    return;
+                }
+                cenarioPorAvaliacao.set(alvo, escolha);
+            }
+
+            // Sem selecao nenhuma, funde TODAS as avaliacoes — "quero o dataset inteiro".
+            const nomes = pedidos.length > 0 || cenariosPedidos.length > 0 ? pedidos : listarArquivosAvaliacao();
+            if (nomes.length === 0 && cenariosPedidos.length === 0) {
+                jsonResponse(res, 404, { erro: 'nenhuma avaliacao gravada para fundir' });
+                return;
+            }
+
+            // O MODO DE FUSAO: quais das tres partes vao no registro.
+            const partesPedidas = lerLista('parte', 'partes');
+            const forasDeParte = partesPedidas.filter(p => !ehParte(p));
+            if (forasDeParte.length > 0) {
+                jsonResponse(res, 400, {
+                    erro: `parte invalida: ${forasDeParte.join(', ')} (use ${PARTES.join(', ')})`
+                });
+                return;
+            }
+            const partes = partesPedidas as ParteFusao[];
+
+            const formato = url.searchParams.get('formato') ?? 'resumo';
+            if (formato !== 'resumo' && formato !== 'jsonl' && formato !== 'csv') {
+                jsonResponse(res, 400, { erro: "formato deve ser 'resumo', 'jsonl' ou 'csv'" });
+                return;
+            }
+            const ligado = (nome: string, padrao: boolean): boolean => {
+                const v = url.searchParams.get(nome);
+                if (v === null) return padrao;
+                return v !== '0' && v !== 'false';
+            };
+            const opcoes: OpcoesFusao = {
+                partes,
+                incluirPlano: ligado('plano', true),
+                incluirDesenho: ligado('desenho', true),
+                incluirSemAvaliacao: ligado('semAvaliacao', false)
+            };
+
+            let fundido;
+            try {
+                fundido = fundirAvaliacoes(montarFontes(nomes, cenariosPedidos, cenarioPorAvaliacao), opcoes);
+            } catch (error) {
+                jsonResponse(res, 400, { erro: `falha ao fundir: ${(error as Error).message}` });
+                return;
+            }
+
+            if (formato === 'resumo') {
+                jsonResponse(res, 200, { opcoes, ...fundido.resumo });
+                return;
+            }
+
+            const corpo = formato === 'csv' ? fusaoParaCsv(fundido) : fusaoParaJsonl(fundido);
+            const nomeArquivo = nomeArquivoFusao(fundido.resumo.dominios, new Date(), formato, fundido.resumo.partes);
+            res.writeHead(200, {
+                'Content-Type':
+                    formato === 'csv' ? 'text/csv; charset=utf-8' : 'application/x-ndjson; charset=utf-8',
+                'Content-Disposition': `attachment; filename="${nomeArquivo}"`,
+                'Access-Control-Allow-Origin': ORIGEM_PERMITIDA,
+                'Access-Control-Expose-Headers': 'Content-Disposition'
+            });
+            res.end(corpo);
+            return;
+        }
+
         if (req.method === 'GET' && req.url?.startsWith('/api/avaliacoes/')) {
             const nome = req.url.slice('/api/avaliacoes/'.length);
             const caminho = path.join(AVALIACOES_DIR, nome);
@@ -1074,7 +1455,16 @@ servidor.listen(PORT, () => {
     console.log(`  GET  /api/chats/:id`);
     console.log(`  PUT  /api/chats/:id { dominio: 'med'|'agro'|'fut', mensagens: [] }`);
     console.log(`  POST /api/avaliar   { dominio: 'med'|'agro'|'fut', arquiteturaJsonl?: string, baselineJsonl?: string, nomeEntrada?: string }  (SSE: event "progresso"*, "final"|"erro")`);
+    console.log(`  GET  /api/avaliacoes           (lista as avaliacoes gravadas, com o cenario de entrada de cada uma)`);
     console.log(`  GET  /api/avaliacoes/:arquivo  (JSONL experimental de uma avaliacao: oraculo e juiz LLM separados)`);
+    console.log(`  GET  /api/cenarios             (os cenarios-*.jsonl escolhiveis, por dominio)`);
+    console.log(
+        `  GET  /api/fusao?avaliacao=a&cenario=agro/cenarios-400-agro.jsonl&partes=cenario,resultado,avaliacao`
+    );
+    console.log(
+        `                      &formato=resumo|jsonl|csv[&cenarioDe=a:agro/x.jsonl][&plano=0][&desenho=0][&semAvaliacao=1]`
+    );
+    console.log(`                      funde cenario + resultado + avaliacao de varios dominios num arquivo`);
 });
 
 process.on('SIGINT', async () => {

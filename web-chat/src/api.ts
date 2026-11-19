@@ -483,6 +483,133 @@ export async function avaliarResultados(
     throw new Error('conexão encerrada antes do resultado final');
 }
 
+// ---------------------------------------------------------------------------
+// Fusão de cenários, resultados e avaliações
+// ---------------------------------------------------------------------------
+
+/** Uma avaliação gravada em `data/avaliacoes/`, com o cenário de entrada que a fusão junta. */
+export interface AvaliacaoGravada {
+    arquivo: string;
+    bytes: number;
+    modificadoEm: string;
+    registros: number;
+    dominios: string[];
+    lados: string[];
+    /** O `<base>` do nome — é por ele que o servidor acha o cenário de entrada. */
+    base: string | null;
+    cenario: { arquivo: string; linhas: number; desenho: boolean } | null;
+    /** Linhas do cenário sem registro de avaliação; `null` quando o cenário não foi localizado. */
+    semAvaliacao: number | null;
+    /** Preenchido quando o arquivo não pôde ser lido — ele ainda aparece na lista. */
+    erro?: string;
+}
+
+/** Um `cenarios-*.jsonl` escolhível, identificado por `<dominio>/<arquivo>`. */
+export interface CenarioDisponivel {
+    id: string;
+    dominio: string;
+    arquivo: string;
+    caminho: string;
+    linhas: number;
+    bytes: number;
+    chaveSujeito: string;
+    desenho: boolean;
+}
+
+/** As três partes que a fusão pode juntar — o modo de fusão. */
+export type ParteFusao = 'cenario' | 'resultado' | 'avaliacao';
+
+export interface ResumoFonteFusao {
+    arquivo: string;
+    tipo: 'avaliacao' | 'cenario';
+    arquivoCenario: string | null;
+    arquivoMeta: string | null;
+    dominios: string[];
+    lados: string[];
+    avaliacoes: number;
+    cenarios: number | null;
+    fundidos: number;
+    casadosPorSujeito: number;
+    casadosPorLinha: number;
+    semCenario: number;
+    semAvaliacao: number;
+    lacunas: number[];
+    lacunasTruncadas: boolean;
+}
+
+export interface OpcoesFusao {
+    partes?: ParteFusao[];
+    incluirPlano: boolean;
+    incluirDesenho: boolean;
+    incluirSemAvaliacao: boolean;
+}
+
+/** A seleção de arquivos: avaliações, cenários avulsos e o cenário de cada avaliação. */
+export interface SelecaoFusao {
+    avaliacoes: string[];
+    cenarios?: string[];
+    /** avaliação -> id do cenário, ou `'nenhum'` para não casar com nenhum. */
+    cenarioDe?: Record<string, string>;
+}
+
+export interface ResumoFusao {
+    opcoes: OpcoesFusao;
+    partes: ParteFusao[];
+    registros: number;
+    dominios: string[];
+    fontes: ResumoFonteFusao[];
+    totalSemAvaliacao: number;
+    totalSemCenario: number;
+    telemetriaPorDominio: Record<string, string[]>;
+}
+
+export type FormatoFusao = 'jsonl' | 'csv';
+
+function paramsFusao(selecao: SelecaoFusao, opcoes: Partial<OpcoesFusao>): URLSearchParams {
+    const p = new URLSearchParams();
+    for (const a of selecao.avaliacoes) p.append('avaliacao', a);
+    for (const c of selecao.cenarios ?? []) p.append('cenario', c);
+    for (const [avaliacao, cenario] of Object.entries(selecao.cenarioDe ?? {})) {
+        // Só o que muda o padrão vira parâmetro: o automático é a ausência dele.
+        if (cenario && selecao.avaliacoes.includes(avaliacao)) p.append('cenarioDe', `${avaliacao}:${cenario}`);
+    }
+    for (const parte of opcoes.partes ?? []) p.append('parte', parte);
+    if (opcoes.incluirPlano === false) p.set('plano', '0');
+    if (opcoes.incluirDesenho === false) p.set('desenho', '0');
+    if (opcoes.incluirSemAvaliacao) p.set('semAvaliacao', '1');
+    return p;
+}
+
+/** As avaliações gravadas, da mais recente para a mais antiga. */
+export async function listarAvaliacoes(): Promise<AvaliacaoGravada[]> {
+    const resp = await fetch(`${BASE_URL}/api/avaliacoes`);
+    if (!resp.ok) throw new Error(`falha ao listar avaliacoes: ${resp.status}`);
+    return resp.json();
+}
+
+/** Os `cenarios-*.jsonl` de `src/examples`, escolhíveis na fusão. */
+export async function listarCenarios(): Promise<CenarioDisponivel[]> {
+    const resp = await fetch(`${BASE_URL}/api/cenarios`);
+    if (!resp.ok) throw new Error(`falha ao listar cenarios: ${resp.status}`);
+    return resp.json();
+}
+
+/** A cobertura da fusão, sem baixar nada — é o que a tela mostra antes do download. */
+export async function resumirFusao(selecao: SelecaoFusao, opcoes: Partial<OpcoesFusao> = {}): Promise<ResumoFusao> {
+    const p = paramsFusao(selecao, opcoes);
+    p.set('formato', 'resumo');
+    const resp = await fetch(`${BASE_URL}/api/fusao?${p}`);
+    if (!resp.ok) throw new Error(((await resp.json().catch(() => null)) as { erro?: string })?.erro ?? `falha ao resumir a fusao: ${resp.status}`);
+    return resp.json();
+}
+
+/** URL de download do arquivo fundido. Sem seleção nenhuma, o servidor funde todas as avaliações. */
+export function urlFusao(selecao: SelecaoFusao, formato: FormatoFusao, opcoes: Partial<OpcoesFusao> = {}): string {
+    const p = paramsFusao(selecao, opcoes);
+    p.set('formato', formato);
+    return `${BASE_URL}/api/fusao?${p}`;
+}
+
 /** Download do JSONL experimental de uma avaliação (oráculo e juiz LLM separados, um plano por linha). */
 export function urlAvaliacaoJsonl(arquivo: string): string {
     return `${BASE_URL}/api/avaliacoes/${encodeURIComponent(arquivo)}`;

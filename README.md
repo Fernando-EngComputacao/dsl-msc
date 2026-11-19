@@ -1049,9 +1049,26 @@ Valor desconhecido em qualquer das duas cai no padrão em vez de derrubar o serv
 
 | método | rota |
 |---|---|
-| GET | `/api/dominios`, `/api/health`, `/api/chats`, `/api/chats/:id`, `/api/avaliacoes/:arquivo` (JSONL da avaliação) |
+| GET | `/api/dominios`, `/api/health`, `/api/chats`, `/api/chats/:id`, `/api/avaliacoes` (lista), `/api/avaliacoes/:arquivo` (JSONL da avaliação), `/api/cenarios` (os `cenarios-*.jsonl` escolhíveis), `/api/fusao` (cenário + resultado + avaliação) |
 | POST | `/api/comando` (SSE), `/api/chats`, `/api/avaliar` |
 | PUT | `/api/chats/:id` |
+
+**`GET /api/fusao`** — funde, num arquivo só, as três partes de cada plano: o **cenário** de entrada (telemetria, áreas/populações/contextos, itens em uso, do `cenarios-*.jsonl`), o **resultado** (o `plano` gerado e o bloco `geracao`) e a **avaliação** (sintaxe, semântica, oráculo, juiz) — de quantos domínios se pedir. A tela é `/fundir`; a junção é `src/inference/fusao-avaliacoes.ts`.
+
+| parâmetro | valor | efeito |
+|---|---|---|
+| `avaliacao` (repetível, antes `arquivo`) | nome em `data/avaliacoes/` | as avaliações a fundir. Sem nenhuma seleção, funde todas |
+| `cenario` (repetível) | `<domínio>/<arquivo>` | um `cenarios-*.jsonl` como **fonte própria**, sem avaliação: todas as linhas dele entram |
+| `cenarioDe` (repetível) | `<avaliação>:<domínio>/<arquivo>` ou `<avaliação>:nenhum` | troca à mão o cenário que se junta a UMA avaliação (`nenhum` não junta) |
+| `parte` (repetível) | `cenario`, `resultado`, `avaliacao` | o **modo de fusão**. Sem nenhuma, as três |
+| `formato` | `resumo` (padrão), `jsonl`, `csv` | `resumo` devolve só a cobertura; os outros, o download |
+| `plano` | `0` | tira o texto do plano (arquivo muito menor). Nunca vai no CSV |
+| `desenho` | `0` | tira o desenho do lote (`*.meta.jsonl`: família, dimensão, classe esperada) |
+| `semAvaliacao` | `1` | inclui os cenários sem registro de avaliação, com `avaliacao: null` |
+
+O **modo de fusão** decide quais blocos existem em cada registro: parte fora do modo não vira campo nulo nem coluna vazia no CSV, e o modo entra no nome do arquivo baixado (`fusao_<domínios>_<modo>_<carimbo>`). A identidade da linha (`dominio`, `lado`, `linha`, `sujeito`) e a procedência (`fusao`) ficam sempre. Com `parte=cenario` e fontes `cenario=…`, a rota devolve um conjunto só de **entradas** de vários domínios — sem passar por avaliação nenhuma.
+
+O cenário de entrada é achado pelo nome (`evalueted_<base>_<carimbo>.jsonl` → `src/examples/<domínio>/<base>.jsonl`) e casado **pelo sujeito** (`talhao`, `partida`, `paciente`), caindo no número de linha só quando não há sujeito — `fusao.juncao` registra qual chave valeu em cada linha. Isso importa porque a avaliação renumera `linha` pelo índice do lote: num lote que não cobriu todos os cenários, casar por linha alinharia o cenário errado. O `resumo` conta as lacunas (cenário sem avaliação) e as órfãs (avaliação sem cenário), e é por ele que um lote incompleto aparece como tal em vez de passar por completo.
 
 #### Campos de política: uma fonte só
 
