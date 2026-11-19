@@ -593,7 +593,7 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 4, temperatura: 27, umidade: 71, NDVI: 0.47, umidade_foliar: 57, temperatura_foliar: 30, distancia_manancial: 380, distancia_cultura_sensivel: 1400, chuva_prevista: 0, infestacao: 8 }),
         variantes: [
             { areas: ['Faixa_Manancial'], estilo: 'pergunta_direta', fala: 'Atrazina em pós-emergência no milho perto do córrego. Qual a decisão para esta missão?' },
-            { areas: [], estilo: 'pergunta_direta', fala: 'Atrazina em pós-emergência no milho perto do córrego. Qual a decisão para esta missão?' }
+            { areas: [], estilo: 'pergunta_direta', fala: 'Perto do córrego, qual a decisão da missão de atrazina em pós-emergência no milho?' }
         ]
     },
     {
@@ -610,7 +610,7 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 26, umidade: 69, NDVI: 0.37, umidade_foliar: 68, temperatura_foliar: 29, distancia_manancial: 420, distancia_cultura_sensivel: 1500, chuva_prevista: 0, infestacao: 10 }),
         variantes: [
             { areas: ['Faixa_Manancial'], estilo: 'ordem', fala: 'Dessecação da soja com glifosato nesse talhão da beira do córrego. Confirma a missão.' },
-            { areas: [], estilo: 'ordem', fala: 'Dessecação da soja com glifosato nesse talhão da beira do córrego. Confirma a missão.' }
+            { areas: [], estilo: 'ordem', fala: 'Confirma a missão de glifosato para dessecar a soja nesse talhão da beira do córrego.' }
         ]
     },
     {
@@ -627,7 +627,7 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 6, temperatura: 27, umidade: 70, NDVI: 0.5, umidade_foliar: 70, temperatura_foliar: 31, distancia_manancial: 1600, distancia_cultura_sensivel: 260, chuva_prevista: 0, infestacao: 8 }),
         variantes: [
             { areas: ['Vizinhanca_Sensivel'], estilo: 'pergunta_direta', fala: 'Dois-quatro-D na cana-de-açúcar num talhão de divisa com pomar. Posso aplicar?' },
-            { areas: [], estilo: 'pergunta_direta', fala: 'Dois-quatro-D na cana-de-açúcar num talhão de divisa com pomar. Posso aplicar?' }
+            { areas: [], estilo: 'pergunta_direta', fala: 'Posso aplicar dois-quatro-D na cana-de-açúcar num talhão que faz divisa com pomar?' }
         ]
     },
     {
@@ -642,7 +642,7 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 29, umidade: 67, NDVI: 0.44, umidade_foliar: 58, temperatura_foliar: 33, distancia_manancial: 1700, distancia_cultura_sensivel: 1300, chuva_prevista: 0, infestacao: 14 }),
         variantes: [
             { areas: ['Apiario_Proximo'], estilo: 'pergunta_direta', fala: 'Clorpirifós contra cigarrinha no milho. O cadastro deste talhão muda a decisão?' },
-            { areas: [], estilo: 'pergunta_direta', fala: 'Clorpirifós contra cigarrinha no milho. O cadastro deste talhão muda a decisão?' }
+            { areas: [], estilo: 'pergunta_direta', fala: 'O cadastro deste talhão muda a decisão do clorpirifós contra cigarrinha no milho?' }
         ]
     },
     {
@@ -657,7 +657,7 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 6, temperatura: 28, umidade: 68, NDVI: 0.33, umidade_foliar: 71, temperatura_foliar: 34, distancia_manancial: 1600, distancia_cultura_sensivel: 1200, chuva_prevista: 0, infestacao: 9 }),
         variantes: [
             { areas: ['Apiario_Proximo'], estilo: 'duvida_operacional', fala: 'Imidacloprido contra broca na cana-de-açúcar. O cadastro do talhão impede algo?' },
-            { areas: [], estilo: 'duvida_operacional', fala: 'Imidacloprido contra broca na cana-de-açúcar. O cadastro do talhão impede algo?' }
+            { areas: [], estilo: 'duvida_operacional', fala: 'O cadastro do talhão impede o imidacloprido contra broca na cana-de-açúcar?' }
         ]
     },
     {
@@ -689,8 +689,8 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 27, umidade: 72, NDVI: 0.47, umidade_foliar: 56, temperatura_foliar: 30, distancia_manancial: 450, distancia_cultura_sensivel: 280, chuva_prevista: 0, infestacao: 9 }),
         variantes: [
             { areas: ['Faixa_Manancial'], estilo: 'pergunta_direta', fala: 'Atrazina no milho neste talhão de divisa. Como fica a vazão da missão?' },
-            { areas: ['Vizinhanca_Sensivel'], estilo: 'pergunta_direta', fala: 'Atrazina no milho neste talhão de divisa. Como fica a vazão da missão?' },
-            { areas: ['Faixa_Manancial', 'Vizinhanca_Sensivel'], estilo: 'pergunta_direta', fala: 'Atrazina no milho neste talhão de divisa. Como fica a vazão da missão?' }
+            { areas: ['Vizinhanca_Sensivel'], estilo: 'pergunta_direta', fala: 'Neste talhão de divisa, qual vazão de atrazina no milho a missão libera?' },
+            { areas: ['Faixa_Manancial', 'Vizinhanca_Sensivel'], estilo: 'pergunta_direta', fala: 'Quero atrazina no milho aqui na divisa: me diz a vazão que a missão aceita.' }
         ]
     },
 
@@ -708,7 +708,7 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 28, umidade: 69, NDVI: 0.32, umidade_foliar: 72, temperatura_foliar: 33, distancia_manancial: 400, distancia_cultura_sensivel: 1300, chuva_prevista: 0, infestacao: 10 }),
         variantes: [
             { areas: ['Faixa_Manancial'], estilo: 'pergunta_direta', fala: 'Imidacloprido contra broca na cana-de-açúcar perto da nascente. Que vazão eu programo?' },
-            { areas: [], estilo: 'pergunta_direta', fala: 'Imidacloprido contra broca na cana-de-açúcar perto da nascente. Que vazão eu programo?' }
+            { areas: [], estilo: 'pergunta_direta', fala: 'Que vazão de imidacloprido eu programo contra broca na cana-de-açúcar perto da nascente?' }
         ]
     },
     {
@@ -724,7 +724,7 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 26, umidade: 73, NDVI: 0.47, umidade_foliar: 57, temperatura_foliar: 29, distancia_manancial: 1500, distancia_cultura_sensivel: 270, chuva_prevista: 0, infestacao: 8 }),
         variantes: [
             { areas: ['Vizinhanca_Sensivel'], estilo: 'pergunta_direta', fala: 'Atrazina em pré-emergência no milho com pomar na divisa. Qual vazão a missão aceita?' },
-            { areas: [], estilo: 'pergunta_direta', fala: 'Atrazina em pré-emergência no milho com pomar na divisa. Qual vazão a missão aceita?' }
+            { areas: [], estilo: 'pergunta_direta', fala: 'Com pomar na divisa, qual vazão de atrazina em pré-emergência no milho a missão aceita?' }
         ]
     },
     {
@@ -739,7 +739,7 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 27, umidade: 71, NDVI: 0.52, umidade_foliar: 67, temperatura_foliar: 30, distancia_manancial: 1600, distancia_cultura_sensivel: 1400, chuva_prevista: 0, infestacao: 22 }),
         variantes: [
             { areas: ['Apiario_Proximo'], estilo: 'duvida_operacional', fala: 'Acefato contra lagarta na soja. Que vazão e que cuidado o cadastro deste talhão exige?' },
-            { areas: [], estilo: 'duvida_operacional', fala: 'Acefato contra lagarta na soja. Que vazão e que cuidado o cadastro deste talhão exige?' }
+            { areas: [], estilo: 'duvida_operacional', fala: 'Que vazão e que cuidado o cadastro deste talhão exige para o acefato contra lagarta na soja?' }
         ]
     },
     {
@@ -842,8 +842,8 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 6, temperatura: 27, umidade: 68, NDVI: 0.37, umidade_foliar: 68, temperatura_foliar: 30, distancia_manancial: 1600, distancia_cultura_sensivel: 1400, chuva_prevista: 0, infestacao: 10 }),
         variantes: [
             { uso: [], estilo: 'pergunta_direta', fala: 'Glifosato e mancozebe juntos na soja para economizar passada. Isso pode?' },
-            { uso: ['Glifosato'], estilo: 'pergunta_direta', fala: 'Glifosato e mancozebe juntos na soja para economizar passada. Isso pode?' },
-            { uso: ['Glifosato', 'Mancozebe'], estilo: 'pergunta_direta', fala: 'Glifosato e mancozebe juntos na soja para economizar passada. Isso pode?' }
+            { uso: ['Glifosato'], estilo: 'pergunta_direta', fala: 'Posso levar glifosato e mancozebe juntos numa passada única na soja?' },
+            { uso: ['Glifosato', 'Mancozebe'], estilo: 'pergunta_direta', fala: 'Na soja, glifosato e mancozebe juntos no mesmo tanque: dá para economizar a passada?' }
         ]
     },
     {
@@ -858,8 +858,8 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 26, umidade: 71, NDVI: 0.42, umidade_foliar: 58, temperatura_foliar: 29, distancia_manancial: 1700, distancia_cultura_sensivel: 1350, chuva_prevista: 0, infestacao: 18 }),
         variantes: [
             { uso: [], estilo: 'duvida_operacional', fala: 'Quero resolver lagarta e gramínea no milho com acefato e nicosulfuron. Dá para fazer junto?' },
-            { uso: ['Nicosulfuron'], estilo: 'duvida_operacional', fala: 'Quero resolver lagarta e gramínea no milho com acefato e nicosulfuron. Dá para fazer junto?' },
-            { uso: ['Acefato', 'Nicosulfuron'], estilo: 'duvida_operacional', fala: 'Quero resolver lagarta e gramínea no milho com acefato e nicosulfuron. Dá para fazer junto?' }
+            { uso: ['Nicosulfuron'], estilo: 'duvida_operacional', fala: 'Acefato e nicosulfuron na mesma calda no milho resolvem lagarta e gramínea de uma vez?' },
+            { uso: ['Acefato', 'Nicosulfuron'], estilo: 'duvida_operacional', fala: 'Preciso pegar lagarta e gramínea no milho: acefato junto com nicosulfuron funciona?' }
         ]
     },
     {
@@ -874,8 +874,8 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 30, umidade: 69, NDVI: 0.47, umidade_foliar: 57, temperatura_foliar: 34, distancia_manancial: 1800, distancia_cultura_sensivel: 1400, chuva_prevista: 0, infestacao: 9 }),
         variantes: [
             { uso: [], estilo: 'pergunta_direta', fala: 'Atrazina e clorpirifós na mesma calda no milho: pode ou tem risco para a cultura?' },
-            { uso: ['Atrazina'], estilo: 'pergunta_direta', fala: 'Atrazina e clorpirifós na mesma calda no milho: pode ou tem risco para a cultura?' },
-            { uso: ['Atrazina', 'Clorpirifos'], estilo: 'pergunta_direta', fala: 'Atrazina e clorpirifós na mesma calda no milho: pode ou tem risco para a cultura?' }
+            { uso: ['Atrazina'], estilo: 'pergunta_direta', fala: 'No milho, atrazina e clorpirifós na mesma calda: tem risco para a cultura ou pode?' },
+            { uso: ['Atrazina', 'Clorpirifos'], estilo: 'pergunta_direta', fala: 'Quero atrazina e clorpirifós na mesma calda no milho. Isso pode?' }
         ]
     },
     {
@@ -891,8 +891,8 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 7, temperatura: 27, umidade: 70, NDVI: 0.5, umidade_foliar: 70, temperatura_foliar: 31, distancia_manancial: 1750, distancia_cultura_sensivel: 1150, chuva_prevista: 0, infestacao: 8 }),
         variantes: [
             { uso: [], estilo: 'compara_produtos', fala: 'Atrazina com dois-quatro-D na mesma calda para folha larga na cana-de-açúcar. Vale a passada única?' },
-            { uso: ['Dois_Quatro_D'], estilo: 'compara_produtos', fala: 'Atrazina com dois-quatro-D na mesma calda para folha larga na cana-de-açúcar. Vale a passada única?' },
-            { uso: ['Atrazina', 'Dois_Quatro_D'], estilo: 'compara_produtos', fala: 'Atrazina com dois-quatro-D na mesma calda para folha larga na cana-de-açúcar. Vale a passada única?' }
+            { uso: ['Dois_Quatro_D'], estilo: 'compara_produtos', fala: 'Vale juntar atrazina e dois-quatro-D numa passada única contra folha larga na cana-de-açúcar?' },
+            { uso: ['Atrazina', 'Dois_Quatro_D'], estilo: 'compara_produtos', fala: 'Folha larga na cana-de-açúcar: atrazina e dois-quatro-D na mesma calda compensa?' }
         ]
     },
     {
@@ -907,7 +907,7 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 27, umidade: 70, NDVI: 0.38, umidade_foliar: 67, temperatura_foliar: 30, distancia_manancial: 1600, distancia_cultura_sensivel: 1300, chuva_prevista: 0, infestacao: 11 }),
         variantes: [
             { uso: ['Glifosato'], estilo: 'pergunta_direta', fala: 'Dessecação da soja com glifosato nesta janela. Qual a decisão para esta passada?' },
-            { uso: [], estilo: 'pergunta_direta', fala: 'Dessecação da soja com glifosato nesta janela. Qual a decisão para esta passada?' }
+            { uso: [], estilo: 'pergunta_direta', fala: 'Qual a decisão desta passada de glifosato na dessecação da soja, nesta janela?' }
         ]
     },
     {
@@ -1257,7 +1257,7 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 34, umidade: 66, NDVI: 0.44, umidade_foliar: 57, temperatura_foliar: 38, distancia_manancial: 1700, distancia_cultura_sensivel: 1300, chuva_prevista: 0, infestacao: 13 }),
         variantes: [
             { areas: ['Apiario_Proximo'], estilo: 'pergunta_direta', fala: 'Clorpirifós contra cigarrinha no milho neste calor. Suspendo a missão ou ainda há condição?' },
-            { areas: [], estilo: 'pergunta_direta', fala: 'Clorpirifós contra cigarrinha no milho neste calor. Suspendo a missão ou ainda há condição?' }
+            { areas: [], estilo: 'pergunta_direta', fala: 'Neste calor, suspendo a missão de clorpirifós contra cigarrinha no milho ou ainda há condição?' }
         ]
     },
     {
@@ -1288,8 +1288,8 @@ const FAMILIAS: Familia[] = [
         base: T({ vento: 5, temperatura: 29, umidade: 68, NDVI: 0.33, umidade_foliar: 72, temperatura_foliar: 38, distancia_manancial: 350, distancia_cultura_sensivel: 1300, chuva_prevista: 0, infestacao: 10 }),
         variantes: [
             { tel: { temperatura_foliar: 37.9 }, estilo: 'pergunta_direta', fala: 'Imidacloprido na cana-de-açúcar dentro da faixa do manancial. Que vazão a missão aceita?' },
-            { tel: { temperatura_foliar: 38 }, estilo: 'pergunta_direta', fala: 'Imidacloprido na cana-de-açúcar dentro da faixa do manancial. Que vazão a missão aceita?' },
-            { tel: { temperatura_foliar: 40.1 }, estilo: 'pergunta_direta', fala: 'Imidacloprido na cana-de-açúcar dentro da faixa do manancial. Que vazão a missão aceita?' }
+            { tel: { temperatura_foliar: 38 }, estilo: 'pergunta_direta', fala: 'Que vazão de imidacloprido a missão aceita na cana-de-açúcar dentro da faixa do manancial?' },
+            { tel: { temperatura_foliar: 40.1 }, estilo: 'pergunta_direta', fala: 'Na faixa do manancial, qual vazão de imidacloprido a cana-de-açúcar admite nesta missão?' }
         ]
     },
     {
@@ -1340,7 +1340,7 @@ const FAMILIAS: Familia[] = [
         uso: ['Atrazina', 'Dois_Quatro_D'],
         variantes: [
             { areas: ['Vizinhanca_Sensivel'], estilo: 'relato_e_pergunta', fala: 'O tanque já está com atrazina e dois-quatro-D para a cana-de-açúcar deste talhão. Como eu conduzo a missão?' },
-            { areas: [], estilo: 'relato_e_pergunta', fala: 'O tanque já está com atrazina e dois-quatro-D para a cana-de-açúcar deste talhão. Como eu conduzo a missão?' }
+            { areas: [], estilo: 'relato_e_pergunta', fala: 'Como eu conduzo a missão com o tanque já carregado de atrazina e dois-quatro-D para a cana-de-açúcar deste talhão?' }
         ]
     },
 
@@ -2118,6 +2118,22 @@ async function main(): Promise<void> {
         }
     }
 
+    // --- cada um dos 400 pedidos e um texto distinto
+    //
+    // Famílias cuja dimensão é `areas`, `produtosEmUso` ou um sensor mantêm o
+    // PEDIDO equivalente entre as variantes — é o que isola a dimensão. Mas
+    // equivalente não é idêntico: pedido repetido reduziria o lote a menos de
+    // 400 inputs distintos, e é isso que esta assercao impede. As variantes
+    // parafraseiam o mesmo pedido mantendo as MESMAS ancoras lexicais (os mesmos
+    // produtos e culturas nomeados), conferido logo abaixo pelo foco lexical.
+    const vistas = new Map<string, string>();
+    for (const c of antigos) vistas.set(c.intencao, `antigo ${c.talhao}`);
+    for (const c of novos) {
+        const ja = vistas.get(c.intencao);
+        if (ja) problemas.push(`${c.talhao} (${c.familia.id}): pedido identico ao de ${ja}`);
+        else vistas.set(c.intencao, `${c.talhao} (${c.familia.id})`);
+    }
+
     // --- controle dentro de cada familia
     for (const f of FAMILIAS) {
         const membros = novos.filter(c => c.familia === f);
@@ -2315,6 +2331,10 @@ async function main(): Promise<void> {
                     dimensao: d[0],
                     de: valorDe(a),
                     para: valorDe(b),
+                    // Pedido parafraseado: o par isola a dimensao declarada, mas os dois
+                    // textos nao sao identicos. Num par de invariancia isso limita a
+                    // conclusao — ver "Limites conhecidos" no relatorio de cobertura.
+                    fala_varia: d[0] !== 'intencao' && a.c.intencao !== b.c.intencao,
                     estado_deterministico_muda: estadoMuda,
                     politica_alvo_muda: politicaMuda,
                     vazao_alvo_muda: vazaoMuda,
@@ -2353,6 +2373,7 @@ async function main(): Promise<void> {
         totalRelido: relidas.length,
         novos: relidas.length - antigos.length,
         talhoesUnicos: new Set(relidas.map(c => c.talhao)).size,
+        pedidosDistintos: new Set(relidas.map(c => c.intencao)).size,
         chavesEOrdemIdenticas: chavesOk,
         antigosIntactos: relidas.slice(0, antigos.length).every((c, i) => JSON.stringify(c) === JSON.stringify(antigos[i])),
         maiorSimilaridadeComAntigo: maiorSimilaridade,
@@ -2361,7 +2382,13 @@ async function main(): Promise<void> {
         duplicadosLogicosEntreFamilias: duplicadosNovos.length,
         diferemDeUmAntigoSoPeloCanal: soPeloCanal.length
     };
-    if (relidas.length !== 400 || validacao.talhoesUnicos !== 400 || !chavesOk || !validacao.antigosIntactos) {
+    if (
+        relidas.length !== 400 ||
+        validacao.talhoesUnicos !== 400 ||
+        validacao.pedidosDistintos !== 400 ||
+        !chavesOk ||
+        !validacao.antigosIntactos
+    ) {
         console.error('releitura reprovou', validacao);
         process.exit(1);
     }
@@ -2554,6 +2581,20 @@ function relatorio(d: DadosRelatorio): string {
             `${d.focoDivergente.length ? `\n${d.focoDivergente.map(x => `  - ${x}`).join('\n')}` : ''}.`,
         `- Cenarios novos que diferem de algum antigo so pelo canal da evidencia: ${d.soPeloCanal.length}` +
             `${d.soPeloCanal.length ? ` (${d.soPeloCanal.join('; ')})` : ''}.`,
+        '- **Os 400 pedidos sao textos distintos**, conferido por assercao antes da gravacao:',
+        '  nenhuma linha repete o pedido de outra. Dentro de uma familia, porem, o TEXTO do',
+        '  pedido nao e identico entre as variantes, e por dois motivos diferentes:',
+        '  nas familias de fronteira ele varia de ESTILO de proposito (ordem, pergunta,',
+        '  urgencia, conclusao prematura), para que se veja que a decisao segue a leitura e',
+        '  nao o tom; nas familias cuja dimensao e `areas`, `produtosEmUso` ou um sensor, as',
+        '  variantes PARAFRASEIAM o mesmo pedido. Nos dois casos as ancoras lexicais',
+        '  (produtos e culturas nomeados) sao as mesmas em todos os membros — o foco lexical',
+        '  identico e conferido por assercao —, de modo que a dimensao declarada continua',
+        '  sendo a unica coisa que muda na leitura.',
+        `- O campo \`fala_varia\` do arquivo de contrastes marca os pares cujo pedido tambem`,
+        `  difere: ${d.contrastes.filter(c => c.fala_varia === true).length} de ${d.contrastes.length}, dos quais ${d.contrastes.filter(c => c.tipo === 'invariancia' && c.fala_varia === true).length} sao pares de invariancia. Nesses, a decisao deve`,
+        '  ficar igual, mas o par nao separa "insensivel a leitura" de "insensivel a redacao":',
+        '  para essa separacao, compare pares de familias diferentes com a mesma leitura.',
         '- `Apiario_Proximo` nao tem sensor correspondente: e a unica area que so existe no',
         '  cadastro do talhao, e por isso nenhuma familia pode cruzar fronteira nela.',
         '- `altura_voo` e `hora` estao no vocabulario da gramatica e nao vem na leitura: sao',

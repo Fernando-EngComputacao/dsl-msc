@@ -33,17 +33,18 @@ Todo cenario — antigo e novo — passou, antes da gravacao, por:
   "totalRelido": 400,
   "novos": 200,
   "talhoesUnicos": 400,
+  "pedidosDistintos": 400,
   "chavesEOrdemIdenticas": true,
   "antigosIntactos": true,
   "maiorSimilaridadeComAntigo": {
-    "valor": 0.5277777777777778,
-    "novo": "TL-2026-4224",
-    "antigo": "TL-2026-4157"
+    "valor": 0.5727272727272728,
+    "novo": "TL-2026-4317",
+    "antigo": "TL-2026-4005"
   },
   "maiorSimilaridadeEntreNovos": {
-    "valor": 0.5773195876288659,
-    "a": "TL-2026-4224",
-    "b": "TL-2026-4255"
+    "valor": 0.5777777777777777,
+    "a": "TL-2026-4236",
+    "b": "TL-2026-4282"
   },
   "duplicadosLogicosAntigos": 0,
   "duplicadosLogicosEntreFamilias": 0,
@@ -156,10 +157,10 @@ Todo cenario — antigo e novo — passou, antes da gravacao, por:
 | | 200 antigos | 200 novos | 400 |
 |---|---:|---:|---:|
 | cenarios | 200 | 200 | 400 |
-| intencoes unicas | 200 | 177 | 377 |
+| intencoes unicas | 200 | 200 | 400 |
 | talhoes unicos | 200 | 200 | 400 |
-| aberturas de fala distintas | 106 | 128 | 209 |
-| maior repeticao de abertura | 14 | 6 | 15 |
+| aberturas de fala distintas | 106 | 144 | 224 |
+| maior repeticao de abertura | 14 | 5 | 15 |
 | no limiar ou a epsilon dele | 197 | 195 | 392 |
 | com bloqueio por sensor | 84 | 79 | 163 |
 | com veto ou proibicao | 200 | 168 | 368 |
@@ -524,6 +525,20 @@ Nao basta citar o nome: a estrutura conta quando a camada deterministica a dispa
   - TL-2026-4326 (CA-ATRA-24D): Dois_Quatro_D — modelo 10 decisoes, depois do foco 4 (culturas em foco: Cana_de_Acucar, Milho)
   - TL-2026-4392 (IN-CALDA-E-AREA): Dois_Quatro_D — modelo 10 decisoes, depois do foco 4 (culturas em foco: Cana_de_Acucar, Milho).
 - Cenarios novos que diferem de algum antigo so pelo canal da evidencia: 5 (TL-2026-4214 (FR-TEMP-CLORPI) ~ TL-2026-4120; TL-2026-4227 (FR-UMID-AZOXI) ~ TL-2026-4173; TL-2026-4283 (PR-MANANCIAL-GLIFO) ~ TL-2026-4004; TL-2026-4297 (AJ-FAIXA-IMIDA) ~ TL-2026-4199; TL-2026-4393 (UN-AZOXI-LIBERADA) ~ TL-2026-4157).
+- **Os 400 pedidos sao textos distintos**, conferido por assercao antes da gravacao:
+  nenhuma linha repete o pedido de outra. Dentro de uma familia, porem, o TEXTO do
+  pedido nao e identico entre as variantes, e por dois motivos diferentes:
+  nas familias de fronteira ele varia de ESTILO de proposito (ordem, pergunta,
+  urgencia, conclusao prematura), para que se veja que a decisao segue a leitura e
+  nao o tom; nas familias cuja dimensao e `areas`, `produtosEmUso` ou um sensor, as
+  variantes PARAFRASEIAM o mesmo pedido. Nos dois casos as ancoras lexicais
+  (produtos e culturas nomeados) sao as mesmas em todos os membros — o foco lexical
+  identico e conferido por assercao —, de modo que a dimensao declarada continua
+  sendo a unica coisa que muda na leitura.
+- O campo `fala_varia` do arquivo de contrastes marca os pares cujo pedido tambem
+  difere: 181 de 224, dos quais 38 sao pares de invariancia. Nesses, a decisao deve
+  ficar igual, mas o par nao separa "insensivel a leitura" de "insensivel a redacao":
+  para essa separacao, compare pares de familias diferentes com a mesma leitura.
 - `Apiario_Proximo` nao tem sensor correspondente: e a unica area que so existe no
   cadastro do talhao, e por isso nenhuma familia pode cruzar fronteira nela.
 - `altura_voo` e `hora` estao no vocabulario da gramatica e nao vem na leitura: sao
