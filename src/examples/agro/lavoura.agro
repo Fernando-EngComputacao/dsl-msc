@@ -250,6 +250,13 @@ produto Imidacloprido {
 // vigor, nao diagnostico; infestacao e percentual da praga alvo, nao a
 // identificacao da praga. Por isso o gatilho manda VARRER ou MONITORAR, e a
 // aplicacao so aparece quando a leitura cruza o nivel de dano economico.
+//
+// Os quatro destinos de `escalonar` sao exercidos: AGRONOMO_RESPONSAVEL
+// (infestacao severa, vizinhanca sensivel), ORGAO_AMBIENTAL (faixa de
+// protecao), CENTRO_METEOROLOGICO (vento acima do limite absoluto da regra
+// global) e OPERADOR_DRONE (chuva na janela, que e reprogramacao de missao, nao
+// decisao agronomica). Destino declarado e nunca alcancado seria vocabulario
+// morto, como uma decisao sem conduta no esquema de dados.
 // -----------------------------------------------------------------------------
 
 cultura Soja {
@@ -265,6 +272,7 @@ cultura Soja {
     veta Atrazina motivo "sem registro para soja: risco de fitotoxicidade severa"
 
     escalonar: infestacao > 30.0 % -> AGRONOMO_RESPONSAVEL "infestacao severa exige avaliacao presencial"
+    escalonar: vento > 15.0 km/h -> CENTRO_METEOROLOGICO "vento acima do limite absoluto da aplicacao aerea: confirmar a janela antes de qualquer decolagem"
 
     janela: "06h-09h ou 17h-19h" umidade_minima 55.0 %
 }
@@ -282,6 +290,7 @@ cultura Milho {
     veta Dois_Quatro_D motivo "risco de deriva hormonal com dano a cultura vizinha"
 
     escalonar: distancia_manancial < 500.0 m -> ORGAO_AMBIENTAL "aplicacao em faixa de protecao exige autorizacao"
+    escalonar: chuva_prevista > 0.0 mm -> OPERADOR_DRONE "chuva prevista na janela: operador reprograma a missao e registra o motivo"
 
     janela: "06h-10h" umidade_minima 55.0 %
 }
@@ -299,6 +308,7 @@ cultura Cana_de_Acucar {
     veta Nicosulfuron motivo "sem registro para cana: risco de fitotoxicidade"
 
     escalonar: distancia_cultura_sensivel < 300.0 m -> AGRONOMO_RESPONSAVEL "vizinhanca sensivel a deriva hormonal"
+    escalonar: vento > 15.0 km/h -> CENTRO_METEOROLOGICO "vento acima do limite absoluto da aplicacao aerea: confirmar a janela antes de qualquer decolagem"
 
     janela: "sem previsao de chuva por 8 h" umidade_minima 55.0 %
 }
