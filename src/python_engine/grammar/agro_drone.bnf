@@ -5,7 +5,7 @@
 # Gramatica:  src/language/agrodrone.langium (regra MissionCommand)
 # Modelo:     lavoura.agro (esquema_dados AssistenteAgro_v1)
 # 
-# Produtos citaveis: 9 | Condutas: 8 | Decisoes: 11 | Modos: 4
+# Produtos citaveis: 9 | Condutas: 11 | Decisoes: 11 | Modos: 4
 # 
 # Toda alternativa desta gramatica corresponde a uma entidade declarada no
 # modelo do agronomo. O que nao esta aqui e inexprimivel pelo LLM.
@@ -17,7 +17,7 @@ missao ::= "missao" identificador "para" cultura "{" "esquema_referencia" esquem
 aplicacao ::= "aplicacao" produto "decisao" decisao "vazao" quantidade "modo" modo "justificativa" texto
 alerta ::= "alerta" nivel_alerta texto "regra" texto
 quantidade ::= numero unidade
-conduta ::= "Iniciar_Pulverizacao" | "Reduzir_Vazao" | "Manter_Bloqueio" | "Aguardar_Janela_Climatica" | "Suspender_Aplicacao" | "Solicitar_Varredura" | "Acionar_Agronomo" | "Bloquear_Missao_Insegura"
+conduta ::= "Iniciar_Pulverizacao" | "Aumentar_Vazao" | "Manter_Vazao" | "Reduzir_Vazao" | "Substituir_Produto" | "Manter_Bloqueio" | "Aguardar_Janela_Climatica" | "Suspender_Aplicacao" | "Solicitar_Varredura" | "Acionar_Agronomo" | "Bloquear_Missao_Insegura"
 cultura ::= "Soja" | "Milho" | "Cana_de_Acucar"
 esquema ::= "AssistenteAgro_v1"
 produto ::= "Glifosato" | "Mancozebe" | "Acefato" | "Nicosulfuron" | "Atrazina" | "Clorpirifos" | "Dois_Quatro_D" | "Azoxistrobina" | "Imidacloprido"

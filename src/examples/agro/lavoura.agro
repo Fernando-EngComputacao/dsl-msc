@@ -1,43 +1,118 @@
 // =============================================================================
-// Modelo do especialista — pulverizacao aerea por drone (SPC-CML, dominio agro).
+// Modelo institucional de pulverizacao aerea por drone — escrito a partir das
+// bulas MAPA/AGROFIT, da NR-31, da classificacao toxicologica ANVISA e das boas
+// praticas de aplicacao aerea, segundo dominio do SPC-CML.
 //
-// Segundo dominio da arquitetura. Escala deliberadamente menor que uti.dsl: 9
-// produtos contra 12 farmacos, 3 culturas contra 3 protocolos, 3 areas contra 4
-// populacoes — o suficiente para exercer todos os mecanismos (bloqueio por
-// sensor, veto por cultura, ajuste por area, incompatibilidade de calda) sem
-// duplicar o volume do modelo clinico.
+// ESQUEMA DE CONTROLE -> sincronizado no Neo4j (ground truth factual).
+// ESQUEMA DE DADOS    -> exportado como BNF para a decodificacao restrita.
 //
 // As condicoes que decidem seguranca sao ESTRUTURADAS (parametro, operador,
-// limiar). O que aparece como STRING e justificativa para o agronomo ler, nunca
-// criterio de decisao — decidir por prosa devolveria ao LLM a autoridade que a
-// arquitetura tira dele.
+// limiar), lidas da leitura corrente dos sensores. O que aparece como STRING e
+// justificativa, procedimento ou orientacao para o agronomo ler, nunca criterio
+// de decisao. Um fato que so existe na fala do operador ("a lavoura esta em
+// florada", "tem colmeia logo ali", "o vento ja baixou", "o tanque esta limpo",
+// "a janela fecha hoje") NAO e leitura de sensor: sem o dado estruturado, a
+// regra correspondente simplesmente nao incide, e o fato fica como evidencia
+// insuficiente, nunca como evidencia negativa.
+//
+// CAMADAS, e o mecanismo que realiza cada uma:
+//
+//   EVIDENCIA       leitura dos sensores (SensorParameter), areas em que o
+//                   talhao se enquadra e produtos ja na calda.
+//   APLICABILIDADE  o produto vale por padrao. Ele deixa de valer por EXCLUSAO:
+//     / EXCLUSAO    uma cultura que o `veta` (produto sem registro para aquela
+//                   cultura, onde a aplicacao nao existe como opcao legal) ou
+//                   uma area que o `proibe` (produto que nao pode ser aplicado
+//                   ali). Excluido, o produto so admite SUSPENDER,
+//                   AGUARDAR_JANELA, ACIONAR_AGRONOMO e BLOQUEAR_APLICACAO —
+//                   nenhuma decisao que aumente a exposicao.
+//   PRODUTO         `produto`: classe, registro MAPA, toxicologica, faixa de
+//                   bula, carencia, reentrada e potencial de deriva.
+//   COMBINACAO      `incompativel` (so pesa quando um dos dois ja esta na calda)
+//                   e `proibido:` (condicao de bula, em prosa).
+//   DECISAO         politica por produto sobre o `esquema_dados`. As `dose`
+//                   declaram as vazoes EXPRIMIVEIS e o `ajusta` de uma area
+//                   multiplica essas vazoes; nenhum dos dois e avaliado contra a
+//                   leitura — eles declaram a CONSEQUENCIA, nao a condicao.
+//   PROCEDIMENTO    `janela`, `escalonar` (obriga ACIONAR_AGRONOMO no
+//                   artefato), `exige` das areas e as regras globais.
+//
+// `regra_seguranca: bloquear_aplicacao` e uma RESTRICAO DE POLITICA: tira
+// INICIAR_APLICACAO e AUMENTAR_VAZAO de um produto que continua citavel e
+// suspendivel. Ela nao e a decisao BLOQUEAR_APLICACAO, que e o operador recusar
+// a missao pedida por falta de base (ver `Bloquear_Missao_Insegura`). Diferente
+// do dominio de arbitragem, aqui o teto TEM leitura que o sustente — vento,
+// temperatura, umidade, chuva prevista e distancia de manancial sao medidos —,
+// por isso cada um dos nove produtos declara pelo menos um.
+//
+// DICIONARIO DA LEITURA (como este modelo le cada parametro):
+//   vento                      velocidade na altura da barra, no talhao, no
+//                              momento da aplicacao (km/h). Nao diz a direcao,
+//                              e por isso nenhuma regra decide por direcao.
+//   temperatura / umidade      do ar, na altura da aplicacao.
+//   temperatura_foliar         medida na folha; alta indica estresse hidrico,
+//                              que fecha a janela de aplicacao foliar.
+//   umidade_foliar             agua livre na folha; baixa favorece praga
+//                              sugadora, mas nao diz qual.
+//   NDVI                       indice de vigor entre 0 e 1. A QUEDA indica perda
+//                              de vigor; nao diz a CAUSA (praga, doenca, falha
+//                              de stand ou deficiencia nutricional).
+//   infestacao                 % de plantas com a praga alvo. Nao diz QUAL
+//                              praga: o alvo vem da cultura e do produto.
+//   chuva_prevista             mm previstos para a janela da aplicacao; 0 e
+//                              "sem chuva prevista", nao "nao vai chover".
+//   distancia_manancial        do talhao ao curso d'agua ou nascente mais
+//                              proximo, em metros.
+//   distancia_cultura_sensivel do talhao a cultura sensivel mais proxima, em
+//                              metros.
+// `altura_voo` e `hora` existem no vocabulario mas nao vem na leitura: sao
+// parametros da missao, nao medida do talhao, e por isso nao entram em regra.
+// A area especial (Faixa_Manancial, Vizinhanca_Sensivel, Apiario_Proximo) nao e
+// sensor: vem do cadastro do talhao. Talhao sem area declarada nao e evidencia
+// de talhao livre — e so ausencia de cadastro.
 // =============================================================================
 
 // -----------------------------------------------------------------------------
 // 1) ESQUEMA DE CONTROLE — produtos
+//
+// Cada produto declara a faixa de bula (minima, recomendada, maxima): sao essas
+// as vazoes que a gramatica deixa o artefato escrever, e e por elas que
+// AUMENTAR_VAZAO e REDUZIR_VAZAO significam alguma coisa em vez de virar
+// adjetivo. `proibido:` e prosa de bula para o agronomo ler; quem de fato exclui
+// o produto e a area que o `proibe` ou a cultura que o `veta`.
 // -----------------------------------------------------------------------------
 
 produto Glifosato {
     classe herbicida
     registro_mapa "MAPA-00891093"
     toxicologica IV
+
+    dose minima 1.5 L/ha
     dose recomendada 2.0 L/ha
     dose maxima 3.0 L/ha
+
     alvo: "plantas daninhas folha larga e estreita" estadio "pos-emergencia"
     carencia 7 dias reentrada 24 h
     deriva alta gota_minima 300 micra
+
     incompativel: Mancozebe gravidade alta ("precipitacao da calda no tanque") conduta "aplicar em passadas separadas com limpeza de tanque"
-    proibido: "faixa de amortecimento de manancial hidrico"
+
+    proibido: "faixa de amortecimento de manancial hidrico" excecao "nenhuma — a faixa de amortecimento nao admite aplicacao aerea do produto"
 }
 
 produto Mancozebe {
     classe fungicida
     registro_mapa "MAPA-00170492"
     toxicologica III
+
+    dose minima 1.0 kg/ha
     dose recomendada 1.5 kg/ha
+    dose maxima 2.0 kg/ha
+
     alvo: "ferrugem asiatica" estadio "preventivo"
     carencia 14 dias reentrada 48 h
     deriva moderada gota_minima 200 micra
+
     incompativel: Glifosato gravidade alta ("precipitacao da calda no tanque") conduta "aplicar em passadas separadas com limpeza de tanque"
 }
 
@@ -45,11 +120,17 @@ produto Acefato {
     classe inseticida
     registro_mapa "MAPA-00420889"
     toxicologica II
+
+    dose minima 0.4 kg/ha
     dose recomendada 0.6 kg/ha
+    dose maxima 0.8 kg/ha
+
     alvo: "lagartas desfolhadoras" estadio "infestacao confirmada"
     carencia 21 dias reentrada 48 h
     deriva alta gota_minima 250 micra
+
     incompativel: Nicosulfuron gravidade moderada ("fitotoxicidade em folha nova") conduta "respeitar intervalo de 7 dias entre aplicacoes"
+
     proibido: "proximidade de apiario em florada" excecao "aplicacao noturna com aviso previo ao apicultor"
 }
 
@@ -57,56 +138,86 @@ produto Nicosulfuron {
     classe herbicida
     registro_mapa "MAPA-00631197"
     toxicologica III
+
+    dose minima 0.6 L/ha
     dose recomendada 1.0 L/ha
+    dose maxima 1.5 L/ha
+
     alvo: "gramineas em milho" estadio "pos-emergencia inicial"
-    carencia 30 dias
+    carencia 30 dias reentrada 24 h
     deriva moderada gota_minima 250 micra
-    incompativel: Acefato gravidade moderada ("fitotoxicidade em folha nova")
+
+    // Declarada nos dois lados: a incompatibilidade e uma aresta simetrica da
+    // calda, e o prompt a mostra a partir de qualquer um dos dois produtos.
+    incompativel: Acefato gravidade moderada ("fitotoxicidade em folha nova") conduta "respeitar intervalo de 7 dias entre aplicacoes"
 }
 
 produto Atrazina {
     classe herbicida
     registro_mapa "MAPA-00280385"
     toxicologica III
+
+    dose minima 2.0 L/ha
     dose recomendada 3.0 L/ha
     dose maxima 4.0 L/ha
+
     alvo: "folhas largas em milho" estadio "pre e pos-emergencia"
     carencia 30 dias reentrada 24 h
     deriva alta gota_minima 300 micra
-    proibido: "area a menos de 500 m de manancial hidrico"
+
+    incompativel: Clorpirifos gravidade moderada ("inibicao metabolica no milho") conduta "aplicar em passadas separadas, com 7 dias entre elas"
+    incompativel: Dois_Quatro_D gravidade alta ("deriva hormonal sobre cultura vizinha") conduta "nao associar os dois herbicidas na mesma calda em aplicacao aerea"
+
+    proibido: "area a menos de 500 m de manancial hidrico" excecao "nenhuma — a distancia e condicao de registro do produto"
 }
 
 produto Clorpirifos {
     classe inseticida
     registro_mapa "MAPA-00540690"
     toxicologica II
+
+    dose minima 0.3 L/ha
     dose recomendada 0.5 L/ha
+    dose maxima 0.7 L/ha
+
     alvo: "cigarrinha-do-milho" estadio "infestacao confirmada"
     carencia 21 dias reentrada 72 h
     deriva alta gota_minima 300 micra
-    incompativel: Atrazina gravidade moderada ("inibicao metabolica no milho")
-    proibido: "cultura em florada com presenca de polinizadores"
+
+    incompativel: Atrazina gravidade moderada ("inibicao metabolica no milho") conduta "aplicar em passadas separadas, com 7 dias entre elas"
+
+    proibido: "cultura em florada com presenca de polinizadores" excecao "nenhuma — organofosforado nao tem janela segura com polinizador em forrageamento"
 }
 
 produto Dois_Quatro_D {
     classe herbicida
     registro_mapa "MAPA-00110284"
     toxicologica I
+
+    dose minima 1.0 L/ha
     dose recomendada 1.5 L/ha
+    dose maxima 2.0 L/ha
+
     alvo: "folhas largas em cana" estadio "pos-emergencia"
     carencia 30 dias reentrada 48 h
     deriva alta gota_minima 400 micra
-    incompativel: Atrazina gravidade alta ("deriva hormonal sobre cultura vizinha")
-    proibido: "proximidade de uva, maca ou oliveira"
+
+    incompativel: Atrazina gravidade alta ("deriva hormonal sobre cultura vizinha") conduta "nao associar os dois herbicidas na mesma calda em aplicacao aerea"
+
+    proibido: "proximidade de uva, maca ou oliveira" excecao "nenhuma — o dano hormonal em cultura sensivel e irreversivel"
 }
 
 produto Azoxistrobina {
     classe fungicida
     registro_mapa "MAPA-00760901"
     toxicologica III
+
+    dose minima 0.1 L/ha
     dose recomendada 0.2 L/ha
+    dose maxima 0.3 L/ha
+
     alvo: "ferrugem laranja da cana" estadio "preventivo"
-    carencia 14 dias
+    carencia 14 dias reentrada 24 h
     deriva leve gota_minima 150 micra
 }
 
@@ -114,55 +225,96 @@ produto Imidacloprido {
     classe inseticida
     registro_mapa "MAPA-00930594"
     toxicologica III
+
+    dose minima 0.3 L/ha
     dose recomendada 0.5 L/ha
+    dose maxima 0.7 L/ha
+
     alvo: "broca-da-cana" estadio "infestacao confirmada"
     carencia 21 dias reentrada 48 h
     deriva moderada gota_minima 250 micra
-    proibido: "cultura em florada com presenca de polinizadores"
+
+    proibido: "cultura em florada com presenca de polinizadores" excecao "nenhuma — o residuo neonicotinoide persiste alem da aplicacao"
 }
 
 // -----------------------------------------------------------------------------
 // 2) ESQUEMA DE CONTROLE — culturas
+//
+// Uma cultura fica ativa quando QUALQUER gatilho dela incide sobre a leitura.
+// Cultura sem gatilho ativo so entra quando o pedido a identifica (foco), e
+// entao vale pelas suas restricoes estruturais — o registro do produto para
+// aquela cultura —, nao como evento do talhao: um produto sem registro para a
+// cana continua sem registro num dia de NDVI alto.
+//
+// O gatilho diz o que a leitura sustenta e nada mais: NDVI baixo e perda de
+// vigor, nao diagnostico; infestacao e percentual da praga alvo, nao a
+// identificacao da praga. Por isso o gatilho manda VARRER ou MONITORAR, e a
+// aplicacao so aparece quando a leitura cruza o nivel de dano economico.
 // -----------------------------------------------------------------------------
 
 cultura Soja {
     ciclo "120 dias, semeadura outubro a dezembro"
-    gatilho: NDVI < 0.4 indice -> "queda de vigor: varredura para pragas desfolhadoras"
-    gatilho: infestacao > 15.0 % -> "nivel de dano economico atingido: aplicar inseticida"
+
+    gatilho: NDVI < 0.4 indice -> "queda de vigor na soja: varredura para pragas desfolhadoras e ferrugem; o indice nao diz a causa"
+    gatilho: infestacao > 15.0 % -> "nivel de dano economico atingido para a praga alvo: inseticida indicado; a leitura nao diz qual praga"
+
     recomenda Glifosato indicacao "dessecacao e manejo de daninhas em pos-emergencia"
     recomenda Mancozebe indicacao "controle preventivo de ferrugem asiatica"
     recomenda Acefato indicacao "controle de lagartas acima do nivel de dano"
+
     veta Atrazina motivo "sem registro para soja: risco de fitotoxicidade severa"
+
     escalonar: infestacao > 30.0 % -> AGRONOMO_RESPONSAVEL "infestacao severa exige avaliacao presencial"
+
     janela: "06h-09h ou 17h-19h" umidade_minima 55.0 %
 }
 
 cultura Milho {
     ciclo "140 dias, semeadura safrinha janeiro a marco"
-    gatilho: umidade_foliar < 60.0 % -> "condicao favoravel a cigarrinha: intensificar monitoramento"
-    gatilho: NDVI < 0.45 indice -> "perda de vigor: varredura para enfezamento"
+
+    gatilho: umidade_foliar < 60.0 % -> "folha seca favorece a cigarrinha: intensificar monitoramento antes de decidir aplicacao"
+    gatilho: NDVI < 0.45 indice -> "perda de vigor no milho: varredura para enfezamento; o indice nao fecha diagnostico"
+
     recomenda Atrazina indicacao "controle de folhas largas em pre e pos-emergencia"
     recomenda Nicosulfuron indicacao "controle de gramineas em pos-emergencia inicial"
     recomenda Clorpirifos indicacao "controle de cigarrinha vetora de enfezamento"
+
     veta Dois_Quatro_D motivo "risco de deriva hormonal com dano a cultura vizinha"
+
     escalonar: distancia_manancial < 500.0 m -> ORGAO_AMBIENTAL "aplicacao em faixa de protecao exige autorizacao"
+
     janela: "06h-10h" umidade_minima 55.0 %
 }
 
 cultura Cana_de_Acucar {
     ciclo "12 meses, colheita maio a novembro"
-    gatilho: temperatura_foliar > 38.0 C -> "estresse hidrico: suspender aplicacao foliar"
-    gatilho: NDVI < 0.35 indice -> "falha de stand: varredura para broca"
+
+    gatilho: temperatura_foliar > 38.0 C -> "estresse hidrico: janela foliar fechada, suspender aplicacao foliar"
+    gatilho: NDVI < 0.35 indice -> "falha de stand: varredura para broca; o indice nao distingue broca de deficiencia nutricional"
+
     recomenda Dois_Quatro_D indicacao "controle de folhas largas em pos-emergencia"
     recomenda Azoxistrobina indicacao "controle preventivo de ferrugem laranja"
     recomenda Imidacloprido indicacao "controle de broca-da-cana"
+
     veta Nicosulfuron motivo "sem registro para cana: risco de fitotoxicidade"
+
     escalonar: distancia_cultura_sensivel < 300.0 m -> AGRONOMO_RESPONSAVEL "vizinhanca sensivel a deriva hormonal"
+
     janela: "sem previsao de chuva por 8 h" umidade_minima 55.0 %
 }
 
 // -----------------------------------------------------------------------------
 // 3) ESQUEMA DE CONTROLE — areas (analogo das populacoes clinicas)
+//
+// `proibe` so quando o produto NAO PODE ser aplicado naquela area. O que a area
+// muda de procedimento, registro ou aviso vai em `exige`. Diferente do dominio
+// de arbitragem, aqui `ajusta` TEM semantica operacional: o fator multiplica as
+// vazoes exprimiveis do produto e o artefato tem um campo `vazao` para receber o
+// resultado — reduzir a 0.5 e uma ordem verificavel, nao um adjetivo.
+//
+// A area nao e leitura de sensor: vem do cadastro do talhao. Area que o talhao
+// nao declara simplesmente nao incide — e isso nao autoriza declarar a restricao
+// cumprida.
 // -----------------------------------------------------------------------------
 
 area Faixa_Manancial {
@@ -171,6 +323,7 @@ area Faixa_Manancial {
     proibe Glifosato motivo "restricao de aplicacao aerea em faixa de amortecimento"
     ajusta Imidacloprido fator 0.5 motivo "reducao de vazao para conter deriva sobre corpo d'agua"
     exige "registro de coordenada GPS e condicao climatica no momento da aplicacao"
+    exige "faixa nao pulverizada entre o talhao e a margem, declarada na missao"
 }
 
 area Vizinhanca_Sensivel {
@@ -178,24 +331,34 @@ area Vizinhanca_Sensivel {
     proibe Dois_Quatro_D motivo "deriva hormonal causa dano irreversivel em cultura sensivel"
     ajusta Atrazina fator 0.75 motivo "reducao de vazao para conter deriva"
     exige "aviso previo ao produtor vizinho e registro de direcao do vento"
+    exige "bordadura voltada para a cultura sensivel aplicada em faixa dirigida"
 }
 
 area Apiario_Proximo {
     criterio "colmeia ativa a menos de 250 m do talhao"
     proibe Clorpirifos motivo "alta toxicidade para abelhas em periodo de forrageamento"
+    proibe Imidacloprido motivo "residuo neonicotinoide persiste no nectar e no polen apos a aplicacao"
     ajusta Acefato fator 0.5 motivo "reducao de exposicao de polinizadores"
     exige "aplicacao restrita ao periodo noturno com aviso ao apicultor"
 }
 
 // -----------------------------------------------------------------------------
-// 4) INVARIANTES DE SEGURANCA
+// 4) INVARIANTES DE SEGURANCA E REGRAS GLOBAIS
+//
+// Cada `regra_seguranca` e um teto de politica ancorado numa leitura de sensor:
+// enquanto o limiar estiver cruzado, o produto perde INICIAR_APLICACAO e
+// AUMENTAR_VAZAO, e continua citavel para suspender, aguardar janela ou escalar.
+// Sensor ausente da leitura nao dispara a regra — e tambem nao a dispensa: sem o
+// dado, a condicao fica indeterminada, nunca segura.
 // -----------------------------------------------------------------------------
 
 regra_seguranca: bloquear_aplicacao Glifosato se vento > 10.0 km/h ("deriva de herbicida sistemico sobre cultura vizinha")
 regra_seguranca: bloquear_aplicacao Dois_Quatro_D se vento > 8.0 km/h ("deriva hormonal com dano a cultura sensivel a longa distancia")
+regra_seguranca: bloquear_aplicacao Nicosulfuron se vento > 10.0 km/h ("deriva de herbicida seletivo sobre cultura vizinha sem registro")
 regra_seguranca: bloquear_aplicacao Atrazina se distancia_manancial < 500.0 m ("contaminacao de manancial hidrico")
 regra_seguranca: bloquear_aplicacao Clorpirifos se temperatura > 32.0 C ("volatilizacao com perda de eficacia e exposicao do operador")
 regra_seguranca: bloquear_aplicacao Mancozebe se umidade < 55.0 % ("evaporacao da gota antes do alvo")
+regra_seguranca: bloquear_aplicacao Azoxistrobina se umidade < 50.0 % ("gota fina de 150 micra evapora antes do alvo em ar seco")
 regra_seguranca: bloquear_aplicacao Acefato se chuva_prevista > 0.0 mm ("lavagem do produto antes da absorcao")
 regra_seguranca: bloquear_aplicacao Imidacloprido se temperatura_foliar > 38.0 C ("estresse hidrico reduz absorcao e agrava fitotoxicidade")
 
@@ -204,11 +367,18 @@ regra_global: "Nunca aplicar simultaneamente em talhoes adjacentes com culturas 
 regra_global: "Toda aplicacao exige registro de coordenada GPS, vazao e condicao climatica" severidade alta referencia "NR-31"
 regra_global: "Aplicacao aerea e proibida com vento acima de 15 km/h em qualquer condicao" severidade proibida
 regra_global: "Produto classe toxicologica I exige dupla checagem antes da decolagem" severidade alta referencia "ANVISA"
+regra_global: "Fato que so aparece no pedido — florada, colmeia, direcao do vento, tanque limpo, janela fechando — nao e leitura de sensor: sem o dado, a justificativa declara evidencia insuficiente" severidade alta
+regra_global: "Area especial ausente do cadastro do talhao nao e evidencia de area livre: a restricao nao incide, e tampouco pode ser declarada cumprida" severidade alta
 regra_global: "Toda missao gerada automaticamente exige justificativa rastreavel" severidade alta
 
-// -----------------------------------------------------------------------------
-// 5) ESQUEMA DE DADOS — universo fechado de respostas do LLM
-// -----------------------------------------------------------------------------
+// =============================================================================
+// ESQUEMA DE DADOS — universo fechado de respostas do assistente agronomico
+//
+// Toda decisao tem conduta: na decodificacao incremental, a clausula so realiza
+// decisoes que alguma conduta da `sequencia` realiza. O `modo`, ao contrario, e
+// escolhido por clausula no artefato: os quatro continuam exprimiveis mesmo que
+// uma conduta nao fixe nenhum.
+// =============================================================================
 
 esquema_dados AssistenteAgro_v1 {
     decisoes [
@@ -225,9 +395,26 @@ esquema_dados AssistenteAgro_v1 {
         justificativa_obrigatoria sim
     }
 
+    conduta Aumentar_Vazao {
+        decisao AUMENTAR_VAZAO
+        modo BARRA_TOTAL
+        justificativa_obrigatoria sim
+    }
+
+    conduta Manter_Vazao {
+        decisao MANTER_VAZAO
+        justificativa_obrigatoria sim
+    }
+
     conduta Reduzir_Vazao {
         decisao REDUZIR_VAZAO
         modo FAIXA_DIRIGIDA
+        justificativa_obrigatoria sim
+    }
+
+    conduta Substituir_Produto {
+        decisao SUBSTITUIR
+        modo BARRA_TOTAL
         justificativa_obrigatoria sim
     }
 
@@ -258,9 +445,32 @@ esquema_dados AssistenteAgro_v1 {
         justificativa_obrigatoria sim
     }
 
+    // O operador RECUSA a missao que lhe pediram, por falta de base ou de
+    // seguranca — ex.: classe toxicologica I sem a dupla checagem registrada.
+    // Nao e o jeito de dizer que um produto foi descartado (isso e SUSPENDER ou
+    // MANTER_BLOQUEADO) nem o mecanismo `regra_seguranca: bloquear_aplicacao`,
+    // que restringe a politica de um produto que segue aplicavel noutra janela.
     conduta Bloquear_Missao_Insegura {
         decisao BLOQUEAR_APLICACAO
         requer_dupla_checagem sim
         justificativa_obrigatoria sim
     }
+}
+
+// -----------------------------------------------------------------------------
+// Missao de referencia. Nao afirma condicao que a leitura nao registra, e nao
+// usa BLOQUEAR_APLICACAO para dizer que um produto foi descartado.
+// -----------------------------------------------------------------------------
+
+missao Missao_Referencia_Soja para Soja {
+    esquema_referencia AssistenteAgro_v1
+    talhao "TL-2026-0031"
+    sequencia [ Aguardar_Janela_Climatica ]
+
+    aplicacao Glifosato decisao AGUARDAR_JANELA vazao 0.0 L/ha modo BARRA_TOTAL justificativa "vento medido de 14 km/h acima do limiar de 10 km/h do Glifosato: a aplicacao fica bloqueada ate a janela abrir; o fechamento da janela alegado pelo operador nao e leitura de sensor"
+
+    alerta BLOQUEANTE "aplicacao de Glifosato bloqueada enquanto o vento medido estiver acima de 10 km/h" regra "regra_seguranca/Glifosato"
+    alerta ATENCAO "janela que fecha hoje e condicao do talhao vizinho vem do relato do operador, nao da leitura dos sensores" regra "Soja"
+
+    auditoria "missao derivada da cultura Soja sob restricao gramatical e ancoragem no grafo"
 }
