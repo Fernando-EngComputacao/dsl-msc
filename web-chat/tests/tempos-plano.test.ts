@@ -17,13 +17,16 @@
  *   6. total so existe com as duas etapas medidas — soma parcial nao vira total;
  *   7. tempo por tamanho: pares usaveis, taxa agregada e regressao por lado;
  *   8. tempo por plano: a amostra principal e geracao + validacao do gate;
- *   9. sem medida nenhuma, cada secao se declara vazia em vez de mostrar zeros.
+ *   9. sem medida nenhuma, cada secao se declara vazia em vez de mostrar zeros;
+ *  10. o "?" de cada unidade tem explicacao, e nenhuma explicacao sobrou sem
+ *      unidade — a tabela e o detalhe nao podem descolar.
  */
 
 import assert from 'node:assert/strict';
 
 import type { RegistroAvaliacaoImportado } from '../../src/inference/avaliacao-jsonl.js';
 import type { DetalheLado, DetalheLinha, RespostaAvaliacao } from '../src/api';
+import { DETALHES_TEMPO } from '../src/detalhe-tempo';
 import {
     geracaoDoRegistroImportado,
     medidasDoPlano,
@@ -275,6 +278,32 @@ teste('sem medida nenhuma, a secao de tempo por plano se declara vazia', () => {
     const t = tempoPorPlano(resposta([plano({})]), 'arquitetura');
     assert.equal(t.algumaMedida, false);
     assert.ok(t.amostras.every(a => a.resumo === null));
+});
+
+teste('toda unidade das duas tabelas tem detalhe, e todo detalhe tem unidade', () => {
+    const r = resposta([plano({ geracaoMs: 1000, validacaoGateMs: 100, texto: 'x'.repeat(50) })]);
+    const daTabela = [
+        ...tempoPorTamanho(r, 'arquitetura').itens.map(i => ({ id: i.id, rotulo: i.rotulo, secao: 'tamanho' as const })),
+        ...tempoPorPlano(r, 'arquitetura').amostras.map(a => ({ id: a.id, rotulo: a.rotulo, secao: 'plano' as const }))
+    ];
+
+    for (const linha of daTabela) {
+        const d = DETALHES_TEMPO[linha.id];
+        assert.ok(d, `unidade "${linha.rotulo}" (${linha.id}) nao tem detalhe em detalhe-tempo.ts`);
+        assert.equal(d.rotulo, linha.rotulo, `o rotulo do detalhe ${linha.id} saiu do rotulo da tabela`);
+        assert.equal(d.secao, linha.secao, `o detalhe ${linha.id} esta na secao errada`);
+        // O modal tem seis blocos: nenhum pode ficar em branco.
+        assert.ok(d.oQueE.length > 40 && d.cuidado.length > 40 && d.quandoVazio.length > 10, `detalhe ${linha.id} incompleto`);
+        assert.ok(d.origem.campo.length > 0 && d.origem.texto.length > 20, `detalhe ${linha.id} sem procedencia do numero`);
+        assert.ok(d.exemplo.dados.length > 0 && d.exemplo.conta.length > 0, `detalhe ${linha.id} sem exemplo com conta`);
+        assert.ok(d.exemplo.leitura.length > 40, `detalhe ${linha.id} sem leitura do exemplo`);
+    }
+
+    const ids = new Set(daTabela.map(l => l.id));
+    for (const id of Object.keys(DETALHES_TEMPO)) {
+        assert.ok(ids.has(id as (typeof daTabela)[number]['id']), `detalhe "${id}" nao corresponde a nenhuma unidade das tabelas`);
+    }
+    assert.equal(daTabela.length, Object.keys(DETALHES_TEMPO).length);
 });
 
 console.log(falhas === 0 ? '\nTodos os testes das analises de tempo passaram.' : `\n${falhas} teste(s) falharam.`);

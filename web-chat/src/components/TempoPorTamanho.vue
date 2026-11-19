@@ -12,8 +12,11 @@
  * o tamanho explica. Correlação não é causa, e com n pequeno ela oscila muito —
  * por isso o n aparece ao lado, sempre.
  */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { RespostaAvaliacao } from '../api';
+import DetalheTempoModal from './DetalheTempoModal.vue';
+import { detalheTempo, type DetalheTempo, type IdDetalheTamanho } from '../detalhe-tempo';
+import { BOTAO_AJUDA } from '../ui';
 import {
     formatarDuracaoMs,
     formatarInteiro,
@@ -32,6 +35,12 @@ const rotulo = (lado: LadoAvaliado): string => (lado === 'arquitetura' ? 'Arquit
 
 const algumaMedida = computed(() => analises.value.some(a => a.dados.algumaMedida));
 const semTokens = computed(() => analises.value.every(a => a.dados.semTokens));
+
+/** Unidade cuja explicação está aberta; `null` com o modal fechado. */
+const detalheAberto = ref<DetalheTempo | null>(null);
+const abrirDetalhe = (id: IdDetalheTamanho): void => {
+    detalheAberto.value = detalheTempo(id);
+};
 
 const semTempos = computed(() =>
     props.origem === 'importacao'
@@ -115,6 +124,15 @@ const semTempos = computed(() =>
                                     >
                                         <th class="py-1.5 pr-3 text-left font-normal" :title="item.dica">
                                             {{ item.rotulo }}
+                                            <button
+                                                type="button"
+                                                :class="BOTAO_AJUDA"
+                                                :aria-label="`O que é: ${item.rotulo}`"
+                                                title="O que é, de onde vem o número e um exemplo"
+                                                @click="abrirDetalhe(item.id)"
+                                            >
+                                                ?
+                                            </button>
                                             <span
                                                 class="ml-1 rounded-full px-1.5 py-0.5 text-[10px]"
                                                 :class="
@@ -171,5 +189,7 @@ const semTempos = computed(() =>
             </template>
             <p v-else class="text-xs text-neutral-500 dark:text-neutral-400">Medidas indisponíveis: {{ semTempos }}</p>
         </section>
+
+        <DetalheTempoModal :detalhe="detalheAberto" @fechar="detalheAberto = null" />
     </div>
 </template>

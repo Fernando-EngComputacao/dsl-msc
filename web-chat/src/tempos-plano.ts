@@ -31,6 +31,7 @@ import {
     type TempoPorUnidade
 } from '../../src/inference/estatistica-tempos';
 import type { DetalheLado, RespostaAvaliacao } from './api';
+import type { IdDetalhePlano, IdDetalheTamanho } from './detalhe-tempo';
 
 export type LadoAvaliado = 'arquitetura' | 'baseline';
 
@@ -226,6 +227,8 @@ export function pilhaDeTempos(resposta: RespostaAvaliacao): PilhaDeTempos {
 
 /** Uma unidade de tamanho confrontada com o tempo de geração. */
 export interface TempoPorTamanhoItem {
+    /** Chave do detalhe em `detalhe-tempo.ts` — o que o "?" da tabela abre. */
+    id: IdDetalheTamanho;
     rotulo: string;
     dica: string;
     /** `input`: tamanho do que ENTRA na geração; `saida`: tamanho do plano gerado. */
@@ -253,6 +256,7 @@ export function tempoPorTamanho(resposta: RespostaAvaliacao, lado: LadoAvaliado)
 
     const itens: TempoPorTamanhoItem[] = [
         {
+            id: 'input-chars',
             rotulo: 'Caracteres do input (Prompt Semântico)',
             dica: 'O contexto recuperado do grafo mais o pedido, como foi gravado na geração. Não é o prompt completo do motor (exemplos e gramática não são gravados)',
             papel: 'input',
@@ -260,6 +264,7 @@ export function tempoPorTamanho(resposta: RespostaAvaliacao, lado: LadoAvaliado)
             analise: porUnidade(m => m.charsPrompt)
         },
         {
+            id: 'input-tokens',
             rotulo: 'Tokens do input (Prompt Semântico)',
             dica: 'O mesmo texto, contado com o tokenizador do modelo que gerou os planos (/tokenizar)',
             papel: 'input',
@@ -267,6 +272,7 @@ export function tempoPorTamanho(resposta: RespostaAvaliacao, lado: LadoAvaliado)
             analise: porUnidade(m => m.tokensPrompt)
         },
         {
+            id: 'pedido-chars',
             rotulo: 'Caracteres do pedido',
             dica: 'Só a fala do usuário (intencao), sem o contexto do grafo',
             papel: 'input',
@@ -274,6 +280,7 @@ export function tempoPorTamanho(resposta: RespostaAvaliacao, lado: LadoAvaliado)
             analise: porUnidade(m => m.charsPedido)
         },
         {
+            id: 'plano-chars',
             rotulo: 'Caracteres do plano',
             dica: 'Tamanho do artefato gerado — é a saída, não a entrada',
             papel: 'saida',
@@ -281,6 +288,7 @@ export function tempoPorTamanho(resposta: RespostaAvaliacao, lado: LadoAvaliado)
             analise: porUnidade(m => m.charsPlano)
         },
         {
+            id: 'plano-tokens',
             rotulo: 'Tokens do plano',
             dica: 'O plano gerado, contado com o tokenizador do motor (/tokenizar)',
             papel: 'saida',
@@ -303,6 +311,8 @@ export function tempoPorTamanho(resposta: RespostaAvaliacao, lado: LadoAvaliado)
 // ---------------------------------------------------------------------------
 
 export interface AmostraDePlano {
+    /** Chave do detalhe em `detalhe-tempo.ts` — o que o "?" da tabela abre. */
+    id: IdDetalhePlano;
     rotulo: string;
     dica: string;
     /** A amostra principal da seção (geração + validação). */
@@ -328,32 +338,38 @@ export function tempoPorPlano(resposta: RespostaAvaliacao, lado: LadoAvaliado): 
     const medidas = medidasDoLado(resposta, lado);
     const amostras: AmostraDePlano[] = [
         {
+            id: 'gate-total',
             rotulo: 'Geração + validação no gate',
             dica: 'Por plano: a geração que ficou mais a validação feita durante a geração, somando as tentativas do cenário',
             principal: true,
             resumo: resumirAmostra(medidas.map(m => somar(m.tempoGeracaoMs, m.tempoValidacaoGateMs)))
         },
         {
+            id: 'geracao',
             rotulo: 'Geração (parcela)',
             dica: 'Só o pipeline de geração do plano que ficou',
             resumo: resumirAmostra(medidas.map(m => m.tempoGeracaoMs))
         },
         {
+            id: 'validacao-gate',
             rotulo: 'Validação no gate (parcela)',
             dica: 'Só a validação feita durante a geração, no lote (oráculo e/ou LLM Judge)',
             resumo: resumirAmostra(medidas.map(m => m.tempoValidacaoGateMs))
         },
         {
+            id: 'descartadas',
             rotulo: 'Gerações descartadas',
             dica: 'Tempo jogado fora em planos que o gate reprovou — zero nos cenários aprovados de primeira',
             resumo: resumirAmostra(medidas.map(m => m.tempoGeracaoDescartadaMs))
         },
         {
+            id: 'cenario',
             rotulo: 'Cenário inteiro (relógio do lote)',
             dica: 'Relógio de parede de cada cenário no lote: todas as gerações, todas as validações e a rede',
             resumo: resumirAmostra(medidas.map(m => m.tempoCenarioMs))
         },
         {
+            id: 'avaliacao-tela',
             rotulo: 'Avaliação nesta tela',
             dica: 'Por plano: sintaxe, semântica e LLM Judge desta avaliação (não é a validação do gate)',
             resumo: resumirAmostra(medidas.map(m => m.tempoAvaliacaoMs))

@@ -21,6 +21,7 @@ import { texNum, type IdDocumentacao } from '../../../src/inference/metodologia-
 import CartaoMetrica from './CartaoMetrica.vue';
 import MetodologiaEstatistica from './MetodologiaEstatistica.vue';
 import Tex from './Tex.vue';
+import { BOTAO_AJUDA } from '../ui';
 
 /**
  * Sessão "Avaliação LLM": a análise estatística dos julgamentos JÁ gravados,
@@ -149,8 +150,6 @@ const estadosDescritiva = computed(() => Object.keys(geral.value?.distribuicoes[
 const CARTAO = 'min-w-0 rounded-2xl border border-neutral-200 bg-white p-4 sm:p-5 dark:border-white/10 dark:bg-white/[0.02]';
 const SOBRETITULO = 'text-[10.5px] font-semibold tracking-[0.12em] text-neutral-500 uppercase dark:text-neutral-400';
 const TH = 'px-3 py-2 text-[10.5px] font-semibold tracking-wider text-neutral-500 uppercase dark:text-neutral-400';
-const BOTAO_AJUDA =
-    'inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border border-neutral-300 text-[10px] font-semibold text-neutral-400 transition-colors hover:border-blue-500 hover:text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none dark:border-white/20 dark:text-neutral-500 dark:hover:border-blue-400 dark:hover:text-blue-300';
 </script>
 
 <template>

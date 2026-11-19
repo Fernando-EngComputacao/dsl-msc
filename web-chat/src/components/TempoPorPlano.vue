@@ -14,8 +14,11 @@
  * tempos costumam ter cauda longa à direita, e nesse caso média e mediana se
  * separam.
  */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { RespostaAvaliacao } from '../api';
+import DetalheTempoModal from './DetalheTempoModal.vue';
+import { detalheTempo, type DetalheTempo, type IdDetalhePlano } from '../detalhe-tempo';
+import { BOTAO_AJUDA } from '../ui';
 import {
     formatarDuracaoMs,
     formatarIntervalo,
@@ -32,6 +35,12 @@ const analises = computed(() => lados.value.map(lado => ({ lado, dados: tempoPor
 const rotulo = (lado: LadoAvaliado): string => (lado === 'arquitetura' ? 'Arquitetura' : 'Baseline');
 
 const algumaMedida = computed(() => analises.value.some(a => a.dados.algumaMedida));
+
+/** Amostra cuja explicação está aberta; `null` com o modal fechado. */
+const detalheAberto = ref<DetalheTempo | null>(null);
+const abrirDetalhe = (id: IdDetalhePlano): void => {
+    detalheAberto.value = detalheTempo(id);
+};
 
 const semTempos = computed(() =>
     props.origem === 'importacao'
@@ -108,6 +117,15 @@ const semTempos = computed(() =>
                                             :title="amostra.dica"
                                         >
                                             {{ amostra.rotulo }}
+                                            <button
+                                                type="button"
+                                                :class="BOTAO_AJUDA"
+                                                :aria-label="`O que é: ${amostra.rotulo}`"
+                                                title="O que é, de onde vem o número e um exemplo"
+                                                @click="abrirDetalhe(amostra.id)"
+                                            >
+                                                ?
+                                            </button>
                                         </th>
                                         <td class="py-1.5 pr-3 tabular-nums">{{ amostra.resumo?.n ?? 0 }}</td>
                                         <td
@@ -144,5 +162,7 @@ const semTempos = computed(() =>
             </template>
             <p v-else class="text-xs text-neutral-500 dark:text-neutral-400">Medidas indisponíveis: {{ semTempos }}</p>
         </section>
+
+        <DetalheTempoModal :detalhe="detalheAberto" @fechar="detalheAberto = null" />
     </div>
 </template>
