@@ -74,6 +74,7 @@ subir_motor() {
 
     cd src/python_engine
     SPC_CML_DOMINIO="$dominio" \
+        SPC_CML_N_CTX="${SPC_CML_N_CTX:-16384}" \
         uvicorn main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
     local pid=$!
     cd ../..

@@ -36,6 +36,11 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
       # Troque para "outlines" so para reproduzir a comparacao de desempenho.
       - SPC_CML_BACKEND=${SPC_CML_BACKEND:-llamacpp}
+      # Orcamento prompt+saida por motor. 8192 (o padrao de main.py) foi medido
+      # para uma GPU de 6 GB; numa RTX 4090 (24 GB) os tres motores cabem com
+      # 16384 — +448 MiB de KV cache cada. Medido em 2026-11-20 com os tres no
+      # ar e os modelos carregados: 6452 MiB por motor, 19376 de 24564 MiB.
+      - SPC_CML_N_CTX=${SPC_CML_N_CTX:-16384}
     # Passthrough da GPU do host — o llama-cpp-python compilado com CUDA (ver
     # Dockerfile, passo 4) so descarrega camadas na GPU se o container enxergar
     # uma. Requer Docker Desktop com WSL2 + suporte a GPU NVIDIA (confirmado

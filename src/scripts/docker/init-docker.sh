@@ -204,6 +204,7 @@ subir_motor() {
             echo '      → iniciando uvicorn'
 
             SPC_CML_DOMINIO=$dominio \
+            SPC_CML_N_CTX=${SPC_CML_N_CTX:-16384} \
             nohup uvicorn main:app \
                 --app-dir src/python_engine \
                 --host 0.0.0.0 \

@@ -107,6 +107,14 @@ EMBED_N_CTX = int(os.environ.get("SPC_CML_EMBED_N_CTX", "2048"))
 # derrubando os cenarios seguintes junto. Qwen2.5 suporta ate 32k — esse teto e
 # sobre o orcamento de prompt+saida, nao sobre o tamanho do modelo, entao vale
 # tanto para o 0.5B quanto para o 7B.
+# O KV cache deste 7B custa 56 KiB/token (2 x 28 camadas x 4 kv_heads x 128 x
+# 2 B), ou seja 448 MiB em 8192 e 896 MiB em 16384. Numa GPU de 24 GB os tres
+# motores (medico, agro, fut) cabem com 16384 — e o que os scripts de subida
+# passam: medido em 2026-11-20, 6452 MiB por motor, 19376 de 24564 MiB com os
+# tres carregados. Os pesos NAO sao compartilhados na VRAM (o mmap compartilha
+# o arquivo em RAM), entao cada motor paga os ~4,7 GB do Q4_K_M de novo.
+# Teto util: 32768, o context_length do Qwen2.5; acima disso exigiria RoPE
+# scaling (YaRN).
 N_CTX = int(os.environ.get("SPC_CML_N_CTX", "8192"))
 # Os exemplares few-shot tem ~800 caracteres; 512 tokens truncava o plano no meio.
 MAX_TOKENS = int(os.environ.get("SPC_CML_MAX_TOKENS", "1024"))
@@ -542,6 +550,8 @@ def health():
         "dominio": DOMINIO,
         "inicio": INICIO,
         "backend": BACKEND,
+        "n_ctx": N_CTX,
+        "max_tokens": MAX_TOKENS,
         "modelo": MODEL_ID if BACKEND == "outlines" else f"{GGUF_REPO}/{GGUF_FILE}",
         "modelo_carregado": _modelo_carregado(),
         "embedder": f"{EMBED_GGUF_REPO}/{EMBED_GGUF_FILE}",

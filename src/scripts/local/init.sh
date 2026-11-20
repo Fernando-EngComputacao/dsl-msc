@@ -211,7 +211,8 @@ subir_motor_local() {
     # --app-dir em vez de `cd`: main.py resolve gramatica e exemplares por
     # BASE_DIR absoluto, entao o processo nao precisa nascer dentro da pasta —
     # e assim os caminhos relativos do restante do script continuam validos.
-    SPC_CML_DOMINIO="$dominio" "$PY" -m uvicorn main:app \
+    SPC_CML_DOMINIO="$dominio" \
+        SPC_CML_N_CTX="${SPC_CML_N_CTX:-16384}" "$PY" -m uvicorn main:app \
         --app-dir src/python_engine --host 127.0.0.1 --port "$porta" \
         > "$EXEC_DIR/$nome.log" 2>&1 &
     echo $! > "$EXEC_DIR/$nome.pid"

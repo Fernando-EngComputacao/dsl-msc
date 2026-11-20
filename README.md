@@ -1151,7 +1151,9 @@ Os três do multiagente são limitados a [1, 10]: valor não numérico cai no pa
 
 ### Motor
 
-`SPC_CML_DOMINIO` (`medico`) · `SPC_CML_BACKEND` (`llamacpp`) · `SPC_CML_GGUF_REPO` / `_FILE` · `SPC_CML_EMBED_GGUF_REPO` / `_FILE` · `SPC_CML_N_CTX` (8192) · `SPC_CML_MAX_TOKENS` (1024) · `SPC_CML_MAX_ITENS` (4) · `SPC_CML_N_GPU_LAYERS` (-1) · `SPC_CML_TEMPERATURA` (0.3) · `SPC_CML_REPEAT_PENALTY` (1.15) · `SPC_CML_GRAMMAR` · `SPC_CML_EXAMPLES` · `SPC_CML_INICIO`
+`SPC_CML_DOMINIO` (`medico`) · `SPC_CML_BACKEND` (`llamacpp`) · `SPC_CML_GGUF_REPO` / `_FILE` · `SPC_CML_EMBED_GGUF_REPO` / `_FILE` · `SPC_CML_N_CTX` (8192 no código; **os scripts de subida passam 16384** — ver abaixo) · `SPC_CML_MAX_TOKENS` (1024) · `SPC_CML_MAX_ITENS` (4) · `SPC_CML_N_GPU_LAYERS` (-1) · `SPC_CML_TEMPERATURA` (0.3) · `SPC_CML_REPEAT_PENALTY` (1.15) · `SPC_CML_GRAMMAR` · `SPC_CML_EXAMPLES` · `SPC_CML_INICIO`
+
+> **`n_ctx` por motor.** O default de 8192 em [main.py](src/python_engine/main.py) foi medido para uma GPU de 6 GB. O KV cache deste 7B custa 56 KiB/token (2 × 28 camadas × 4 `kv_heads` × 128 × 2 B): 448 MiB em 8192, 896 MiB em 16384. Numa GPU de 24 GB os três motores cabem com **16384** — medido em 2026-11-20 com os três carregados: **6452 MiB por motor, 19376 de 24564 MiB** (cada motor paga a própria cópia dos pesos na VRAM; o `mmap` compartilha o arquivo em RAM, não na GPU). e é o que `init-docker.sh`, `init.sh`, `lib-motor.sh` e o `docker-compose.yml` passam. Teto útil: 32768, o `context_length` do Qwen2.5; acima disso exigiria RoPE scaling (YaRN). `/health` devolve o `n_ctx` e o `max_tokens` em vigor.
 
 ### Avaliação e gate da geração
 
