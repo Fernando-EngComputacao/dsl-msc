@@ -5,7 +5,7 @@
 # Gramatica:  src/language/dsl.langium (regra PlanCommand)
 # Modelo:     uti.dsl (esquema_dados AssistenteUTI_v2)
 # 
-# Farmacos citaveis: 12 | Condutas: 8 | Decisoes: 11 | Vias: 4
+# Farmacos citaveis: 12 | Condutas: 11 | Decisoes: 11 | Vias: 4
 # 
 # Toda alternativa desta gramatica corresponde a uma entidade declarada no
 # modelo do especialista. O que nao esta aqui e inexprimivel pelo LLM.
@@ -17,7 +17,7 @@ plano ::= "plano" identificador "para" protocolo "{" "esquema_referencia" esquem
 ordem ::= "ordem" farmaco "decisao" decisao "dose" quantidade "via" via "justificativa" texto
 alerta ::= "alerta" nivel_alerta texto "regra" texto
 quantidade ::= numero unidade
-conduta ::= "Iniciar_Vasopressor" | "Titular_Vasopressor" | "Reduzir_Infusao" | "Manter_Bloqueio" | "Suspender_Farmaco" | "Solicitar_Exame_Controle" | "Acionar_Equipe" | "Bloquear_Ordem_Insegura"
+conduta ::= "Iniciar_Vasopressor" | "Titular_Vasopressor" | "Reduzir_Infusao" | "Manter_Infusao" | "Ajustar_Dose" | "Substituir_Farmaco" | "Manter_Bloqueio" | "Suspender_Farmaco" | "Solicitar_Exame_Controle" | "Acionar_Equipe" | "Bloquear_Ordem_Insegura"
 protocolo ::= "Choque_Septico" | "Sedacao_Analgesia_VM" | "Controle_Glicemico_UTI"
 esquema ::= "AssistenteUTI_v2"
 farmaco ::= "Noradrenalina" | "Adrenalina" | "Vasopressina" | "Dobutamina" | "Propofol" | "Midazolam" | "Fentanil" | "Cisatracurio" | "Vancomicina" | "Piperacilina_Tazobactam" | "Heparina" | "Insulina_Regular"
