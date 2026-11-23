@@ -74,11 +74,23 @@ function limparFiltros(): void {
 }
 const temFiltros = computed(() => analise.value.lados.length > 1 || analise.value.dominios.length > 1);
 
+/**
+ * Que modelo ocupou o lugar do juiz nos dados — o local do motor ou um de
+ * fronteira, que entram na MESMA fonte (ver analise-avaliacao.ts). Sem isto,
+ * duas análises iguais na tela podem ser de juízes diferentes.
+ */
+const modelosDoJuiz = computed(() =>
+    analise.value.opcao.fontes.flatMap(f =>
+        f === 'llmJudge' || f === 'llmFronteira' ? (analise.value.modelosPorFonte[f] ?? []) : []
+    )
+);
+
 /** Contexto do cabeçalho: só o que está nos dados. */
 const contexto = computed(() => [
     { rotulo: 'Observações', valor: `${analise.value.totalPlanos} plano(s)` },
     { rotulo: 'Domínio', valor: filtroDominio.value || analise.value.dominios.join(', ') || '—' },
-    { rotulo: 'Modelo', valor: filtroLado.value ? ROTULO_LADO[filtroLado.value] : analise.value.lados.map(l => ROTULO_LADO[l]).join(' + ') || '—' }
+    { rotulo: 'Modelo', valor: filtroLado.value ? ROTULO_LADO[filtroLado.value] : analise.value.lados.map(l => ROTULO_LADO[l]).join(' + ') || '—' },
+    ...(modelosDoJuiz.value.length > 0 ? [{ rotulo: 'Juiz', valor: modelosDoJuiz.value.join(', ') }] : [])
 ]);
 
 // ---------------------------------------------------------------- apresentação

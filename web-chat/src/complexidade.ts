@@ -196,7 +196,7 @@ export const ITENS: readonly ItemComplexidade[] = [
         comoObtido:
             'A gramática efetiva é montada varrendo as regras uma vez e filtrando alternativas por conjuntos (vocabulários permitidos, políticas por item), com teste de pertinência O(1) amortizado. Nenhuma etapa reexpande a gramática por item.',
         origem: 'codigo',
-        evidencia: 'src/python_engine/main.py:516',
+        evidencia: 'src/python_engine/main.py:524',
         ancora: 'def _gramatica_efetiva'
     },
     // -------------------------------------------------------------- GRAFO ---
@@ -282,7 +282,7 @@ export const ITENS: readonly ItemComplexidade[] = [
         comoObtido:
             'É um encoder transformer: a complexidade é a da autoatenção sobre o texto embutido. Uma chamada por pedido (e uma por nó, na sincronização do grafo).',
         origem: 'artigo',
-        evidencia: 'src/python_engine/main.py:615',
+        evidencia: 'src/python_engine/main.py:625',
         ancora: '@app.post("/embed")',
         fontes: [
             {
@@ -305,7 +305,7 @@ export const ITENS: readonly ItemComplexidade[] = [
         comoObtido:
             'A fase de prompt paga a autoatenção quadrática (Tabela 1 do artigo do transformer); com cache KV, cada token novo atende a L+t chaves já calculadas, então o passo é linear no contexto. O motor guarda contra estouro de contexto antes de decodificar (n_prompt + MAX_TOKENS ≤ n_ctx).',
         origem: 'artigo',
-        evidencia: 'src/python_engine/main.py:238',
+        evidencia: 'src/python_engine/main.py:246',
         ancora: 'n_prompt = len(llm.tokenize',
         fontes: [
             {
@@ -333,7 +333,7 @@ export const ITENS: readonly ItemComplexidade[] = [
         comoObtido:
             'A cada passo, os candidatos são confrontados com as pilhas de derivação da gramática. Não há limite publicado: a documentação oficial reconhece "performance gotchas" e aponta padrões patológicos, o que confirma que o custo depende da forma da gramática — e não só do seu tamanho.',
         origem: 'nao-documentado',
-        evidencia: 'src/python_engine/main.py:250',
+        evidencia: 'src/python_engine/main.py:258',
         ancora: 'saida = llm(',
         fontes: [
             {
@@ -406,7 +406,7 @@ export const ITENS: readonly ItemComplexidade[] = [
         comoObtido:
             'Leitura do caminho: a sintaxe é um /verify mais um parse; a semântica percorre os PIs do artefato contra as regras recuperadas; oráculo e juiz são iniciados juntos (Promise.allSettled) e cada um faz uma chamada. O número de chamadas ao motor por plano não depende do tamanho do arquivo.',
         origem: 'codigo',
-        evidencia: 'src/inference/avaliar-grafo.ts:869',
+        evidencia: 'src/inference/avaliar-grafo.ts:898',
         ancora: 'export async function avaliarPlano',
         ressalva: 'O tempo de parede é dominado pela chamada do juiz (uma geração), não pelas camadas determinísticas — é o que os tempos por plano mostram.'
     },
@@ -422,7 +422,7 @@ export const ITENS: readonly ItemComplexidade[] = [
         comoObtido:
             'Três níveis de chave (id + assinatura da telemetria → id → enunciado), cada um indexado em Map: uma passada por registro, com busca O(1) amortizada. Nenhuma comparação de todos contra todos.',
         origem: 'codigo',
-        evidencia: 'src/inference/avaliar-grafo.ts:1205',
+        evidencia: 'src/inference/avaliar-grafo.ts:1282',
         ancora: 'export function parearRegistros'
     },
     {
@@ -436,7 +436,7 @@ export const ITENS: readonly ItemComplexidade[] = [
         variaveis: ['m'],
         comoObtido: 'Uma passada pelos planos avaliados, incrementando contadores; os pares oráculo+juiz vão num dicionário de tamanho limitado pelas classes.',
         origem: 'codigo',
-        evidencia: 'src/inference/avaliar-grafo.ts:1060',
+        evidencia: 'src/inference/avaliar-grafo.ts:1104',
         ancora: 'export function agregarMetricas'
     },
     // ---------------------------------------------------------- APLICAÇÃO ---
@@ -467,7 +467,7 @@ export const ITENS: readonly ItemComplexidade[] = [
         comoObtido:
             'O parser quebra por linha e desserializa cada uma; nada é indexado nem relido. O arquivo inteiro vive na memória do navegador, o que é o limite prático para lotes muito grandes.',
         origem: 'codigo',
-        evidencia: 'src/inference/avaliacao-jsonl.ts:63',
+        evidencia: 'src/inference/avaliacao-jsonl.ts:70',
         ancora: 'export function parseRegistrosAvaliacao'
     }
 ];
@@ -534,11 +534,11 @@ export interface MedidaDeCodigo {
 export const CODIGO: readonly MedidaDeCodigo[] = [
     { camada: 'src/knowledge (grafo, contratos, validadores)', arquivos: 21, linhas: 9230 },
     { camada: 'src/inference (geração, avaliação, agentes)', arquivos: 22, linhas: 10773 },
-    { camada: 'web-chat/src (chat e telas de avaliação)', arquivos: 44, linhas: 9298 },
+    { camada: 'web-chat/src (chat e telas de avaliação)', arquivos: 58, linhas: 13703 },
     { camada: 'src/python_engine (motor FastAPI)', arquivos: 8, linhas: 2695 },
     { camada: 'src/grammar (BNF, Earley)', arquivos: 6, linhas: 1380 },
     { camada: 'src/database (sincronização Neo4j)', arquivos: 3, linhas: 1384 },
-    { camada: 'src/web (servidor HTTP)', arquivos: 1, linhas: 1083 },
+    { camada: 'src/web (servidor HTTP)', arquivos: 1, linhas: 1922 },
     { camada: 'src/cli', arquivos: 7, linhas: 1094 },
     { camada: 'src/language (Langium: gramática da DSL)', arquivos: 3, linhas: 180, nota: 'gera ~13 000 linhas em src/generated, fora da contagem' },
     { camada: 'src/test', arquivos: 36, linhas: 15018, nota: 'testes: 1,3 linha de teste por linha de src/inference' }

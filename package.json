@@ -37,10 +37,12 @@
         "test:diagnostico-juiz": "tsx src/test/diagnostico-juiz.test.ts",
         "test:web-diagnostico": "node web-chat/node_modules/vue-tsc/bin/vue-tsc.js --noEmit -p web-chat/tests/tsconfig.json && tsx web-chat/tests/diagnostico.test.ts",
         "test:analise-avaliacao": "tsx src/test/analise-avaliacao.test.ts",
+    "test:juiz-fronteira": "tsx src/test/juiz-fronteira.test.ts",
+    "test:comparacao-juizes": "tsx src/test/comparacao-juizes.test.ts",
         "test:metodologia-avaliacao": "tsx src/test/metodologia-avaliacao.test.ts",
         "test:grammar": "cd src/python_engine && python test_grammar.py",
         "test:diagnostico-py": "cd src/python_engine && python test_diagnostico.py",
-        "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:avaliar-oraculo && npm run test:diagnostico-juiz && npm run test:web-diagnostico && npm run test:analise-avaliacao && npm run test:metodologia-avaliacao && npm run test:foco-politica && npm run test:foco && npm run test:recuperacao && npm run test:consulta && npm run test:rag && npm run test:cypher && npm run test:hibrida && npm run test:rastro && npm run test:politica && npm run test:restricoes && npm run test:geracao && npm run test:contrato && npm run test:incremental && npm run test:recuperacao-conhecimento && npm run test:multiagente && npm run test:planner && npm run test:validacao-sequencia && npm run test:planner-retry && npm run test:decompositor && npm run test:pi-agent && npm run test:pi-scheduler && npm run test:validacao-global && npm run test:tempos-geracao && npm run test:nome-avaliacao && npm run test:gate-geracao && npm run test:web-lote && npm run test:estatistica-tempos && npm run test:fusao && npm run test:web-tempos && npm run test:web-complexidade && npm run test:web-relatorio && npm run test:grammar && npm run test:diagnostico-py",
+        "test": "npm run typecheck && npm run validate && npm run bnf:export && npm run test:earley && npm run test:avaliar && npm run test:avaliar-oraculo && npm run test:diagnostico-juiz && npm run test:juiz-fronteira && npm run test:comparacao-juizes && npm run test:web-diagnostico && npm run test:analise-avaliacao && npm run test:metodologia-avaliacao && npm run test:foco-politica && npm run test:foco && npm run test:recuperacao && npm run test:consulta && npm run test:rag && npm run test:cypher && npm run test:hibrida && npm run test:rastro && npm run test:politica && npm run test:restricoes && npm run test:geracao && npm run test:contrato && npm run test:incremental && npm run test:recuperacao-conhecimento && npm run test:multiagente && npm run test:planner && npm run test:validacao-sequencia && npm run test:planner-retry && npm run test:decompositor && npm run test:pi-agent && npm run test:pi-scheduler && npm run test:validacao-global && npm run test:tempos-geracao && npm run test:nome-avaliacao && npm run test:gate-geracao && npm run test:web-lote && npm run test:estatistica-tempos && npm run test:fusao && npm run test:web-tempos && npm run test:web-complexidade && npm run test:web-relatorio && npm run test:web-juiz && npm run test:grammar && npm run test:diagnostico-py",
         "test:foco-politica": "tsx src/test/foco-politica.test.ts",
         "test:foco": "tsx src/test/foco.test.ts",
         "test:recuperacao": "tsx src/test/recuperacao.test.ts",
@@ -73,6 +75,7 @@
         "test:web-tempos": "tsx web-chat/tests/tempos-plano.test.ts",
         "test:web-complexidade": "tsx web-chat/tests/complexidade.test.ts",
         "test:web-relatorio": "tsx web-chat/tests/relatorio.test.ts",
+        "test:web-juiz": "tsx web-chat/tests/juiz-llm.test.ts",
         "smoke:planner": "tsx src/cli/smoke-planner.ts"
     },
     "keywords": [

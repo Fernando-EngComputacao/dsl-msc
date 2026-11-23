@@ -6,6 +6,13 @@ export interface RegistroAvaliacaoImportado {
     plano?: string;
     sujeito?: string;
     naoAvaliado?: boolean;
+    /**
+     * O MODELO que fez o papel de LLM Judge na avaliação deste arquivo — o
+     * local, como o motor o reporta, ou o de fronteira escolhido na tela (ver
+     * `RegistroAvaliacaoJsonl` em avaliar-grafo.ts). Ausente nos arquivos
+     * anteriores ao campo, em que o juiz era necessariamente o local.
+     */
+    'llm-judge'?: string;
     validacaoSintatica?: { veredito?: string; [campo: string]: unknown };
     ast?: { $type?: string; name?: string; [campo: string]: unknown };
     validacaoSemantica?: { veredito?: string; [campo: string]: unknown };

@@ -1,4 +1,9 @@
 import type { Mensagem } from './types';
+// As contas da comparação dos dois juízes são as do módulo puro — a tela não
+// recalcula nada, só mostra (ver src/inference/comparacao-juizes.ts).
+import type { ComparacaoJuizes, DivergenciaJuizes } from '../../src/inference/comparacao-juizes';
+
+export type { ComparacaoJuizes, DivergenciaJuizes };
 
 export interface Dominio {
     id: 'med' | 'agro' | 'fut';
@@ -123,6 +128,13 @@ export interface JulgamentoLLM {
     justificativa?: string;
     evidencias?: string[];
     respostaBruta?: string;
+    /**
+     * Quem julgou. AUSENTE = o juiz local (Qwen, no motor do domínio), que é o
+     * padrão; presente (`claude`, `gpt`, `gemini`, `deepseek`) é um
+     * rejulgamento com modelo de fronteira — ver juiz-fronteira.ts.
+     */
+    provedor?: string;
+    modelo?: string;
     /** Em NOT_CALLED, por que não foi chamado; em NO_RESPONSE, a falha. */
     motivo?: string;
     /** Só com status UNRESOLVED, e só em avaliações feitas depois do diagnóstico. Não muda status, oráculo nem classificação. */
@@ -176,6 +188,8 @@ export interface DetalheLado {
     validacaoSemantica?: ValidacaoSemantica;
     oraculo?: Oraculo;
     julgamentoLLM?: JulgamentoLLM;
+    /** Num rejulgamento, o julgamento que o arquivo importado já tinha para este mesmo plano. */
+    julgamentoAnterior?: JulgamentoLLM;
     concordancia?: boolean;
     classificacao?: ClassificacaoAvaliacao;
     /** Tempos e tamanhos da GERAÇÃO deste plano — repassados, não medidos na avaliação. */
@@ -237,6 +251,8 @@ export interface RespostaAvaliacao {
     linhas: DetalheLinha[];
     /** Nome do JSONL experimental gravado pelo servidor — ver `urlAvaliacaoJsonl`. */
     arquivoJsonl?: string;
+    /** O juiz desta avaliação, quando não foi o modelo local. */
+    juiz?: { provedor: string; modelo?: string };
     /** Tempo total (s) que o servidor levou para processar a avaliação inteira. */
     tempoTotalSegundos?: number;
     /** Soma dos tempos da validação sintática, em segundos. */
@@ -437,18 +453,39 @@ export async function avaliarResultados(
     aoProgresso: (processados: number, total: number) => void,
     signal?: AbortSignal,
     /** Nome do arquivo de entrada: o servidor o usa para nomear o arquivo da avaliação (`evalueted_<nome>_<carimbo>.jsonl`). */
-    nomeEntrada?: string
+    nomeEntrada?: string,
+    /** Quem julga. Ausente: o modelo local do motor. */
+    juiz?: JuizPedido
 ): Promise<RespostaAvaliacao> {
-    const resp = await fetch(`${BASE_URL}/api/avaliar`, {
+    return pedirComProgresso<RespostaAvaliacao>(
+        '/api/avaliar',
+        { dominio, arquiteturaJsonl, baselineJsonl, nomeEntrada, juiz },
+        aoProgresso,
+        signal
+    );
+}
+
+/**
+ * Um POST que responde em SSE: eventos `progresso` até o `final` (ou `erro`).
+ * É o transporte da avaliação e do rejulgamento — os dois chamam o modelo uma
+ * vez por plano, e os dois podem ser cancelados fechando a conexão.
+ */
+async function pedirComProgresso<T>(
+    rota: string,
+    corpo: unknown,
+    aoProgresso: (processados: number, total: number) => void,
+    signal?: AbortSignal
+): Promise<T> {
+    const resp = await fetch(`${BASE_URL}${rota}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dominio, arquiteturaJsonl, baselineJsonl, nomeEntrada }),
+        body: JSON.stringify(corpo),
         signal
     });
 
     if (!resp.ok || !resp.body) {
-        const corpo = await resp.json().catch(() => ({}) as { erro?: string });
-        throw new Error((corpo as { erro?: string }).erro ?? `o servidor respondeu ${resp.status}`);
+        const erro = await resp.json().catch(() => ({}) as { erro?: string });
+        throw new Error((erro as { erro?: string }).erro ?? `o servidor respondeu ${resp.status}`);
     }
 
     const leitor = resp.body.getReader();
@@ -475,12 +512,186 @@ export async function avaliarResultados(
             const dados = JSON.parse(dadosTexto);
 
             if (evento === 'progresso') aoProgresso(dados.processados, dados.total);
-            else if (evento === 'final') return dados as RespostaAvaliacao;
+            else if (evento === 'final') return dados as T;
             else if (evento === 'erro') throw new Error(dados.erro ?? 'falha desconhecida no servidor');
         }
     }
 
     throw new Error('conexão encerrada antes do resultado final');
+}
+
+// ---------------------------------------------------------------------------
+// Rejulgamento: os mesmos planos, outro juiz
+// (espelho de src/inference/juiz-fronteira.ts e POST /api/rejulgar)
+// ---------------------------------------------------------------------------
+
+/**
+ * Quem faz o papel do LLM Judge num pedido de avaliação: ausente ou
+ * `provedor: 'local'` é o modelo do motor (o padrão). A geração dos planos não
+ * é afetada — o juiz só olha planos já gerados.
+ */
+export interface JuizPedido {
+    provedor: string;
+    /** Vazio: o modelo padrão do provedor. */
+    modelo?: string;
+    /** Vazia: a chave do ambiente do servidor, quando existir. */
+    apiKey?: string;
+}
+
+/** Um provedor que pode ocupar o lugar do juiz local. */
+export interface JuizDisponivel {
+    /** `claude`, `gpt`, `gemini`, `deepseek`. */
+    id: string;
+    nome: string;
+    /** O modelo usado quando o pedido não nomeia nenhum. */
+    modeloPadrao: string;
+    /** O servidor já tem a chave deste provedor no ambiente: não precisa digitar. */
+    chaveNoServidor: boolean;
+    /** As variáveis de ambiente que o servidor aceita como chave. */
+    variaveisDeAmbiente: string[];
+}
+
+/** Os juízes possíveis: o modelo local do motor e os provedores de fronteira. */
+export interface JuizesDisponiveis {
+    /** O juiz padrão: o modelo que o motor do domínio informa em `/health`. */
+    local: { provedor: string; modelo: string };
+    fronteira: JuizDisponivel[];
+}
+
+/** O modelo local depende do domínio (um motor por domínio). */
+export async function listarJuizes(dominio?: 'med' | 'agro' | 'fut'): Promise<JuizesDisponiveis> {
+    const resp = await fetch(`${BASE_URL}/api/juizes${dominio ? `?dominio=${dominio}` : ''}`);
+    if (!resp.ok) throw new Error(`falha ao listar os juizes: ${resp.status}`);
+    return resp.json();
+}
+
+/** O que se manda testar: o provedor, com o modelo e a chave a conferir. */
+export interface PedidoTesteJuiz {
+    /** O `id` de um `JuizDisponivel`. */
+    provedor: string;
+    /** O modelo a testar. Vazio: o padrão do provedor. */
+    modelo?: string;
+    /** A chave a testar. Vazia: a do ambiente do servidor, quando existir. */
+    apiKey?: string;
+}
+
+/**
+ * QUE PEÇA a falha do teste acusa (espelho de `CausaFalhaJuiz` em
+ * src/inference/juiz-fronteira.ts). É o que a tela lê para dizer o que rever —
+ * ver `diagnosticoDoTeste` em src/teste-juiz.ts. `cota`, `provedor` e `formato`
+ * NÃO acusam a chave nem o modelo: o provedor só chega a eles depois de
+ * autenticar o pedido e achar o modelo.
+ */
+export type CausaFalhaTeste = 'chave' | 'modelo' | 'cota' | 'provedor' | 'rede' | 'formato' | 'desconhecida';
+
+/**
+ * O que o teste descobriu (espelho de `ResultadoTesteConexao` em
+ * src/inference/juiz-fronteira.ts, mais de onde saiu a chave).
+ */
+export interface ResultadoTesteJuiz {
+    /** A chave foi aceita, o modelo respondeu e a resposta tinha o formato do juiz. */
+    ok: boolean;
+    provedor: string;
+    /** O modelo que foi chamado: o pedido, ou o padrão do provedor. */
+    modelo: string;
+    /** Quanto a chamada levou, em ms — a ordem de grandeza de um plano na avaliação. */
+    ms: number;
+    /** O veredito do julgamento de brinquedo, quando houve: prova de vida, não nota. */
+    veredito?: Veredito;
+    /** Por que falhou — a mensagem do provedor, já sem a chave. */
+    erro?: string;
+    /** Que peça a falha acusa. Ausente num servidor antigo: trate como `desconhecida`. */
+    causa?: CausaFalhaTeste;
+    /** O status HTTP do provedor, quando houve resposta. */
+    status?: number;
+    /** O teste usou a chave do ambiente do servidor (nada foi digitado). */
+    chaveDoAmbiente: boolean;
+}
+
+/**
+ * Testa provedor, modelo e chave com UM julgamento de brinquedo, pelo mesmo
+ * caminho da avaliação (ver POST /api/juizes/testar). Chave recusada, modelo
+ * inexistente, cota estourada e resposta ilegível voltam em
+ * `{ ok: false, erro }` — não levantam. `signal` cancela o teste.
+ *
+ * A chave vai no corpo do pedido e não é gravada em lugar nenhum: nem no
+ * servidor, nem no resultado, nem no JSONL.
+ */
+export async function testarJuiz(pedido: PedidoTesteJuiz, signal?: AbortSignal): Promise<ResultadoTesteJuiz> {
+    const resp = await fetch(`${BASE_URL}/api/juizes/testar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pedido),
+        signal
+    });
+    const corpo = (await resp.json().catch(() => null)) as Partial<ResultadoTesteJuiz> | null;
+    // 400 é pedido mal formado (provedor desconhecido, nenhuma chave em lugar
+    // nenhum): vira o mesmo `ok: false` da falha de conexão, com o motivo que o
+    // servidor deu — a tela mostra os dois do mesmo jeito.
+    if (!resp.ok || typeof corpo?.ok !== 'boolean') {
+        return {
+            ok: false,
+            provedor: pedido.provedor,
+            modelo: pedido.modelo?.trim() ?? '',
+            ms: 0,
+            erro: corpo?.erro ?? `o servidor respondeu ${resp.status}`,
+            // Recusa do servidor da avaliação, não do provedor: nada foi
+            // provado sobre a chave nem sobre o modelo.
+            causa: corpo?.causa ?? 'desconhecida',
+            chaveDoAmbiente: !pedido.apiKey?.trim()
+        };
+    }
+    return corpo as ResultadoTesteJuiz;
+}
+
+export interface PedidoRejulgamento {
+    /** O provedor do juiz de fronteira (`id` de `JuizDisponivel`). */
+    provedor: string;
+    /** O modelo do provedor. Vazio: o padrão dele. */
+    modelo?: string;
+    /** A chave de API. Vazia: a do ambiente do servidor, quando existir. */
+    apiKey?: string;
+    /** O `evalueted_*.jsonl` já avaliado, inteiro. */
+    avaliacaoJsonl: string;
+    /** Nome do arquivo importado — acha o cenário de entrada pelo nome. */
+    nomeArquivo?: string;
+    /** `<dominio>/<arquivo>` para escolher o cenário à mão. */
+    cenario?: string;
+    dominio?: 'med' | 'agro' | 'fut';
+}
+
+/** O que o rejulgamento deixou de fora, e de onde veio a leitura do cenário. */
+export interface ResumoRejulgamento {
+    arquivoImportado?: string;
+    arquivoCenario: string;
+    registrosImportados: number;
+    rejulgados: number;
+    casadosPorSujeito: number;
+    casadosPorLinha: number;
+    semCenario: number;
+    semPlano: number;
+}
+
+export interface RespostaRejulgamento extends RespostaAvaliacao {
+    comparacaoJuizes: ComparacaoJuizes;
+    rejulgamento: ResumoRejulgamento;
+}
+
+/**
+ * Rejulga os planos de um arquivo já avaliado com o modelo de fronteira
+ * escolhido. O servidor refaz a recuperação a partir do `cenarios-*.jsonl` de
+ * entrada, monta o MESMO prompt do juiz local e só troca o modelo — ver o bloco
+ * REJULGAMENTO em src/web/server.ts.
+ *
+ * A chave de API vai no corpo do pedido e não é gravada em lugar nenhum: nem no
+ * servidor, nem no resultado, nem no JSONL.
+ */
+export async function rejulgarAvaliacao(
+    pedido: PedidoRejulgamento,
+    aoProgresso: (processados: number, total: number) => void,
+    signal?: AbortSignal
+): Promise<RespostaRejulgamento> {
+    return pedirComProgresso<RespostaRejulgamento>('/api/rejulgar', pedido, aoProgresso, signal);
 }
 
 // ---------------------------------------------------------------------------

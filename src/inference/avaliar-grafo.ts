@@ -191,8 +191,26 @@ export interface RespostaJuizLLM {
     respostaBruta?: string;
 }
 
+/**
+ * Quem ocupou o lugar do juiz LLM nesta avaliação: `local` é o Qwen servido
+ * pelo motor do domínio (`juizLLMHttp`), o padrão; os outros são modelos de
+ * fronteira postos no mesmo lugar da cascata, com a chave de quem avalia (ver
+ * juiz-fronteira.ts).
+ *
+ * `modelo` é o nome exato do modelo que respondeu — do provedor, ou o que o
+ * motor informa em `/health`. É ele que vai para o campo `llm-judge` do JSONL,
+ * para o arquivo dizer sozinho quem julgou.
+ *
+ * AUSENTE só nos arquivos anteriores a este campo, em que o juiz era
+ * necessariamente o local.
+ */
+export interface IdentidadeJuiz {
+    provedor: string;
+    modelo?: string;
+}
+
 /** O juiz no resultado: sempre presente, com o status. */
-export interface JulgamentoLLM {
+export interface JulgamentoLLM extends Partial<IdentidadeJuiz> {
     status: StatusJuiz;
     justificativa?: string;
     evidencias?: string[];
@@ -275,6 +293,17 @@ export interface DetalheLado extends Partial<ResultadoAvaliacaoPlano> {
     violacao?: boolean;
     /** Prompt Semântico reconstruído para este registro — o que o juiz leu. */
     contextoGrafo?: string;
+    /**
+     * O julgamento que JÁ EXISTIA para este mesmo plano, quando esta avaliação é
+     * um REJULGAMENTO de um arquivo importado (ver comparacao-juizes.ts): o do
+     * juiz anterior, para comparar com o que `julgamentoLLM` traz agora. Ausente
+     * na avaliação normal e nos planos que não acharam par no arquivo importado.
+     *
+     * No JSONL ele entra compacto (status e identidade, ver
+     * `RegistroAvaliacaoJsonl.julgamentoAnterior`): o texto do julgamento
+     * anterior continua no arquivo de onde veio, sem ser copiado.
+     */
+    julgamentoAnterior?: JulgamentoLLM;
     /** true quando uma falha técnica (grafo, motor, parser, defeito interno)
      *  impediu a avaliação: nenhuma camada tem veredito. */
     naoAvaliado: boolean;
@@ -350,6 +379,8 @@ export interface ResultadoAvaliacaoGrafo {
     linhas: DetalheLinha[];
     /** Nome do JSONL experimental gravado pelo servidor (ver `registrosJsonl`). */
     arquivoJsonl?: string;
+    /** O juiz desta avaliação, quando não foi o modelo local (ver `IdentidadeJuiz`). */
+    juiz?: IdentidadeJuiz;
     /** Tempo total, em segundos, que o servidor levou para processar a avaliação inteira. */
     tempoTotalSegundos?: number;
     /** Soma dos tempos da validação sintática de todos os planos, em segundos. */
@@ -802,6 +833,8 @@ export interface DependenciasAvaliacao {
     /** L(Ĝ): `/verify` com a política efetiva (`verificadorGramaticaHttp`). */
     verificador: VerificadorGramatical;
     juiz: JuizLLM;
+    /** Quem é `juiz`, quando não é o modelo local — vai para cada `julgamentoLLM`. */
+    juizIdentidade?: IdentidadeJuiz;
     /** Diagnóstico da indeterminação: chamado só quando o juiz responde UNRESOLVED. Ausente, não há diagnóstico. */
     diagnosticador?: DiagnosticadorLLM;
     sinal: AbortSignal;
@@ -892,11 +925,16 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
     const julgar = !vazio && deps.pularJuiz !== true && (!!ast || deps.julgarSintaxeInvalida === true);
     const semAst = 'a sintaxe saiu INVALID: sem AST, nao ha o que validar semanticamente';
     const juizDesligado = 'juiz desligado nesta avaliacao (pularJuiz): so as camadas deterministicas e o oraculo';
+    // Quem julgou acompanha TODO julgamento — inclusive o que falhou ou nem foi
+    // chamado: sem isso o registro de um rejulgamento com modelo de fronteira
+    // ficaria indistinguivel do do juiz local.
+    const quemJulga: Partial<IdentidadeJuiz> = deps.juizIdentidade ? { ...deps.juizIdentidade } : {};
 
     if (!ast && !julgar) {
         const validacaoSemantica = semanticaNaoAvaliada(semAst);
         const oraculo = oraculoDe(validacaoSintatica, validacaoSemantica);
         const julgamentoLLM: JulgamentoLLM = {
+            ...quemJulga,
             status: 'NOT_CALLED',
             motivo: vazio
                 ? 'artefato vazio: nao ha plano a julgar'
@@ -991,16 +1029,22 @@ export async function avaliarPlano<M, C extends ContextoDominio, R, F>(
         }
     };
     const executarJuiz = async (): Promise<{ julgamentoLLM: JulgamentoLLM; ms: number | null; diagnosticoMs?: number }> => {
-        if (deps.pularJuiz === true) return { julgamentoLLM: { status: 'NOT_CALLED', motivo: juizDesligado }, ms: null };
+        if (deps.pularJuiz === true) return { julgamentoLLM: { ...quemJulga, status: 'NOT_CALLED', motivo: juizDesligado }, ms: null };
         const inicio = performance.now();
         const pedidoJuiz = pedidoDoJuiz(adaptador.dominio, plano, pedido, contexto.telemetria, conhecimento);
         let julgamentoLLM: JulgamentoLLM;
         try {
             const r = await deps.juiz(pedidoJuiz, deps.sinal);
-            julgamentoLLM = { status: r.veredito, justificativa: r.justificativa, evidencias: r.evidencias, respostaBruta: r.respostaBruta };
+            julgamentoLLM = { ...quemJulga, status: r.veredito, justificativa: r.justificativa, evidencias: r.evidencias, respostaBruta: r.respostaBruta };
         } catch (error) {
             if (deps.sinal.aborted) throw error;
-            return { julgamentoLLM: { status: 'NO_RESPONSE', motivo: `Falha ao julgar com o modelo local: ${(error as Error).message}` }, ms: duracaoMs(inicio) };
+            // O juiz de fronteira ja se nomeia na propria mensagem de erro
+            // (provedor e modelo); so o local precisa ser dito aqui.
+            const onde = deps.juizIdentidade && deps.juizIdentidade.provedor !== 'local' ? '' : ' com o modelo local';
+            return {
+                julgamentoLLM: { ...quemJulga, status: 'NO_RESPONSE', motivo: `Falha ao julgar${onde}: ${(error as Error).message}` },
+                ms: duracaoMs(inicio)
+            };
         }
         const ms = duracaoMs(inicio);
         if (julgamentoLLM.status !== 'UNRESOLVED' || !deps.diagnosticador) return { julgamentoLLM, ms };
@@ -1095,6 +1139,26 @@ export interface RegistroAvaliacaoJsonl extends Partial<ResultadoAvaliacaoPlano>
     violacao?: boolean;
     naoAvaliado: boolean;
     motivo?: string;
+    /**
+     * O MODELO que fez o papel de LLM Judge nesta avaliação — `qwen2.5-7b` (o
+     * local, como o motor o reporta) ou o modelo de fronteira escolhido
+     * (`gemini-2.5-flash-lite`, `claude-opus-5-5`, ...). Repetido em todo
+     * registro do arquivo, como os tempos totais: é o que permite comparar dois
+     * arquivos do MESMO lote julgados por modelos diferentes sem depender do
+     * nome do arquivo nem de nada fora dele.
+     *
+     * Hifenizado de propósito: é o nome que a análise externa (planilha, script
+     * de tese) procura.
+     */
+    'llm-judge'?: string;
+    /**
+     * Num REJULGAMENTO, o veredito que o juiz ANTERIOR já tinha dado a este
+     * mesmo plano, com a identidade dele (ausente = o juiz local). Só o status:
+     * a justificativa e a resposta bruta continuam no arquivo de origem, não
+     * são copiadas. É o que deixa o arquivo rejulgado comparável sozinho, sem
+     * precisar do arquivo importado ao lado.
+     */
+    julgamentoAnterior?: Partial<IdentidadeJuiz> & { status: StatusJuiz };
     /** Tempos (s) da avaliação inteira — repetidos em todos os registros do arquivo. */
     tempoTotalSegundos?: number;
     tempoSintaxeSegundos?: number;
@@ -1141,13 +1205,26 @@ export function geracaoDoPlano(registro: RegistroAvaliarGrafo, plano?: string): 
 
 /** O resultado da avaliação no formato do JSONL experimental — um registro por plano avaliado. */
 export function registrosJsonl(dominio: Dominio, resultado: ResultadoAvaliacaoGrafo): RegistroAvaliacaoJsonl[] {
+    // O juiz da avaliação inteira: um só, e o mesmo em todos os registros.
+    const llmJudge = resultado.juiz ? (resultado.juiz.modelo ?? resultado.juiz.provedor) : undefined;
     return resultado.linhas.flatMap(l =>
         (['arquitetura', 'baseline'] as const)
             .filter(lado => l[lado])
             .map(lado => {
-                const { contextoGrafo, ...detalhe } = l[lado]!;
+                const { contextoGrafo, julgamentoAnterior, ...detalhe } = l[lado]!;
                 return {
-                    dominio, lado, linha: l.linha, intencao: l.intencao, ...detalhe,
+                    dominio, lado, linha: l.linha, intencao: l.intencao,
+                    ...(llmJudge !== undefined ? { 'llm-judge': llmJudge } : {}),
+                    ...detalhe,
+                    ...(julgamentoAnterior
+                        ? {
+                              julgamentoAnterior: {
+                                  status: julgamentoAnterior.status,
+                                  ...(julgamentoAnterior.provedor !== undefined ? { provedor: julgamentoAnterior.provedor } : {}),
+                                  ...(julgamentoAnterior.modelo !== undefined ? { modelo: julgamentoAnterior.modelo } : {})
+                              }
+                          }
+                        : {}),
                     ...(resultado.tempoTotalSegundos !== undefined && { tempoTotalSegundos: resultado.tempoTotalSegundos }),
                     ...(resultado.tempoSintaxeSegundos !== undefined && { tempoSintaxeSegundos: resultado.tempoSintaxeSegundos }),
                     ...(resultado.tempoOraculoSegundos !== undefined && { tempoOraculoSegundos: resultado.tempoOraculoSegundos }),

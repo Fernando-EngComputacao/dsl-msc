@@ -109,6 +109,10 @@ function lado(tempoGeracaoMs: number, chars: number): DetalheLado {
         plano: 'PLANO ...',
         naoAvaliado: false,
         oraculo: { veredito: 'VALID', origem: 'semantica' },
+        // Rejulgado: o juiz de fronteira em `julgamentoLLM` e o anterior (local)
+        // ao lado — e o que o topico `comparacaoJuizes` precisa para existir.
+        julgamentoLLM: { status: 'VALID', provedor: 'claude', modelo: 'claude-opus-5-5' },
+        julgamentoAnterior: { status: 'VALID' },
         tempos: { oraculoMs: 120, llmJudgeMs: 800, sintaxeMs: 10 },
         geracao: {
             tempoTotalMs: tempoGeracaoMs,
@@ -151,7 +155,20 @@ const COMPLETO: RespostaAvaliacao = {
 const SEM_TEMPOS: RespostaAvaliacao = {
     arquitetura: METRICAS,
     naoAvaliados: 0,
-    linhas: [{ linha: 1, intencao: 'c', arquitetura: { plano: 'P', naoAvaliado: false }, temDivergencia: false, temDiscordancia: false }]
+    linhas: [
+        {
+            linha: 1,
+            intencao: 'c',
+            arquitetura: {
+                plano: 'P',
+                naoAvaliado: false,
+                julgamentoLLM: { status: 'VALID', provedor: 'claude' },
+                julgamentoAnterior: { status: 'INVALID' }
+            },
+            temDivergencia: false,
+            temDiscordancia: false
+        }
+    ]
 };
 
 const TOPICOS_DE_TEMPO: TopicoRelatorio[] = ['tempoGeracao', 'tempoAvaliacao', 'tempoPilha', 'tempoTamanho', 'tempoPlano'];
@@ -343,7 +360,7 @@ async function renderizacao(): Promise<void> {
 
         console.log('\nModal e capa na tela (SSR)');
 
-        await testeAsync('o modal mostra os dez topicos com rotulo e descricao, agrupados', async () => {
+        await testeAsync('o modal mostra TODOS os topicos com rotulo e descricao, agrupados', async () => {
             const d = disponibilidade(COMPLETO);
             const visivel = texto(await renderizarRelatorioModal(d, selecaoPadrao(d)));
             for (const t of TOPICOS) {
@@ -351,7 +368,8 @@ async function renderizacao(): Promise<void> {
                 assert.ok(visivel.includes(t.descricao.slice(0, 40)), `descricao ausente: ${t.chave}`);
             }
             for (const g of Object.values(GRUPOS)) assert.ok(visivel.includes(g.nome), `grupo ausente: ${g.nome}`);
-            assert.ok(visivel.includes('10 de 10 marcados'), `contagem errada: ${visivel.slice(0, 200)}`);
+            const todos = `${TOPICOS.length} de ${TOPICOS.length} marcados`;
+            assert.ok(visivel.includes(todos), `contagem errada (esperado "${todos}"): ${visivel.slice(0, 200)}`);
             assert.ok(visivel.includes('Salvar como PDF'), 'o modal tem de dizer como o PDF sai');
         });
 

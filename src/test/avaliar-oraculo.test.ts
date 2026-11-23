@@ -51,6 +51,7 @@ import {
     registrosJsonl,
     validarSemantica,
     type DetalheLado,
+    type IdentidadeJuiz,
     type JuizLLM,
     type PedidoJuiz,
     type RegistroAvaliarGrafo,
@@ -233,6 +234,8 @@ async function main(): Promise<void> {
     interface Opcoes {
         gHat?: VerificadorGramatical; gDsl?: VerificadorDaDsl; analisador?: AnalisadorDsl; adaptador?: typeof ADAPTADOR_MED;
         sinal?: AbortSignal; julgarSintaxeInvalida?: boolean; sessoes?: { aberturas: number }; diagnosticador?: DiagnosticadorLLM;
+        /** Quem e o juiz injetado — carimbado em todo julgamento (ver juiz-fronteira.ts). */
+        juizIdentidade?: IdentidadeJuiz;
     }
 
     /** A avaliacao de uma linha, como o servidor a faz: o cenario vem do registro. */
@@ -253,6 +256,7 @@ async function main(): Promise<void> {
                 verificadorDsl: o.gDsl ?? gDaDsl,
                 verificador: o.gHat ?? gHat(),
                 juiz,
+                juizIdentidade: o.juizIdentidade,
                 diagnosticador: o.diagnosticador,
                 sinal: o.sinal ?? new AbortController().signal,
                 julgarSintaxeInvalida: o.julgarSintaxeInvalida
@@ -1048,6 +1052,55 @@ async function main(): Promise<void> {
         assert.deepEqual([a.julgamentoLLM.status, a.concordancia, a.classificacao], ['INVALID', false, 'DISCORDANCIA_LLM']);
         assert.equal(a.contextoGrafo, undefined);
         assert.deepEqual([b.lado, b.validacaoSintatica.veredito, b.ast, b.validacaoSemantica.veredito, b.julgamentoLLM.status, b.classificacao], ['baseline', 'INVALID', undefined, 'NOT_EVALUATED', 'NOT_CALLED', 'INVALIDO_PELO_ORACULO']);
+    });
+
+    await teste('JSONL: `llm-judge` diz o MODELO que julgou, o mesmo em todo registro do arquivo', async () => {
+        const arq = await avaliar(registroDe(REAL_1, PLANO_REAL_1), juizQueResponde('VALID'));
+        const base = await avaliar(registroDe(REAL_1, PLANO_REAL_1), juizQueResponde('VALID'));
+        const linhas = [montarLinha(1, REAL_1.intencao!, arq, base)];
+
+        // Juiz de fronteira: o nome do modelo do provedor, como foi escolhido na tela.
+        const fronteira = registrosJsonl('med', { naoAvaliados: 0, linhas, juiz: { provedor: 'gemini', modelo: 'gemini-2.5-flash-lite' } });
+        assert.deepEqual(fronteira.map(r => r['llm-judge']), ['gemini-2.5-flash-lite', 'gemini-2.5-flash-lite'], 'o campo vale para o arquivo inteiro');
+
+        // Juiz local: o modelo que o motor reporta em /health.
+        const local = registrosJsonl('med', { naoAvaliados: 0, linhas, juiz: { provedor: 'local', modelo: 'Qwen2.5-7B-Instruct-Q4_K_M' } });
+        assert.equal(local[0]['llm-judge'], 'Qwen2.5-7B-Instruct-Q4_K_M');
+
+        // Sem modelo, o provedor serve; sem juiz nenhum (arquivo de antes do campo), o campo nao existe.
+        assert.equal(registrosJsonl('med', { naoAvaliados: 0, linhas, juiz: { provedor: 'local' } })[0]['llm-judge'], 'local');
+        assert.equal(registrosJsonl('med', { naoAvaliados: 0, linhas })[0]['llm-judge'], undefined);
+
+        // E o campo atravessa o JSONL: quem le o arquivo sabe quem julgou.
+        const [relido] = parseRegistrosAvaliacao(fronteira.map(r => JSON.stringify(r)).join('\n'));
+        assert.equal(relido['llm-judge'], 'gemini-2.5-flash-lite');
+    });
+
+    await teste('a identidade do juiz carimba TODO julgamento — inclusive o que falhou e o que nem foi chamado', async () => {
+        const identidade: IdentidadeJuiz = { provedor: 'claude', modelo: 'claude-opus-5-5' };
+
+        const respondeu = await avaliar(registroDe(REAL_1, PLANO_REAL_1), juizQueResponde('INVALID'), { juizIdentidade: identidade });
+        assert.deepEqual(
+            [respondeu.julgamentoLLM!.status, respondeu.julgamentoLLM!.provedor, respondeu.julgamentoLLM!.modelo],
+            ['INVALID', 'claude', 'claude-opus-5-5']
+        );
+
+        // Falha do juiz: NO_RESPONSE com quem falhou, e o oraculo intacto.
+        const falhou = await avaliar(
+            registroDe(REAL_1, PLANO_REAL_1),
+            async () => { throw new Error('provedor fora do ar'); },
+            { juizIdentidade: identidade }
+        );
+        assert.deepEqual([falhou.julgamentoLLM!.status, falhou.julgamentoLLM!.provedor], ['NO_RESPONSE', 'claude']);
+        assert.equal(falhou.oraculo!.veredito, 'VALID', 'a falha do juiz nao toca o oraculo');
+
+        // Nem chamado (artefato vazio): o registro ainda diz quem seria o juiz.
+        const vazio = await avaliar(registroDe(REAL_1, ''), juizQueResponde('VALID'), { juizIdentidade: identidade });
+        assert.deepEqual([vazio.julgamentoLLM!.status, vazio.julgamentoLLM!.provedor], ['NOT_CALLED', 'claude']);
+
+        // Sem identidade (o caminho de sempre), nada e carimbado.
+        const semIdentidade = await avaliar(registroDe(REAL_1, PLANO_REAL_1), juizQueResponde('VALID'));
+        assert.deepEqual([semIdentidade.julgamentoLLM!.provedor, semIdentidade.julgamentoLLM!.modelo], [undefined, undefined]);
     });
 
     await teste('teste 8 — JSONL com tempos: cada registro guarda sintaxe, AST, semantica, oraculo, juiz, concordancia, classificacao E os tempos do plano e os totais da avaliacao', async () => {

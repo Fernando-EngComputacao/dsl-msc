@@ -26,7 +26,7 @@ import neo4j, { type Driver } from 'neo4j-driver';
 
 import { loadModel } from '../database/neo4j.js';
 import type { ClinicalContext } from '../knowledge/graphrag.js';
-import { nomeArquivoAvaliacao, parseRegistrosAvaliacao } from '../inference/avaliacao-jsonl.js';
+import { nomeArquivoAvaliacao, parseRegistrosAvaliacao, type RegistroAvaliacaoImportado } from '../inference/avaliacao-jsonl.js';
 import {
     baseDoArquivoAvaliacao,
     CHAVE_SUJEITO,
@@ -38,6 +38,7 @@ import {
     fusaoParaJsonl,
     nomeArquivoFusao,
     PARTES,
+    sujeitoDoCenario,
     type FonteFusao,
     type OpcoesFusao,
     type ParteFusao,
@@ -81,9 +82,22 @@ import {
     type GeracaoDoPlano,
     type DetalheLado,
     type DetalheLinha,
+    type IdentidadeJuiz,
+    type JuizLLM,
     type RegistroAvaliarGrafo,
     type ResultadoAvaliacaoGrafo
 } from '../inference/avaliar-grafo.js';
+import { anexarJulgamentoAnterior, compararJuizes, type ComparacaoJuizes } from '../inference/comparacao-juizes.js';
+import {
+    chaveDoAmbiente,
+    ehProvedorFronteira,
+    juizFronteira,
+    modeloDoJuiz,
+    PROVEDORES,
+    PROVEDORES_FRONTEIRA,
+    testarConexaoJuiz,
+    type ProvedorFronteira
+} from '../inference/juiz-fronteira.js';
 import { gerarComGate, type CriterioGate, type ResumoGate } from '../inference/geracao-validada.js';
 import { diagnosticadorLLMHttp } from '../inference/diagnostico-juiz.js';
 import { tokenizadorHttp, type Tokenizador } from '../inference/motor-http.js';
@@ -99,6 +113,13 @@ const ENGINE_AGRO = process.env.SPC_CML_ENDPOINT_AGRO ?? ENGINE;
 const ENGINE_FUT = process.env.SPC_CML_ENDPOINT_FUT ?? ENGINE;
 
 const TIMEOUT_MS = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600_000);
+// Teto de UMA chamada ao juiz de fronteira (ver juiz-fronteira.ts). Menor que o
+// do motor local: aqui e rede publica, e a resposta pedida tem tres linhas.
+const TIMEOUT_JUIZ_FRONTEIRA_MS = Number(process.env.SPC_CML_JUIZ_FRONTEIRA_TIMEOUT_MS ?? 180_000);
+// Teto do TESTE de conexao (POST /api/juizes/testar): bem menor que o da
+// avaliacao, porque alguem esta olhando a tela esperando. Estourar aqui nao diz
+// que a chave esta errada — diz que o provedor nao respondeu nesse tempo.
+const TIMEOUT_TESTE_JUIZ_MS = Number(process.env.SPC_CML_JUIZ_TESTE_TIMEOUT_MS ?? 60_000);
 const PORT = Number(process.env.SPC_CML_WEB_PORT ?? 4000);
 const ORIGEM_PERMITIDA = process.env.SPC_CML_WEB_ORIGIN ?? '*';
 
@@ -557,14 +578,35 @@ function motorDoDominio(dominio: 'med' | 'agro' | 'fut'): string {
     return dominio === 'med' ? ENGINE : dominio === 'agro' ? ENGINE_AGRO : ENGINE_FUT;
 }
 
-function dependenciasAvaliacao(dominio: 'med' | 'agro' | 'fut', sinal: AbortSignal, pularJuiz = false): DependenciasAvaliacao {
+/**
+ * Quem vai fazer o papel do LLM Judge nesta avaliacao. `chamar` ausente e o
+ * juiz do motor (Qwen local); presente, e um modelo de fronteira no mesmo lugar
+ * da cascata. `identidade` e sempre preenchida — e dela que sai o campo
+ * `llm-judge` do JSONL.
+ */
+interface JuizEscolhido {
+    chamar?: JuizLLM;
+    identidade: IdentidadeJuiz;
+}
+
+function dependenciasAvaliacao(
+    dominio: 'med' | 'agro' | 'fut',
+    sinal: AbortSignal,
+    pularJuiz = false,
+    juizEscolhido?: JuizEscolhido
+): DependenciasAvaliacao {
     const motor = motorDoDominio(dominio);
     const verificador = verificadorGramaticaHttp(motor, TIMEOUT_MS);
     return {
         abrirSessao: () => driver.session(),
         verificadorDsl: verificadorDaDsl(verificador),
         verificador,
-        juiz: juizLLMHttp(motor, TIMEOUT_MS),
+        // O juiz do motor (Qwen local) e o padrao; o rejulgamento troca o modelo
+        // por um de fronteira SEM mexer em nada mais da cascata (ver juiz-fronteira.ts).
+        juiz: juizEscolhido?.chamar ?? juizLLMHttp(motor, TIMEOUT_MS),
+        ...(juizEscolhido ? { juizIdentidade: juizEscolhido.identidade } : {}),
+        // O diagnostico da indeterminacao continua no motor local: ele explica a
+        // indeterminacao com o conhecimento recuperado, nao julga o plano.
         ...(DIAGNOSTICAR_INDETERMINACAO ? { diagnosticador: diagnosticadorLLMHttp(motor, TIMEOUT_MS) } : {}),
         sinal,
         julgarSintaxeInvalida: JULGAR_SINTAXE_INVALIDA,
@@ -752,16 +794,105 @@ async function comGeracao(
 /** Julga arquitetura e depois baseline, sequencialmente — a engine ja serializa
  *  geracao via um lock interno (um modelo, uma chamada por vez), entao
  *  paralelizar aqui so complicaria o cancelamento sem ganhar tempo real. */
+// ---------------------------------------------------------------------------
+// Quem e o juiz desta avaliacao
+// ---------------------------------------------------------------------------
+
+/** O nome do modelo local por dominio, uma pergunta por processo. */
+const modeloLocalPorDominio = new Map<string, string>();
+
+/** `bartowski/Qwen2.5-7B-Instruct-GGUF/Qwen2.5-7B-Instruct-Q4_K_M.gguf` -> `Qwen2.5-7B-Instruct-Q4_K_M`. */
+function rotuloDoModelo(bruto: string): string {
+    return bruto.split('/').pop()!.replace(/\.gguf$/i, '');
+}
+
+/**
+ * O MODELO que o juiz local usa, como o proprio motor o reporta
+ * (`GET /health`). Vai para o campo `llm-judge` do JSONL, entao nao pode ser
+ * chute: sem resposta do motor, cai no mesmo padrao que o main.py usa
+ * (SPC_CML_MODEL) — e nao numa etiqueta inventada.
+ */
+async function nomeDoModeloLocal(dominio: 'med' | 'agro' | 'fut'): Promise<string> {
+    const emCache = modeloLocalPorDominio.get(dominio);
+    if (emCache) return emCache;
+    const padrao = rotuloDoModelo(process.env.SPC_CML_MODEL ?? 'Qwen/Qwen2.5-7B-Instruct');
+    let nome = padrao;
+    try {
+        const r = await fetch(`${motorDoDominio(dominio)}/health`, { signal: AbortSignal.timeout(5000) });
+        if (r.ok) {
+            const modelo = (await r.json()).modelo;
+            if (typeof modelo === 'string' && modelo.length > 0) nome = rotuloDoModelo(modelo);
+        }
+    } catch {
+        // Motor fora do ar ou sem /health: fica o padrao. Nao e motivo para
+        // recusar a avaliacao — quem decide isso e a primeira chamada de verdade.
+    }
+    modeloLocalPorDominio.set(dominio, nome);
+    return nome;
+}
+
+/** O juiz pedido no corpo de POST /api/avaliar. */
+interface JuizPedido {
+    provedor?: string;
+    modelo?: string;
+    apiKey?: string;
+}
+
+/**
+ * Resolve o juiz do pedido: ausente (ou `local`) e o modelo do motor; um
+ * provedor de fronteira exige chave (do corpo ou do ambiente) e vira um
+ * `JuizLLM` proprio. Devolve `erro` quando o pedido nao da para atender — a
+ * avaliacao nao comeca com um juiz que vai falhar em todas as linhas.
+ */
+async function resolverJuiz(
+    pedido: JuizPedido | undefined,
+    dominio: 'med' | 'agro' | 'fut'
+): Promise<{ escolhido: JuizEscolhido } | { erro: string }> {
+    const provedor = pedido?.provedor;
+    if (provedor === undefined || provedor === 'local') {
+        return { escolhido: { identidade: { provedor: 'local', modelo: await nomeDoModeloLocal(dominio) } } };
+    }
+    if (!ehProvedorFronteira(provedor)) {
+        return { erro: `juiz.provedor deve ser 'local' ou um de: ${PROVEDORES_FRONTEIRA.join(', ')}` };
+    }
+    const chave = pedido?.apiKey?.trim() || chaveDoAmbiente(provedor);
+    if (!chave) {
+        return {
+            erro: `informe a chave de API de ${PROVEDORES[provedor].nome}, ou defina ${PROVEDORES[provedor].variaveisDeAmbiente.join(' ou ')} no servidor`
+        };
+    }
+    const modelo = modeloDoJuiz(provedor, pedido?.modelo);
+    return {
+        escolhido: {
+            chamar: juizFronteira(provedor, chave, { modelo, timeoutMs: TIMEOUT_JUIZ_FRONTEIRA_MS }),
+            identidade: { provedor, modelo }
+        }
+    };
+}
+
+/** O que muda numa avaliacao fora do padrao — hoje, o rejulgamento. */
+interface OpcoesAvaliacaoComGrafo {
+    /** Troca o juiz LLM da cascata por um modelo de fronteira. Ausente: o local. */
+    juiz?: JuizEscolhido;
+    /**
+     * Ajusta as linhas ANTES de agregar os tempos e gravar o JSONL — o
+     * rejulgamento usa para anexar a cada plano o julgamento que o arquivo
+     * importado ja tinha. Nao toca nas metricas, que saem dos lados avaliados.
+     */
+    ajustarLinhas?: (linhas: DetalheLinha[]) => DetalheLinha[];
+}
+
 async function avaliarComGrafo(
     dominio: 'med' | 'agro' | 'fut',
     arquitetura: RegistroAvaliarGrafo[] | undefined,
     baseline: RegistroAvaliarGrafo[] | undefined,
     onProgresso: (processados: number, total: number) => void,
     sinal: AbortSignal,
-    nomeEntrada?: string
+    nomeEntrada?: string,
+    opcoes: OpcoesAvaliacaoComGrafo = {}
 ): Promise<ResultadoAvaliacaoGrafo> {
     const inicio = performance.now();
-    const deps = dependenciasAvaliacao(dominio, sinal);
+    const deps = dependenciasAvaliacao(dominio, sinal, false, opcoes.juiz);
 
     const total = (arquitetura?.length ?? 0) + (baseline?.length ?? 0);
     let processados = 0;
@@ -785,9 +916,10 @@ async function avaliarComGrafo(
         onProgresso(++processados, total);
     }
 
-    const linhas: DetalheLinha[] = parearRegistros(arquitetura ?? [], baseline ?? []).map((par, i) =>
+    const pareadas: DetalheLinha[] = parearRegistros(arquitetura ?? [], baseline ?? []).map((par, i) =>
         montarLinha(i + 1, par.intencao, par.a ? ladosArq.get(par.a) : undefined, par.b ? ladosBase.get(par.b) : undefined)
     );
+    const linhas = opcoes.ajustarLinhas ? opcoes.ajustarLinhas(pareadas) : pareadas;
 
     const naoAvaliados = [...ladosArq.values(), ...ladosBase.values()].filter(d => d.naoAvaliado).length;
 
@@ -812,6 +944,7 @@ async function avaliarComGrafo(
         baseline: baseline ? agregarMetricas([...ladosBase.values()]) : undefined,
         naoAvaliados,
         linhas,
+        ...(opcoes.juiz ? { juiz: opcoes.juiz.identidade } : {}),
         tempoTotalSegundos: Math.round((performance.now() - inicio) / 10) / 100,
         tempoSintaxeSegundos: somaSegundos('sintaxeMs'),
         tempoOraculoSegundos: somaSegundos('oraculoMs'),
@@ -1053,6 +1186,138 @@ function montarFontes(
     return fontes;
 }
 
+// ===========================================================================
+// REJULGAMENTO (POST /api/rejulgar) — os MESMOS planos, outro juiz
+//
+// A tela de importacao carrega um `evalueted_*.jsonl` ja avaliado e pede para
+// rejulgar aqueles planos com um modelo de fronteira (ver juiz-fronteira.ts). O
+// objetivo e medir o JUIZ: o oraculo deterministico continua a referencia
+// normativa, e o que se compara e quanto cada juiz o acompanha (ver
+// comparacao-juizes.ts).
+//
+// POR QUE PRECISA DO CENARIO: o juiz nao le o plano sozinho. Ele le o pedido, a
+// telemetria, o conhecimento recuperado e as evidencias — o `PedidoJuiz` que
+// `pedidoDoJuiz` monta da MESMA recuperacao que a semantica usa. O
+// `evalueted_*.jsonl` NAO guarda esse contexto (`registrosJsonl` tira o
+// `contextoGrafo`, que e grande e se reconstroi), e a telemetria do cenario
+// nunca esteve nele. Entao o rejulgamento refaz o caminho inteiro a partir do
+// `cenarios-*.jsonl` de entrada: o mesmo grafo, a mesma recuperacao, o mesmo
+// prompt — so o modelo muda. Sem o cenario, rejulgar daria ao modelo de
+// fronteira um contexto mais pobre do que o juiz local teve, e a comparacao nao
+// mediria o juiz: mediria a falta de contexto.
+//
+// Consequencia aceita: a cascata roda inteira (sintaxe, semantica, oraculo),
+// nao so o juiz. E barato perto do julgamento (segundos contra minutos) e tem
+// um brinde: o oraculo recalculado permite ver se o veredito normativo do
+// arquivo importado se reproduz no grafo de hoje.
+// ===========================================================================
+
+/** As entradas da avaliacao reconstruidas a partir do arquivo importado + o cenario. */
+interface EntradasRejulgamento {
+    arquitetura: RegistroAvaliarGrafo[];
+    baseline: RegistroAvaliarGrafo[];
+    /** Registros casados pelo sujeito (chave forte) e pelo numero de linha. */
+    casadosPorSujeito: number;
+    casadosPorLinha: number;
+    /** Registros do arquivo que nao acharam linha de cenario: ficam de fora. */
+    semCenario: number;
+    /** Registros sem plano ou sem lado: nao ha o que rejulgar. */
+    semPlano: number;
+}
+
+/**
+ * Casa cada registro avaliado com a sua linha de cenario e monta a entrada da
+ * avaliacao: o PLANO vem do arquivo importado (e o plano que se quer rejulgar) e
+ * a LEITURA vem do cenario (a telemetria, os contextos e os itens em uso que o
+ * grafo precisa). Mesma ordem de chaves da fusao — sujeito primeiro, que
+ * sobrevive a renumeracao das linhas, e o numero da linha depois.
+ *
+ * Os tempos de GERACAO que o arquivo importado trazia sao repassados, para o
+ * arquivo rejulgado continuar servindo as analises de tempo. `charsPrompt` nao:
+ * ele vinha do Prompt Semantico da geracao, que o arquivo nao guarda — campo
+ * ausente continua ausente, nada e estimado.
+ */
+function entradasDoRejulgamento(
+    importados: readonly RegistroAvaliacaoImportado[],
+    cenarios: readonly RegistroCenario[],
+    dominio: 'med' | 'agro' | 'fut'
+): EntradasRejulgamento {
+    const porSujeito = new Map<string, RegistroCenario>();
+    const porLinha = new Map<number, RegistroCenario>();
+    for (const [i, c] of cenarios.entries()) {
+        const sujeito = sujeitoDoCenario(c, dominio);
+        if (sujeito !== null && !porSujeito.has(sujeito)) porSujeito.set(sujeito, c);
+        porLinha.set(i + 1, c);
+    }
+
+    const saida: EntradasRejulgamento = {
+        arquitetura: [],
+        baseline: [],
+        casadosPorSujeito: 0,
+        casadosPorLinha: 0,
+        semCenario: 0,
+        semPlano: 0
+    };
+
+    for (const r of importados) {
+        if (typeof r.plano !== 'string' || r.plano.length === 0 || (r.lado !== 'arquitetura' && r.lado !== 'baseline')) {
+            saida.semPlano++;
+            continue;
+        }
+        let cenario: RegistroCenario | undefined;
+        if (r.sujeito && porSujeito.has(r.sujeito)) {
+            cenario = porSujeito.get(r.sujeito);
+            saida.casadosPorSujeito++;
+        } else if (typeof r.linha === 'number' && porLinha.has(r.linha)) {
+            cenario = porLinha.get(r.linha);
+            saida.casadosPorLinha++;
+        } else {
+            saida.semCenario++;
+            continue;
+        }
+
+        const g = r.geracao ?? {};
+        saida[r.lado].push({
+            ...(typeof r.linha === 'number' ? { linha: r.linha } : {}),
+            intencao: r.intencao ?? (typeof cenario!.intencao === 'string' ? cenario!.intencao : ''),
+            plano: r.plano,
+            telemetria: cenario as BlocoTelemetriaGrafo,
+            ...sePresenteNoRegistro({
+                tempoTotalMs: g.tempoTotalMs,
+                tempoSequenciasMs: g.tempoSequenciasMs,
+                tempoPIsValidasMs: g.tempoPIsValidasMs,
+                tempoValidacaoPlanosMs: g.tempoValidacaoPlanosMs,
+                tempoValidacaoMs: g.tempoValidacaoMs,
+                tempoGeracaoDescartadaMs: g.tempoGeracaoDescartadaMs,
+                tempoCenarioMs: g.tempoCenarioMs,
+                tentativasGeracao: g.tentativasGeracao
+            })
+        });
+    }
+    return saida;
+}
+
+/** Campo ausente no registro importado continua ausente na entrada. */
+function sePresenteNoRegistro<T extends object>(valores: T): Partial<T> {
+    return Object.fromEntries(Object.entries(valores).filter(([, v]) => v !== undefined && v !== null)) as Partial<T>;
+}
+
+/** A resposta de /api/rejulgar: a avaliacao nova + a comparacao dos dois juizes. */
+interface RespostaRejulgamento extends ResultadoAvaliacaoGrafo {
+    comparacaoJuizes: ComparacaoJuizes;
+    /** De onde veio a leitura do cenario, e o que ficou de fora do rejulgamento. */
+    rejulgamento: {
+        arquivoImportado?: string;
+        arquivoCenario: string;
+        registrosImportados: number;
+        rejulgados: number;
+        casadosPorSujeito: number;
+        casadosPorLinha: number;
+        semCenario: number;
+        semPlano: number;
+    };
+}
+
 function jsonResponse(res: http.ServerResponse, status: number, body: unknown): void {
     const texto = JSON.stringify(body);
     res.writeHead(status, {
@@ -1216,6 +1481,13 @@ const servidor = http.createServer(async (req, res) => {
                 baselineJsonl?: string;
                 /** Nome do arquivo de entrada (o da Arquitetura; senao o da Baseline): vira o nome do arquivo da avaliacao. */
                 nomeEntrada?: string;
+                /**
+                 * Quem faz o papel do LLM Judge: ausente ou `local` e o modelo do
+                 * motor; um provedor de fronteira troca SO o modelo do juiz (ver
+                 * juiz-fronteira.ts). A geracao dos planos nao passa por aqui —
+                 * este pedido avalia planos que ja existem no arquivo enviado.
+                 */
+                juiz?: JuizPedido;
             };
             if (corpo.dominio !== 'med' && corpo.dominio !== 'agro' && corpo.dominio !== 'fut') {
                 jsonResponse(res, 400, { erro: "dominio deve ser 'med', 'agro' ou 'fut'" });
@@ -1223,6 +1495,12 @@ const servidor = http.createServer(async (req, res) => {
             }
             if (!corpo.arquiteturaJsonl && !corpo.baselineJsonl) {
                 jsonResponse(res, 400, { erro: 'envie ao menos um arquivo (arquitetura e/ou baseline)' });
+                return;
+            }
+
+            const juiz = await resolverJuiz(corpo.juiz, corpo.dominio);
+            if ('erro' in juiz) {
+                jsonResponse(res, 400, { erro: juiz.erro });
                 return;
             }
 
@@ -1260,9 +1538,237 @@ const servidor = http.createServer(async (req, res) => {
                     baseline,
                     (processados, total) => emitir('progresso', { processados, total }),
                     controlador.signal,
-                    corpo.nomeEntrada
+                    corpo.nomeEntrada,
+                    { juiz: juiz.escolhido }
                 );
                 emitir('final', resultado);
+            } catch (error) {
+                emitir('erro', { erro: (error as Error).message });
+            } finally {
+                res.end();
+            }
+            return;
+        }
+
+        // Quem pode fazer o papel do LLM Judge: o modelo LOCAL (como o motor do
+        // dominio o reporta) e os provedores de fronteira, com o modelo padrao
+        // de cada um e se a chave dele JA esta no ambiente do servidor — so o
+        // booleano: a chave nunca sai daqui.
+        if (req.method === 'GET' && req.url?.startsWith('/api/juizes')) {
+            const pedido = new URL(req.url, 'http://localhost').searchParams.get('dominio');
+            const dominio = ehDominio(pedido) ? pedido : 'med';
+            jsonResponse(res, 200, {
+                local: { provedor: 'local', modelo: await nomeDoModeloLocal(dominio) },
+                fronteira: PROVEDORES_FRONTEIRA.map(id => ({
+                    id,
+                    nome: PROVEDORES[id].nome,
+                    modeloPadrao: PROVEDORES[id].modeloPadrao,
+                    chaveNoServidor: chaveDoAmbiente(id) !== undefined,
+                    variaveisDeAmbiente: [...PROVEDORES[id].variaveisDeAmbiente]
+                }))
+            });
+            return;
+        }
+
+        // TESTE DE CONEXAO de um provedor de fronteira, antes de gastar uma
+        // avaliacao inteira para descobrir que a chave esta errada: faz UM
+        // julgamento de brinquedo (ver `testarConexaoJuiz`) pelo mesmo caminho
+        // que o rejulgamento usa — mesma URL, mesmo cabecalho, mesmo prompt,
+        // mesma leitura da resposta —, so sem repetir em 429/5xx.
+        //
+        // Responde 200 tambem quando o teste FALHA: a falha e o resultado do
+        // teste, nao um erro desta rota. 400 e so para pedido mal formado.
+        //
+        // A chave chega no corpo, vive na memoria deste pedido e nao volta na
+        // resposta, nao entra em log e nao vai para disco. Sem chave no corpo,
+        // o teste usa a do ambiente — assim se confere a chave do servidor.
+        if (req.method === 'POST' && req.url === '/api/juizes/testar') {
+            const corpo = JSON.parse((await lerCorpo(req)) || '{}') as {
+                provedor?: string;
+                /** O modelo a testar. Vazio: o padrao do provedor. */
+                modelo?: string;
+                /** A chave a testar. Vazia: a do ambiente do servidor, quando existir. */
+                apiKey?: string;
+            };
+
+            if (!ehProvedorFronteira(corpo.provedor)) {
+                jsonResponse(res, 400, { erro: `provedor deve ser um de: ${PROVEDORES_FRONTEIRA.join(', ')}` });
+                return;
+            }
+            const provedor: ProvedorFronteira = corpo.provedor;
+            const doPedido = corpo.apiKey?.trim();
+            const chave = doPedido || chaveDoAmbiente(provedor);
+            if (!chave) {
+                jsonResponse(res, 400, {
+                    erro: `informe a chave de API de ${PROVEDORES[provedor].nome}, ou defina ${PROVEDORES[provedor].variaveisDeAmbiente.join(' ou ')} no servidor`
+                });
+                return;
+            }
+
+            // Fechar a tela no meio do teste aborta a chamada ao provedor.
+            const controlador = new AbortController();
+            req.on('close', () => controlador.abort());
+            try {
+                const resultado = await testarConexaoJuiz(provedor, chave, {
+                    modelo: corpo.modelo,
+                    timeoutMs: TIMEOUT_TESTE_JUIZ_MS,
+                    sinal: controlador.signal
+                });
+                jsonResponse(res, 200, { ...resultado, chaveDoAmbiente: !doPedido });
+            } catch {
+                // Unica saida por excecao: o cancelamento acima. Sem tela do
+                // outro lado, nao ha o que responder.
+                if (!res.writableEnded) res.end();
+            }
+            return;
+        }
+
+        // Rejulga os planos de uma avaliacao ja feita com um modelo de FRONTEIRA
+        // no lugar do juiz local (ver juiz-fronteira.ts e o bloco REJULGAMENTO
+        // acima). Mesmo SSE de /api/avaliar: progresso por plano e cancelamento
+        // ao fechar a conexao. A chave de API fica so na memoria deste pedido.
+        if (req.method === 'POST' && req.url === '/api/rejulgar') {
+            const corpo = JSON.parse((await lerCorpo(req)) || '{}') as {
+                dominio?: string;
+                /** O `evalueted_*.jsonl` ja avaliado, inteiro. */
+                avaliacaoJsonl?: string;
+                /** Nome do arquivo importado: acha o `cenarios-*.jsonl` de entrada e nomeia o novo arquivo. */
+                nomeArquivo?: string;
+                /** `<dominio>/<arquivo>` para escolher o cenario a mao, quando o nome nao basta. */
+                cenario?: string;
+                provedor?: string;
+                modelo?: string;
+                apiKey?: string;
+            };
+
+            if (!ehProvedorFronteira(corpo.provedor)) {
+                jsonResponse(res, 400, { erro: `provedor deve ser um de: ${PROVEDORES_FRONTEIRA.join(', ')}` });
+                return;
+            }
+            const provedor: ProvedorFronteira = corpo.provedor;
+            if (!corpo.avaliacaoJsonl) {
+                jsonResponse(res, 400, { erro: 'envie o arquivo de avaliacao (JSONL) a rejulgar' });
+                return;
+            }
+
+            let importados: RegistroAvaliacaoImportado[];
+            try {
+                importados = parseRegistrosAvaliacao(corpo.avaliacaoJsonl);
+            } catch (error) {
+                jsonResponse(res, 400, { erro: `falha ao interpretar o arquivo enviado: ${(error as Error).message}` });
+                return;
+            }
+
+            // O dominio vem do proprio arquivo; a tela so manda quando o arquivo
+            // mistura dominios (ai nao da para rejulgar os dois de uma vez).
+            const dosRegistros = [...new Set(importados.map(r => r.dominio).filter(ehDominio))];
+            const dominio = ehDominio(corpo.dominio) ? corpo.dominio : dosRegistros.length === 1 ? dosRegistros[0] : undefined;
+            if (!dominio) {
+                jsonResponse(res, 400, {
+                    erro:
+                        dosRegistros.length > 1
+                            ? `o arquivo tem mais de um dominio (${dosRegistros.join(', ')}): rejulgue um por vez`
+                            : 'nao foi possivel saber o dominio do arquivo: informe-o no pedido'
+                });
+                return;
+            }
+
+            const chave = corpo.apiKey?.trim() || chaveDoAmbiente(provedor);
+            if (!chave) {
+                jsonResponse(res, 400, {
+                    erro: `informe a chave de API de ${PROVEDORES[provedor].nome}, ou defina ${PROVEDORES[provedor].variaveisDeAmbiente.join(' ou ')} no servidor`
+                });
+                return;
+            }
+
+            // O cenario de entrada: o escolhido na tela, senao o que o nome do
+            // arquivo indica. Ele e OBRIGATORIO — e dele que sai a leitura que o
+            // juiz le (ver o bloco REJULGAMENTO).
+            const escolhido = corpo.cenario ? resolverCenario(corpo.cenario) : null;
+            if (corpo.cenario && !escolhido) {
+                jsonResponse(res, 400, { erro: `cenario nao encontrado: ${corpo.cenario}` });
+                return;
+            }
+            if (escolhido && escolhido.dominio !== dominio) {
+                jsonResponse(res, 400, { erro: `o cenario escolhido e de ${escolhido.dominio}, e o arquivo e de ${dominio}` });
+                return;
+            }
+            const cenario = escolhido
+                ? { arquivo: escolhido.caminho, registros: lerJsonl(escolhido.caminho) }
+                : cenarioDaAvaliacao(corpo.nomeArquivo ?? '', dominio).cenarios;
+            if (!cenario) {
+                const base = baseDoArquivoAvaliacao(corpo.nomeArquivo ?? '');
+                jsonResponse(res, 400, {
+                    erro: base
+                        ? `nao achei o cenario de entrada (src/examples/${dominio}/${base}.jsonl): escolha o arquivo de cenarios na tela`
+                        : 'o nome do arquivo nao diz qual cenario foi a entrada: escolha o arquivo de cenarios na tela'
+                });
+                return;
+            }
+
+            const entradas = entradasDoRejulgamento(importados, cenario.registros, dominio);
+            const rejulgados = entradas.arquitetura.length + entradas.baseline.length;
+            if (rejulgados === 0) {
+                jsonResponse(res, 400, {
+                    erro: `nenhum plano do arquivo casou com uma linha de ${path.basename(cenario.arquivo)} (${entradas.semCenario} sem cenario, ${entradas.semPlano} sem plano): confira o cenario escolhido`
+                });
+                return;
+            }
+
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream; charset=utf-8',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive',
+                'Access-Control-Allow-Origin': ORIGEM_PERMITIDA
+            });
+            const emitir = (evento: string, dados: unknown): void => {
+                res.write(`event: ${evento}\ndata: ${JSON.stringify(dados)}\n\n`);
+            };
+
+            const controlador = new AbortController();
+            req.on('close', () => controlador.abort());
+
+            const identidade: IdentidadeJuiz = { provedor, modelo: modeloDoJuiz(provedor, corpo.modelo) };
+            let pareados = 0;
+            let semPar = 0;
+            try {
+                const resultado = await avaliarComGrafo(
+                    dominio,
+                    entradas.arquitetura.length > 0 ? entradas.arquitetura : undefined,
+                    entradas.baseline.length > 0 ? entradas.baseline : undefined,
+                    (processados, total) => emitir('progresso', { processados, total }),
+                    controlador.signal,
+                    // O nome do CENARIO (nao o do arquivo importado): o arquivo
+                    // rejulgado continua casando com a sua entrada pelo nome.
+                    path.basename(cenario.arquivo),
+                    {
+                        juiz: {
+                            chamar: juizFronteira(provedor, chave, { modelo: identidade.modelo, timeoutMs: TIMEOUT_JUIZ_FRONTEIRA_MS }),
+                            identidade
+                        },
+                        ajustarLinhas: linhas => {
+                            const p = anexarJulgamentoAnterior(linhas, importados);
+                            pareados = p.pareados;
+                            semPar = p.semPar;
+                            return p.linhas;
+                        }
+                    }
+                );
+                const resposta: RespostaRejulgamento = {
+                    ...resultado,
+                    comparacaoJuizes: compararJuizes(resultado.linhas, identidade, dominio),
+                    rejulgamento: {
+                        ...(corpo.nomeArquivo ? { arquivoImportado: corpo.nomeArquivo } : {}),
+                        arquivoCenario: path.basename(cenario.arquivo),
+                        registrosImportados: importados.length,
+                        rejulgados: pareados + semPar,
+                        casadosPorSujeito: entradas.casadosPorSujeito,
+                        casadosPorLinha: entradas.casadosPorLinha,
+                        semCenario: entradas.semCenario,
+                        semPlano: entradas.semPlano
+                    }
+                };
+                emitir('final', resposta);
             } catch (error) {
                 emitir('erro', { erro: (error as Error).message });
             } finally {
@@ -1458,6 +1964,9 @@ servidor.listen(PORT, () => {
     console.log(`  GET  /api/avaliacoes           (lista as avaliacoes gravadas, com o cenario de entrada de cada uma)`);
     console.log(`  GET  /api/avaliacoes/:arquivo  (JSONL experimental de uma avaliacao: oraculo e juiz LLM separados)`);
     console.log(`  GET  /api/cenarios             (os cenarios-*.jsonl escolhiveis, por dominio)`);
+    console.log(
+        `  POST /api/juizes/testar { provedor, modelo?, apiKey? }  (um julgamento de brinquedo: diz se a chave e o modelo respondem, teto ${TIMEOUT_TESTE_JUIZ_MS / 1000}s)`
+    );
     console.log(
         `  GET  /api/fusao?avaliacao=a&cenario=agro/cenarios-400-agro.jsonl&partes=cenario,resultado,avaliacao`
     );

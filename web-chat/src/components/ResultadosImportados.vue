@@ -2,6 +2,10 @@
 import { computed, ref } from 'vue';
 import type { DetalheLado, DetalheLinha, MetricasAvaliacao, RespostaAvaliacao, Veredito } from '../api';
 import type { RegistroAvaliacaoImportado } from '../../../src/inference/avaliacao-jsonl';
+// As contas da comparação dos dois juízes são as do módulo puro: a tela não
+// recalcula nada (ver src/inference/comparacao-juizes.ts).
+import { compararJuizes } from '../../../src/inference/comparacao-juizes';
+import type { DetalheLinha as LinhaAvaliada } from '../../../src/inference/avaliar-grafo';
 import MetricasCard from './MetricasCard.vue';
 import ComparacaoLinhas from './ComparacaoLinhas.vue';
 import GraficosAvaliacao from './GraficosAvaliacao.vue';
@@ -12,6 +16,7 @@ import TempoPorTamanho from './TempoPorTamanho.vue';
 import TempoPorPlano from './TempoPorPlano.vue';
 import { geracaoDoRegistroImportado } from '../tempos-plano';
 import AvaliacaoLLM from './AvaliacaoLLM.vue';
+import ComparacaoJuizes from './ComparacaoJuizes.vue';
 import NavegacaoResultado, { type AbaResultado } from './NavegacaoResultado.vue';
 import RelatorioCapa from './RelatorioCapa.vue';
 import RelatorioModal from './RelatorioModal.vue';
@@ -167,6 +172,28 @@ function visivel(topico: TopicoRelatorio): boolean {
 const TOPICOS_TEMPO: TopicoRelatorio[] = ['tempoGeracao', 'tempoAvaliacao', 'tempoPilha', 'tempoTamanho', 'tempoPlano'];
 const algumTempoVisivel = computed(() => TOPICOS_TEMPO.some(t => visivel(t)));
 
+/**
+ * Um arquivo REJULGADO traz dois juízes por plano: o do rejulgamento em
+ * `julgamentoLLM` (com `provedor`) e o anterior em `julgamentoAnterior`. Quando
+ * os dois estão lá, a comparação é calculada aqui mesmo — é o que permite
+ * reabrir um rejulgamento depois, sem gastar chamada de API nenhuma. Arquivo
+ * com um juiz só devolve `null`, e a seção não existe.
+ */
+const comparacaoJuizes = computed(() => {
+    const comIdentidade = props.registros.find(
+        r => typeof r.julgamentoLLM?.provedor === 'string' && r.julgamentoLLM.provedor !== 'local'
+    )?.julgamentoLLM;
+    const temAnterior = props.registros.some(r => typeof (r.julgamentoAnterior as { status?: unknown })?.status === 'string');
+    if (!comIdentidade || !temAnterior) return null;
+    const fronteira = {
+        provedor: comIdentidade.provedor as string,
+        ...(typeof comIdentidade.modelo === 'string' ? { modelo: comIdentidade.modelo } : {})
+    };
+    // As duas telas de resultado descrevem a mesma linha avaliada; os tipos são
+    // espelhos (api.ts x avaliar-grafo.ts) e a comparação lê só os vereditos.
+    return compararJuizes(resposta.value.linhas as unknown as LinhaAvaliada[], fronteira, dominioDoArquivo.value);
+});
+
 function veredito(valor: unknown): valor is Veredito {
     return valor === 'VALID' || valor === 'INVALID' || valor === 'UNRESOLVED';
 }
@@ -208,6 +235,11 @@ function veredito(valor: unknown): valor is Veredito {
 
         <p v-if="resposta.naoAvaliados > 0" class="mb-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{{ resposta.naoAvaliados }} registro(s) não foram avaliados no arquivo original.</p>
         <div class="flex flex-col gap-10 w-screen max-w-full">
+            <!-- Só quando o arquivo foi rejulgado: os dois juízes no mesmo plano. -->
+            <div v-if="comparacaoJuizes" v-show="visivel('comparacaoJuizes')">
+                <ComparacaoJuizes :comparacao="comparacaoJuizes" :arquivo-jsonl="nomeArquivo" />
+            </div>
+
             <div v-show="visivel('metricas')" class="animate-fade-in-up evitar-quebra">
                 <div class="grid gap-4" :class="resposta.arquitetura && resposta.baseline ? 'lg:grid-cols-2' : 'grid-cols-1'">
                     <MetricasCard v-if="resposta.arquitetura" variante="arquitetura" :metricas="resposta.arquitetura" :comparar="resposta.baseline" />

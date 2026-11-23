@@ -297,6 +297,72 @@ async function main(): Promise<void> {
         assert.deepEqual(Object.keys(analisar(planos, 'oraculo').porLinha[0].julgamentos), ['oraculo']);
     });
 
+    // =======================================================================
+    // Quem ocupou o lugar do juiz — o local do motor ou um de fronteira.
+    // A regra: um julgamento só na linha É o LLM Judge, seja qual for o modelo;
+    // dois julgamentos (rejulgamento) é que separam um do outro.
+    // =======================================================================
+
+    await teste('avaliacao feita com modelo de fronteira entra no LLM Judge, como a local', () => {
+        const comFronteira = normalizarLinhas([
+            {
+                linha: 1,
+                intencao: 'c1',
+                dominio: 'agro',
+                arquitetura: {
+                    naoAvaliado: false,
+                    oraculo: { veredito: 'VALID' },
+                    julgamentoLLM: { status: 'VALID', provedor: 'gemini', modelo: 'gemini-3-flash-preview' }
+                }
+            }
+        ]);
+        assert.deepEqual(comFronteira[0].julgamentos, { oraculo: 'VALID', llmJudge: 'VALID' });
+        assert.equal(comFronteira[0].julgamentos.llmFronteira, undefined, 'sem segundo juiz, nao ha fonte de fronteira');
+        // O que quebrava antes: a analise inteira ficava "indisponivel".
+        assert.equal(analisar(comFronteira, 'llm').disponivel, true);
+        assert.equal(analisar(comFronteira, 'oraculo_llm').disponivel, true);
+        assert.deepEqual(analisar(comFronteira, 'llm').modelosPorFonte.llmJudge, ['gemini-3-flash-preview']);
+    });
+
+    await teste('sem provedor (arquivo antigo) continua sendo o juiz local', () => {
+        const p = normalizarLinhas([{ linha: 1, intencao: 'c1', arquitetura: lado('VALID', 'INVALID') }]);
+        assert.deepEqual(p[0].julgamentos, { oraculo: 'VALID', llmJudge: 'INVALID' });
+        assert.deepEqual(analisar(p, 'llm').modelosPorFonte, {}, 'sem modelo no registro, nada a exibir');
+    });
+
+    await teste('rejulgamento: o local fica no LLM Judge e o de fronteira na fonte dele', () => {
+        const p = normalizarLinhas([
+            {
+                linha: 1,
+                intencao: 'c1',
+                arquitetura: {
+                    naoAvaliado: false,
+                    oraculo: { veredito: 'VALID' },
+                    julgamentoLLM: { status: 'INVALID', provedor: 'claude', modelo: 'claude-opus-5-5' },
+                    julgamentoAnterior: { status: 'VALID', provedor: 'local', modelo: 'qwen2.5-7b' }
+                }
+            }
+        ]);
+        assert.deepEqual(p[0].julgamentos, { oraculo: 'VALID', llmJudge: 'VALID', llmFronteira: 'INVALID' });
+        assert.deepEqual(p[0].modelos, { llmJudge: 'qwen2.5-7b', llmFronteira: 'claude-opus-5-5' });
+    });
+
+    await teste('dois juizes do mesmo tipo: o segundo fica no lugar que sobra, nenhum se perde', () => {
+        const p = normalizarLinhas([
+            {
+                linha: 1,
+                intencao: 'c1',
+                arquitetura: {
+                    naoAvaliado: false,
+                    julgamentoLLM: { status: 'INVALID', provedor: 'gpt', modelo: 'gpt-5.1' },
+                    julgamentoAnterior: { status: 'VALID', provedor: 'gemini', modelo: 'gemini-2.5-pro' }
+                }
+            }
+        ]);
+        assert.deepEqual(p[0].julgamentos, { llmFronteira: 'INVALID', llmJudge: 'VALID' });
+        assert.deepEqual(p[0].modelos, { llmFronteira: 'gpt-5.1', llmJudge: 'gemini-2.5-pro' });
+    });
+
     console.log(falhas === 0 ? '\nTodos os testes passaram.' : `\n${falhas} teste(s) falharam.`);
     process.exit(falhas === 0 ? 0 : 1);
 }

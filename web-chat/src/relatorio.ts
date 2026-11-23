@@ -26,6 +26,7 @@ export type TopicoRelatorio =
     | 'analise'
     | 'graficos'
     | 'estatisticos'
+    | 'comparacaoJuizes'
     | 'tempoGeracao'
     | 'tempoAvaliacao'
     | 'tempoPilha'
@@ -90,6 +91,14 @@ export const TOPICOS: readonly DefinicaoTopico[] = [
         chave: 'estatisticos',
         rotulo: 'Testes estatísticos',
         descricao: 'Concordância (Kappa), testes de hipótese e o diagnóstico do LLM Judge, com a metodologia',
+        grupo: 'resultado',
+        secao: 'avaliacaoLlm'
+    },
+    {
+        chave: 'comparacaoJuizes',
+        rotulo: 'Comparação entre os juízes',
+        descricao:
+            'Só no rejulgamento: o juiz local e o de fronteira no mesmo plano — concordância, κ, matriz, quem acompanha o oráculo e as divergências',
         grupo: 'resultado',
         secao: 'avaliacaoLlm'
     },
@@ -191,6 +200,14 @@ export function disponibilidade(resposta: RespostaAvaliacao): DisponibilidadeRel
         analise: resposta.linhas.length > 0 ? DISPONIVEL : ausente('nenhuma linha avaliada'),
         graficos: temLado ? DISPONIVEL : semLado,
         estatisticos: temLado ? DISPONIVEL : semLado,
+        // Dois juízes no mesmo plano só existem num REJULGAMENTO (ver
+        // src/inference/comparacao-juizes.ts): a disponibilidade sai do dado,
+        // como nas seções de tempo, e não de quem chamou.
+        comparacaoJuizes: resposta.linhas.some(l =>
+            (['arquitetura', 'baseline'] as const).some(lado => !!l[lado]?.julgamentoAnterior && !!l[lado]?.julgamentoLLM)
+        )
+            ? DISPONIVEL
+            : ausente('este resultado tem só um juiz: a comparação aparece num rejulgamento com outro modelo'),
         tempoGeracao: temAlgum(
             resposta.tempoGeracaoTotalSegundos,
             resposta.tempoGeracaoSequenciasSegundos,

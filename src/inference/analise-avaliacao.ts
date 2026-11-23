@@ -8,10 +8,20 @@
  *
  * As FONTES são conceitualmente separadas, e cada uma tem um papel:
  *
- *   oraculo    referência normativa do SPC-CML (VALID | INVALID | UNRESOLVED)
- *   llmJudge   avaliador independente (as três classes + NOT_CALLED | NO_RESPONSE)
- *   humana     referência humana por linha (CORRETO | INCORRETO | INCOMPLETO) —
- *              ainda sem dados; lida de `avaliacaoHumana.classe` quando existir.
+ *   oraculo       referência normativa do SPC-CML (VALID | INVALID | UNRESOLVED)
+ *   llmJudge      o avaliador independente da avaliação — QUEM OCUPOU o lugar do
+ *                 juiz, seja o modelo local (Qwen, no motor do domínio) ou um de
+ *                 fronteira posto no mesmo lugar da cascata (Claude, GPT, Gemini,
+ *                 DeepSeek): mesmo prompt, mesmo contexto, mesmo formato de saída
+ *                 (ver juiz-fronteira.ts). As três classes + NOT_CALLED |
+ *                 NO_RESPONSE. `modelosPorFonte` diz qual modelo foi.
+ *   llmFronteira  o SEGUNDO juiz de uma linha, que só existe num REJULGAMENTO (o
+ *                 julgamento novo mais o do arquivo importado): é ele que permite
+ *                 medir um juiz contra o outro (ver comparacao-juizes.ts). Numa
+ *                 avaliação comum feita com um modelo de fronteira não há dois
+ *                 juízes — ele é o `llmJudge`, e a análise é a mesma de sempre.
+ *   humana        referência humana por linha (CORRETO | INCORRETO | INCOMPLETO) —
+ *                 ainda sem dados; lida de `avaliacaoHumana.classe` quando existir.
  *
  * A OPÇÃO selecionada (`FonteAnalise`) diz se a análise é DESCRITIVA (a
  * distribuição de uma fonte) ou COMPARATIVA (a concordância entre duas). Métrica
@@ -42,7 +52,7 @@ export type EstadoJuiz = (typeof ESTADOS_JUIZ)[number];
 export const CLASSES_HUMANAS = ['CORRETO', 'INCORRETO', 'INCOMPLETO'] as const;
 export type ClasseHumana = (typeof CLASSES_HUMANAS)[number];
 
-export type IdFonte = 'oraculo' | 'llmJudge' | 'humana';
+export type IdFonte = 'oraculo' | 'llmJudge' | 'llmFronteira' | 'humana';
 
 export interface Fonte {
     id: IdFonte;
@@ -71,6 +81,14 @@ export const FONTES: Record<IdFonte, Fonte> = {
         estados: ESTADOS_JUIZ,
         classes: CLASSES_VEREDITO,
         ler: p => p.julgamentos.llmJudge
+    },
+    llmFronteira: {
+        id: 'llmFronteira',
+        rotulo: 'LLM Judge (fronteira)',
+        papel: 'avaliador_llm',
+        estados: ESTADOS_JUIZ,
+        classes: CLASSES_VEREDITO,
+        ler: p => p.julgamentos.llmFronteira
     },
     humana: {
         id: 'humana',
@@ -162,11 +180,27 @@ export const METRICAS_POR_FONTE: Record<FonteAnalise, readonly IdMetrica[]> = {
 // Normalização
 // =============================================================================
 
+/** Um julgamento do LLM Judge como a camada o lê, com quem o fez. */
+export interface JulgamentoEntrada {
+    status?: string;
+    /** `IdentidadeJuiz.provedor` (avaliar-grafo.ts). Ausente ou `local`: o modelo local. */
+    provedor?: string;
+    /** O modelo exato que julgou (`llm-judge` do JSONL). Só para exibir de quem é a análise. */
+    modelo?: string;
+}
+
 /** O que a camada lê de um lado de uma linha — o formato de `DetalheLado`. */
 export interface LadoEntrada {
     naoAvaliado?: boolean;
     oraculo?: { veredito?: string } | null;
-    julgamentoLLM?: { status?: string } | null;
+    julgamentoLLM?: JulgamentoEntrada | null;
+    /**
+     * O julgamento que JÁ EXISTIA para este mesmo plano antes deste
+     * rejulgamento — o do arquivo importado (ver comparacao-juizes.ts). O
+     * `provedor` de cada um decide em que fonte ele entra, então tanto faz qual
+     * dos dois juízes está em qual campo.
+     */
+    julgamentoAnterior?: JulgamentoEntrada | null;
     /** Futuro: a avaliação humana do plano. Ausente: ninguém avaliou. */
     avaliacaoHumana?: { classe?: string } | null;
 }
@@ -188,12 +222,31 @@ export interface PlanoAvaliado {
     dominio?: string;
     naoAvaliado: boolean;
     /** Ausente = aquela fonte não julgou este plano. Nunca preenchido por suposição. */
-    julgamentos: { oraculo?: ClasseVeredito; llmJudge?: EstadoJuiz; humana?: ClasseHumana };
+    julgamentos: { oraculo?: ClasseVeredito; llmJudge?: EstadoJuiz; llmFronteira?: EstadoJuiz; humana?: ClasseHumana };
+    /** O modelo que respondeu por cada fonte de juiz, quando o registro o diz. */
+    modelos?: Partial<Record<'llmJudge' | 'llmFronteira', string>>;
 }
 
 function daLista<T extends string>(lista: readonly T[], valor: unknown): T | undefined {
     return typeof valor === 'string' && (lista as readonly string[]).includes(valor) ? (valor as T) : undefined;
 }
+
+/**
+ * Em que fonte um julgamento entra QUANDO HÁ DOIS na mesma linha (o
+ * rejulgamento, ver comparacao-juizes.ts): quem o fez decide, não o nome do
+ * campo — o local fica em `llmJudge`, o de fronteira em `llmFronteira`, e assim
+ * a comparação dos dois juízes não depende de qual deles está em qual campo.
+ *
+ * NÃO é quem decide com UM julgamento só: ver `normalizarLinhas`.
+ */
+export function fonteDoJulgamento(julgamento: JulgamentoEntrada | null | undefined): 'llmJudge' | 'llmFronteira' {
+    const provedor = julgamento?.provedor;
+    return typeof provedor === 'string' && provedor.length > 0 && provedor !== 'local' ? 'llmFronteira' : 'llmJudge';
+}
+
+/** A outra fonte de juiz — para o segundo julgamento quando os dois são do mesmo tipo. */
+const outraFonte = (f: 'llmJudge' | 'llmFronteira'): 'llmJudge' | 'llmFronteira' =>
+    f === 'llmJudge' ? 'llmFronteira' : 'llmJudge';
 
 export function normalizarLinhas(linhas: readonly LinhaEntrada[], dominioPadrao?: string): PlanoAvaliado[] {
     const planos: PlanoAvaliado[] = [];
@@ -203,10 +256,33 @@ export function normalizarLinhas(linhas: readonly LinhaEntrada[], dominioPadrao?
             if (!d) continue;
             const julgamentos: PlanoAvaliado['julgamentos'] = {};
             const oraculo = daLista(CLASSES_VEREDITO, d.oraculo?.veredito);
-            const juiz = daLista(ESTADOS_JUIZ, d.julgamentoLLM?.status);
             const humana = daLista(CLASSES_HUMANAS, d.avaliacaoHumana?.classe);
             if (oraculo) julgamentos.oraculo = oraculo;
-            if (juiz) julgamentos.llmJudge = juiz;
+
+            // QUEM OCUPOU O LUGAR DO JUIZ é o que decide a fonte, e não o modelo
+            // que estava por baixo. Um julgamento só na linha é O LLM Judge
+            // daquela avaliação — o Qwen local ou um modelo de fronteira posto no
+            // mesmo lugar da cascata, com o mesmo prompt, o mesmo contexto e o
+            // mesmo formato de saída (ver juiz-fronteira.ts). Mandá-lo para outra
+            // fonte por causa do provedor esconderia a avaliação inteira da tela,
+            // que é o que acontecia antes.
+            //
+            // DOIS julgamentos na mesma linha só existem num rejulgamento (o novo
+            // mais o do arquivo importado, ver comparacao-juizes.ts): aí sim o
+            // provedor separa os dois, para a comparação não depender de qual
+            // deles está em qual campo. Sendo os dois do mesmo tipo, o segundo
+            // fica no lugar que sobrou — nenhum julgamento é descartado.
+            const brutos = [d.julgamentoLLM, d.julgamentoAnterior]
+                .map(bruto => ({ bruto, estado: daLista(ESTADOS_JUIZ, bruto?.status) }))
+                .filter((x): x is { bruto: JulgamentoEntrada; estado: EstadoJuiz } => x.estado !== undefined);
+            const modelos: NonNullable<PlanoAvaliado['modelos']> = {};
+            for (const { bruto, estado } of brutos) {
+                const preferida = brutos.length === 1 ? 'llmJudge' : fonteDoJulgamento(bruto);
+                const fonte = julgamentos[preferida] === undefined ? preferida : outraFonte(preferida);
+                if (julgamentos[fonte] !== undefined) continue;
+                julgamentos[fonte] = estado;
+                if (typeof bruto.modelo === 'string' && bruto.modelo.length > 0) modelos[fonte] = bruto.modelo;
+            }
             if (humana) julgamentos.humana = humana;
             const dominio = l.dominio ?? dominioPadrao;
             planos.push({
@@ -215,7 +291,8 @@ export function normalizarLinhas(linhas: readonly LinhaEntrada[], dominioPadrao?
                 intencao: l.intencao,
                 ...(dominio ? { dominio } : {}),
                 naoAvaliado: d.naoAvaliado === true,
-                julgamentos
+                julgamentos,
+                ...(Object.keys(modelos).length > 0 ? { modelos } : {})
             });
         }
     }
@@ -286,8 +363,8 @@ export interface CoberturaJuiz {
     cobertura: Proporcao;
 }
 
-export function coberturaJuiz(planos: readonly PlanoAvaliado[]): CoberturaJuiz {
-    const estados = planos.map(p => p.julgamentos.llmJudge);
+export function coberturaJuiz(planos: readonly PlanoAvaliado[], fonte: 'llmJudge' | 'llmFronteira' = 'llmJudge'): CoberturaJuiz {
+    const estados = planos.map(p => p.julgamentos[fonte]);
     const comVeredito = estados.filter(e => e !== undefined && (CLASSES_VEREDITO as readonly string[]).includes(e)).length;
     const chamados = estados.filter(e => e !== undefined && e !== 'NOT_CALLED').length;
     return { taxaResposta: proporcao(comVeredito, chamados), cobertura: proporcao(comVeredito, planos.length) };
@@ -471,6 +548,13 @@ export interface Analise {
     /** Os valores possíveis dos filtros, a partir dos dados (não do filtro aplicado). */
     lados: Lado[];
     dominios: string[];
+    /**
+     * Que modelo respondeu por cada fonte de juiz, lido das linhas — o `local`
+     * do motor ou um de fronteira ocupam o MESMO lugar, então é só isto que
+     * distingue um do outro na tela. Mais de um nome quando o arquivo juntou
+     * avaliações de modelos diferentes.
+     */
+    modelosPorFonte: Partial<Record<'llmJudge' | 'llmFronteira', string[]>>;
 }
 
 export const SEM_DADOS_HUMANOS = 'Nenhum dado de avaliação humana disponível.';
@@ -513,7 +597,13 @@ export function analisar(planos: readonly PlanoAvaliado[], fonte: FonteAnalise, 
     const recorte = planos.filter(p => (!filtro.lado || p.lado === filtro.lado) && (!filtro.dominio || p.dominio === filtro.dominio));
     const disponivel = opcao.fontes.every(f => fonteDisponivel(planos, f));
 
-    const base = { fonte, opcao, metricas, totalPlanos: recorte.length, lados, dominios };
+    const modelosPorFonte: Analise['modelosPorFonte'] = {};
+    for (const f of ['llmJudge', 'llmFronteira'] as const) {
+        const nomes = [...new Set(recorte.map(p => p.modelos?.[f]).filter((m): m is string => m !== undefined))].sort();
+        if (nomes.length > 0) modelosPorFonte[f] = nomes;
+    }
+
+    const base = { fonte, opcao, metricas, totalPlanos: recorte.length, lados, dominios, modelosPorFonte };
     if (!disponivel) {
         return {
             ...base,

@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   avaliarResultados,
+  listarCenarios,
+  listarJuizes,
+  rejulgarAvaliacao,
   urlAvaliacaoJsonl,
+  type CenarioDisponivel,
+  type ComparacaoJuizes as Comparacao,
+  type JuizesDisponiveis,
   type RespostaAvaliacao,
+  type ResumoRejulgamento,
 } from "../api";
 import MetricasCard from "./MetricasCard.vue";
 import ComparacaoLinhas from "./ComparacaoLinhas.vue";
@@ -16,6 +23,15 @@ import TempoPilha from "./TempoPilha.vue";
 import TempoPorTamanho from "./TempoPorTamanho.vue";
 import TempoPorPlano from "./TempoPorPlano.vue";
 import AvaliacaoLLM from "./AvaliacaoLLM.vue";
+import ComparacaoJuizes from "./ComparacaoJuizes.vue";
+import SeletorJuizLLM from "./SeletorJuizLLM.vue";
+import {
+  carregarConfig,
+  JUIZ_LOCAL,
+  pedidoDoJuizLLM,
+  salvarConfig,
+  type ConfigJuiz,
+} from "../juiz-llm";
 import NavegacaoResultado, { type AbaResultado } from "./NavegacaoResultado.vue";
 import RelatorioCapa from "./RelatorioCapa.vue";
 import RelatorioModal from "./RelatorioModal.vue";
@@ -83,12 +99,59 @@ const erro = ref<string | null>(null);
 const resultado = ref<RespostaAvaliacao | null>(null);
 const progresso = ref<{ processados: number; total: number } | null>(null);
 const controlador = ref<AbortController | null>(null);
-const view = ref<"config" | "avaliando" | "resultado" | "importar" | "resultadoImportado">("config");
+const view = ref<"config" | "avaliando" | "rejulgando" | "resultado" | "importar" | "resultadoImportado">("config");
 const modo = ref<"julgar" | "importar">("julgar");
 const inputImportar = ref<HTMLInputElement | null>(null);
 const arquivoImportado = ref<string | null>(null);
 const registrosImportados = ref<RegistroAvaliacaoImportado[]>([]);
 const erroImportacao = ref<string | null>(null);
+
+// ---------------------------------------------------------------------------
+// Rejulgamento: os planos do arquivo importado, julgados outra vez por um
+// modelo de FRONTEIRA no lugar do juiz local (ver src/inference/juiz-fronteira.ts).
+// O servidor refaz a recuperação a partir do cenário de entrada e monta o MESMO
+// prompt — só o modelo muda. Com o juiz `local` escolhido nada roda: o arquivo
+// já traz o julgamento dele, e a tela só mostra o que foi importado.
+// ---------------------------------------------------------------------------
+// A escolha do juiz vem do navegador (localStorage): atualizar a página não
+// perde o modelo nem a chave já digitados. Ver web-chat/src/juiz-llm.ts.
+const juiz = ref<ConfigJuiz>(carregarConfig());
+watch(juiz, (atual) => salvarConfig(atual), { deep: true });
+const juizes = ref<JuizesDisponiveis | null>(null);
+const cenariosDisponiveis = ref<CenarioDisponivel[]>([]);
+const erroListasJuiz = ref<string | null>(null);
+/** O cenário de entrada do rejulgamento (vazio: o servidor acha pelo nome). */
+const cenarioRejulgar = ref("");
+/** O JSONL importado como texto: é ele que vai ao servidor no rejulgamento. */
+const textoImportado = ref<string | null>(null);
+const comparacaoJuizes = ref<Comparacao | null>(null);
+const resumoRejulgamento = ref<ResumoRejulgamento | null>(null);
+/** De onde veio o resultado na tela: muda o título e para onde volta "nova análise". */
+const origemResultado = ref<"avaliacao" | "rejulgamento">("avaliacao");
+const dominioImportado = computed(() => {
+  const d = registrosImportados.value.find((r) => r.dominio === "med" || r.dominio === "agro" || r.dominio === "fut")?.dominio;
+  return d === "med" || d === "agro" || d === "fut" ? d : undefined;
+});
+const juizesFronteira = computed(() => juizes.value?.fronteira ?? []);
+const juizEscolhido = computed(() => juizesFronteira.value.find((j) => j.id === juiz.value.provedor));
+const ehJuizLocal = computed(() => juiz.value.provedor === JUIZ_LOCAL);
+const podeRejulgar = computed(() => !!textoImportado.value && !ehJuizLocal.value && !avaliando.value);
+
+/**
+ * Os juízes possíveis e os cenários. O modelo LOCAL depende do domínio (um
+ * motor por domínio), então a lista é pedida de novo quando o domínio muda.
+ */
+async function carregarListasDoJuiz(): Promise<void> {
+  try {
+    const [j, c] = await Promise.all([listarJuizes(dominioSelecionado.value), listarCenarios()]);
+    juizes.value = j;
+    cenariosDisponiveis.value = c;
+    erroListasJuiz.value = null;
+  } catch (e) {
+    erroListasJuiz.value = (e as Error).message;
+  }
+}
+onMounted(() => void carregarListasDoJuiz());
 // Qual seção do resultado aparece (só estado local: nenhuma rota muda). "Todas" mostra as outras.
 const aba = ref<AbaResultado>("todas");
 const mostra = (a: AbaResultado): boolean => aba.value === "todas" || aba.value === a;
@@ -176,6 +239,8 @@ function alternarDominio(id: "med" | "agro" | "fut"): void {
   dominioSelecionado.value = id;
   resultado.value = null;
   erro.value = null;
+  // Cada domínio tem o seu motor: o nome do modelo local pode ser outro.
+  void carregarListasDoJuiz();
 }
 
 function alternarModelo(chave: "arquitetura" | "baseline"): void {
@@ -233,7 +298,10 @@ async function avaliar(): Promise<void> {
       ctrl.signal,
       // O da Arquitetura, quando avaliada; senão o da Baseline.
       (incluirArquitetura.value && arquivos.arquitetura ? arquivos.arquitetura : arquivos.baseline)?.name,
+      // Quem julga: o LLM local, ou o modelo de fronteira escolhido na tela.
+      pedidoDoJuizLLM(juiz.value),
     );
+    origemResultado.value = "avaliacao";
     view.value = "resultado";
   } catch (e) {
     if ((e as Error).name !== "AbortError") {
@@ -248,16 +316,27 @@ async function avaliar(): Promise<void> {
 }
 
 function cancelar(): void {
-  view.value = "config";
+  // Cancelar um rejulgamento volta para a tela de importação, com o arquivo ainda escolhido.
+  view.value = view.value === "rejulgando" ? "importar" : "config";
   resultado.value = null;
   progresso.value = null;
   controlador.value?.abort();
 }
 
 function novaAnalise(): void {
+  const eraRejulgamento = origemResultado.value === "rejulgamento";
   resultado.value = null;
+  comparacaoJuizes.value = null;
+  resumoRejulgamento.value = null;
+  origemResultado.value = "avaliacao";
   aba.value = "todas";
   erro.value = null;
+  // Depois de rejulgar, "nova análise" volta para a importação (o arquivo
+  // continua escolhido, pronto para outro juiz), não para a tela de avaliar.
+  if (eraRejulgamento) {
+    selecionarModo("importar");
+    return;
+  }
   modo.value = "julgar";
   view.value = "config";
 }
@@ -275,7 +354,7 @@ watch(
   () => route.query.modo,
   (valor) => {
     const novo = valor === "importar" ? "importar" : "julgar";
-    if (view.value === "avaliando") return;
+    if (view.value === "avaliando" || view.value === "rejulgando") return;
     if (novo === modo.value && (novo === "importar" ? view.value !== "config" : view.value === "config")) return;
     modo.value = novo;
     erroImportacao.value = null;
@@ -289,14 +368,77 @@ async function importarArquivo(evento: Event): Promise<void> {
   const arquivo = input.files?.[0];
   if (!arquivo) return;
   try {
-    registrosImportados.value = parseRegistrosAvaliacao(await arquivo.text());
+    const texto = await arquivo.text();
+    registrosImportados.value = parseRegistrosAvaliacao(texto);
+    textoImportado.value = texto;
     arquivoImportado.value = arquivo.name;
     erroImportacao.value = null;
-    view.value = "resultadoImportado";
+    // Com o juiz local não há o que rodar — o arquivo já traz o julgamento
+    // dele. Com um juiz de fronteira, o arquivo fica pronto e o rejulgamento
+    // começa no botão: ele gasta chamadas de API, então não dispara sozinho.
+    if (juiz.value.provedor === "local") view.value = "resultadoImportado";
   } catch (e) {
+    textoImportado.value = null;
+    registrosImportados.value = [];
     erroImportacao.value = (e as Error).message;
   }
   input.value = "";
+}
+
+/** Mostra o arquivo importado como ele está, sem gastar chamada de API. */
+function verImportado(): void {
+  if (registrosImportados.value.length > 0) view.value = "resultadoImportado";
+}
+
+/**
+ * Rejulga os planos do arquivo importado com o modelo de fronteira escolhido.
+ * O resultado é uma avaliação completa (a cascata roda inteira sobre o cenário
+ * de entrada) MAIS a comparação dos dois juízes, então ele entra em `resultado`
+ * e a tela de resultado o mostra como mostra qualquer avaliação.
+ */
+async function rejulgar(): Promise<void> {
+  if (!podeRejulgar.value || !textoImportado.value) return;
+  avaliando.value = true;
+  view.value = "rejulgando";
+  aba.value = "todas";
+  erroImportacao.value = null;
+  resultado.value = null;
+  comparacaoJuizes.value = null;
+  resumoRejulgamento.value = null;
+  progresso.value = null;
+  const ctrl = new AbortController();
+  controlador.value = ctrl;
+  try {
+    const resposta = await rejulgarAvaliacao(
+      {
+        ...pedidoDoJuizLLM(juiz.value)!,
+        avaliacaoJsonl: textoImportado.value,
+        nomeArquivo: arquivoImportado.value ?? undefined,
+        cenario: cenarioRejulgar.value || undefined,
+        dominio: dominioImportado.value,
+      },
+      (processados, total) => {
+        progresso.value = { processados, total };
+      },
+      ctrl.signal,
+    );
+    resultado.value = resposta;
+    comparacaoJuizes.value = resposta.comparacaoJuizes;
+    resumoRejulgamento.value = resposta.rejulgamento;
+    origemResultado.value = "rejulgamento";
+    // O domínio do arquivo manda na capa do relatório e na sessão estatística.
+    if (dominioImportado.value) dominioSelecionado.value = dominioImportado.value;
+    view.value = "resultado";
+  } catch (e) {
+    if ((e as Error).name !== "AbortError") {
+      erroImportacao.value = (e as Error).message;
+      view.value = "importar";
+    }
+  } finally {
+    avaliando.value = false;
+    progresso.value = null;
+    controlador.value = null;
+  }
 }
 </script>
 
@@ -660,6 +802,23 @@ async function importarArquivo(evento: Event): Promise<void> {
             </TransitionGroup>
           </section>
 
+          <!-- 4. Quem faz o papel do LLM Judge nesta avaliação. O oráculo
+               (sintaxe + semântica) não muda; a geração dos planos também não —
+               aqui só se avaliam planos que já existem no arquivo enviado. -->
+          <section class="mb-6">
+            <p
+              class="mb-2.5 text-xs font-semibold tracking-wide text-neutral-400 uppercase dark:text-neutral-500"
+            >
+              4. LLM Judge
+            </p>
+            <SeletorJuizLLM
+              v-model="juiz"
+              :juizes="juizesFronteira"
+              :modelo-local="juizes?.local.modelo"
+              :erro="erroListasJuiz"
+            />
+          </section>
+
           <div class="mb-6">
             <button
               type="button"
@@ -689,7 +848,7 @@ async function importarArquivo(evento: Event): Promise<void> {
     <!-- Avaliando cenários -->
     <Transition name="fade-slide">
       <section
-        v-if="view === 'avaliando'"
+        v-if="view === 'avaliando' || view === 'rejulgando'"
         key="avaliando"
         class="flex flex-1 flex-col items-center justify-center py-12"
       >
@@ -711,10 +870,16 @@ async function importarArquivo(evento: Event): Promise<void> {
             <h2
               class="text-xl font-medium text-neutral-900 dark:text-neutral-100"
             >
-              Avaliando cenários
+              {{ view === 'rejulgando' ? 'Rejulgando os planos' : 'Avaliando cenários' }}
             </h2>
             <p class="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
-              Isso pode levar alguns minutos, dependendo do tamanho do lote.
+              <template v-if="view === 'rejulgando'">
+                Cada plano é uma chamada a {{ juizEscolhido?.nome ?? juiz.provedor }}, com o mesmo prompt e o mesmo contexto do
+                juiz local. Isso pode levar alguns minutos — e consome a sua cota de API.
+              </template>
+              <template v-else>
+                Isso pode levar alguns minutos, dependendo do tamanho do lote.
+              </template>
             </p>
           </div>
           <div class="w-full" aria-live="polite">
@@ -760,10 +925,19 @@ async function importarArquivo(evento: Event): Promise<void> {
             <h1
               class="text-2xl font-medium text-neutral-900 dark:text-neutral-100"
             >
-              Resultado da avaliação
+              {{ origemResultado === 'rejulgamento' ? 'Resultado do rejulgamento' : 'Resultado da avaliação' }}
             </h1>
             <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-              Métricas consolidadas e comparação detalhada das linhas avaliadas.
+              <template v-if="origemResultado === 'rejulgamento'">
+                Os mesmos planos, julgados por {{ resultado.juiz?.modelo ?? resultado.juiz?.provedor }}: a comparação com o juiz
+                local vem primeiro, e abaixo a avaliação completa deste rejulgamento.
+              </template>
+              <template v-else>
+                Métricas consolidadas e comparação detalhada das linhas avaliadas.
+                <template v-if="resultado.juiz">
+                  LLM Judge: <code>{{ resultado.juiz.modelo ?? resultado.juiz.provedor }}</code>.
+                </template>
+              </template>
             </p>
           </div>
           <div class="sem-impressao flex items-center gap-2">
@@ -799,9 +973,45 @@ async function importarArquivo(evento: Event): Promise<void> {
       <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h1 class="text-2xl font-medium text-neutral-900 dark:text-neutral-100">Importar resultado</h1>
       <p class="mt-1 mb-4 text-sm text-neutral-500 dark:text-neutral-400">Selecione um arquivo JSONL já avaliado. Nenhuma avaliação será executada.</p>
       </div><button type="button" class="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10" @click="selecionarModo('julgar')">Voltar</button></div>
+
+      <!-- Quem julga: o LLM local (nada roda, o arquivo já traz o veredito dele)
+           ou um modelo de fronteira, que rejulga os mesmos planos. É a MESMA
+           escolha da tela de avaliar, guardada no mesmo lugar. -->
+      <p class="mb-2.5 text-xs font-semibold tracking-wide text-neutral-400 uppercase dark:text-neutral-500">LLM Judge</p>
+      <SeletorJuizLLM
+        v-model="juiz"
+        :juizes="juizesFronteira"
+        :modelo-local="juizes?.local.modelo"
+        :erro="erroListasJuiz"
+      />
+
+      <!-- O juiz não lê só o plano: lê o cenário. O arquivo avaliado não guarda
+           a telemetria, então o rejulgamento a busca no cenário de entrada e
+           refaz a recuperação no grafo — o mesmo contexto que o juiz local teve. -->
+      <label v-if="!ehJuizLocal" class="mt-4 mb-6 block">
+        <span class="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-300">Cenário de entrada do rejulgamento</span>
+        <select
+          v-model="cenarioRejulgar"
+          class="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-200"
+        >
+          <option value="">Automático — pelo nome do arquivo importado</option>
+          <option
+            v-for="c in cenariosDisponiveis.filter((c) => !dominioImportado || c.dominio === dominioImportado)"
+            :key="c.id"
+            :value="c.id"
+          >
+            {{ c.dominio }}/{{ c.arquivo }} ({{ c.linhas }} linhas)
+          </option>
+        </select>
+        <span class="mt-1 block text-xs text-neutral-400 dark:text-neutral-500">
+          Escolha à mão se o nome do arquivo não indicar qual <code>cenarios-*.jsonl</code> foi a entrada.
+        </span>
+      </label>
+      <div v-else class="mb-6"></div>
+
+      <p class="mb-2.5 text-xs font-semibold tracking-wide text-neutral-400 uppercase dark:text-neutral-500">Arquivo avaliado</p>
       <input ref="inputImportar" type="file" accept=".jsonl,application/x-ndjson" class="hidden" @change="importarArquivo" />
       <div class="rounded-2xl border border-dashed border-neutral-300 p-4 text-center transition-colors dark:border-white/15">
-        <p class="mb-0.5 text-sm font-medium text-neutral-800 dark:text-neutral-100">Resultado avaliado</p>
         <p class="mb-3 text-xs text-neutral-500 dark:text-neutral-400">Arquivo JSONL com as avaliações já calculadas</p>
         <button
           type="button"
@@ -814,6 +1024,44 @@ async function importarArquivo(evento: Event): Promise<void> {
           Selecionar .jsonl
         </button>
       </div>
+      <!-- Arquivo na mão: com o juiz local só se abre o que foi importado; com
+           um juiz de fronteira, o rejulgamento começa aqui, no botão — nunca
+           sozinho, porque gasta chamadas de API. -->
+      <div
+        v-if="textoImportado"
+        class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 p-4 dark:border-white/10"
+      >
+        <div class="min-w-0">
+          <p class="truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">{{ arquivoImportado }}</p>
+          <p class="text-xs text-neutral-500 dark:text-neutral-400">
+            {{ registrosImportados.length }} registro(s)<template v-if="dominioImportado"> · domínio {{ dominioImportado }}</template>
+            <template v-if="juiz.provedor !== 'local'"> · serão rejulgados por {{ juizEscolhido?.nome ?? juiz.provedor }}</template>
+          </p>
+        </div>
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            class="rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-600 transition hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-300 dark:hover:bg-white/10"
+            @click="verImportado"
+          >
+            {{ juiz.provedor === 'local' ? 'Ver resultado importado' : 'Ver sem rejulgar' }}
+          </button>
+          <button
+            v-if="juiz.provedor !== 'local'"
+            type="button"
+            class="flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:bg-neutral-300 disabled:text-neutral-500 dark:disabled:bg-neutral-700"
+            :disabled="!podeRejulgar"
+            @click="rejulgar"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 11-3.5-7.1" />
+              <path d="M21 3v6h-6" />
+            </svg>
+            Rejulgar com {{ juizEscolhido?.nome ?? juiz.provedor }}
+          </button>
+        </div>
+      </div>
+
       <p v-if="erroImportacao" class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{{ erroImportacao }}</p>
     </section>
 
@@ -908,6 +1156,16 @@ async function importarArquivo(evento: Event): Promise<void> {
 
 
       <div class="flex flex-col gap-10">
+        <!-- Só num rejulgamento: os dois juízes no mesmo plano. Vem primeiro
+             porque é o resultado que a tela foi buscar. -->
+        <div v-if="comparacaoJuizes" v-show="visivel('comparacaoJuizes')">
+          <ComparacaoJuizes
+            :comparacao="comparacaoJuizes"
+            :resumo="resumoRejulgamento ?? undefined"
+            :arquivo-jsonl="resultado.arquivoJsonl"
+          />
+        </div>
+
         <div v-show="visivel('metricas')" class="animate-fade-in-up evitar-quebra">
           <div
             class="grid gap-4"
