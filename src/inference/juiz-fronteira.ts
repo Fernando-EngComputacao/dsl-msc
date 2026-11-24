@@ -30,6 +30,43 @@
  *     das linhas, texto em volta): os três campos continuam obrigatórios e o
  *     veredito continua tendo de ser um dos três.
  *
+ * O CENÁRIO DO EXPERIMENTO É A VERDADE, não o mundo real. A telemetria da linha é
+ * fato medido: o prompt proíbe duvidar de um valor por parecer improvável e
+ * proíbe opor ao cenário data, lugar, preço, faixa típica de sensor, estatística
+ * ou prática usual que o modelo saiba de fora — nem para confirmar, nem para
+ * contestar. E AS REGRAS SÃO FECHADAS: o conhecimento recuperado do grafo do
+ * especialista é o universo normativo inteiro — norma, protocolo, limite ou boa
+ * prática de fora não entra nem para reprovar nem para aprovar, as regras
+ * recuperadas valem como dadas (não se discutem nem se completam), a evidência
+ * citada tem de estar no contexto enviado, e sem a regra que decidiria o caso a
+ * resposta é UNRESOLVED. É o que mantém ruído externo fora da medida do modelo do
+ * especialista.
+ *
+ * A regra é a mesma do juiz local (está no texto copiado), mas pesa
+ * mais aqui: o modelo de fronteira tem muito mais mundo real para opor, e os
+ * cenários são sintéticos, datas incluídas. No transporte a garantia é de que ele
+ * não consulta nada: nenhum corpo de `PROVEDORES` liga busca, grounding ou
+ * ferramenta — só o prompt entra, e o teste cobra isso.
+ *
+ * ORÇAMENTO POR PLANO. Um provedor que não responde custava `timeoutMs ×
+ * tentativas` no MESMO plano — 3 × 180 s = 543 s parados num plano só, medido em
+ * data/avaliacoes — enquanto os planos que respondem levam de 5 a 21 s. Agora o
+ * julgamento inteiro tem um teto (`orcamentoMs`): cada tentativa recebe o que
+ * resta dele, a espera entre tentativas não consome o que sobrou, e quando
+ * acaba a falha diz isso no motivo. O lote segue em frente com `NO_RESPONSE`, e
+ * as camadas determinísticas continuam valendo — nenhum veredito é inventado
+ * para preencher o buraco.
+ *
+ * O PEDIDO NÃO É ORDEM. A `[POLITICA VIGENTE]` do contexto pode não admitir a
+ * decisão que o pedido nomeia (ou não admitir nenhuma para o item): aí o plano que
+ * NÃO atende o usuário é o certo, e o prompt proíbe reprovar por isso. Os três
+ * casos são os do oráculo (`conferirDecisaoDoPedido`, knowledge/validacao-global.ts):
+ * pedido inatendível é aviso e não reprova; pedido atendível com outra decisão
+ * escolhida é erro; pedido que não cita item do conhecimento é UNRESOLVED. Importa
+ * mais aqui do que no juiz local: um modelo de fronteira é treinado para atender
+ * quem pede, e sem essa regra ele reprovaria o plano que corretamente recusa — a
+ * discordância medida seria do prompt, não do modelo.
+ *
  * A CHAVE DE API não é gravada em lugar nenhum: chega no corpo do pedido
  * (`POST /api/rejulgar`), vive na memória do processo durante o rejulgamento e
  * nunca entra em log, mensagem de erro, resultado ou JSONL. Sem chave no
@@ -111,6 +148,13 @@ const corpoOpenAI = (prompt: string, modelo: string): unknown => ({
     messages: [{ role: 'user', content: prompt }]
 });
 
+/**
+ * Cada provedor do jeito que ele pede — e SÓ o prompt: nenhum corpo aqui liga
+ * busca na web, grounding nem ferramenta (sem `tools`, sem
+ * `google_search_retrieval`, sem `web_search`). O juiz julga o cenário do
+ * experimento com o contexto que recebeu; dado do mundo real atual não entra
+ * nem por aqui.
+ */
 export const PROVEDORES: Record<ProvedorFronteira, DefinicaoProvedor> = {
     claude: {
         nome: 'Claude (Anthropic)',
@@ -206,7 +250,10 @@ export function chaveDoAmbiente(
 // O prompt — cópia literal de src/python_engine/julgamento.py
 // =============================================================================
 
-/** Teto por linha livre da resposta (espelha `MAX_CHARS_LINHA` em julgamento.py). */
+/** Teto por linha livre da resposta: o PADRÃO de `MAX_CHARS_LINHA` em
+ *  julgamento.py, que o motor local lê de `SPC_CML_JULGAMENTO_MAX_CHARS_LINHA`.
+ *  Aqui é documentação do contrato (o provedor de fronteira não tem GBNF para
+ *  prender a linha): a leitura da resposta não impõe tamanho. */
 export const MAX_CHARS_LINHA = 400;
 
 export const VEREDITOS: readonly Veredito[] = ['VALID', 'INVALID', 'UNRESOLVED'];
@@ -229,15 +276,47 @@ Avalie se o PLANO e semanticamente compativel com:
 O CENARIO, as REGRAS e a POLITICA estao no bloco [CONHECIMENTO RECUPERADO]; a
 lista [POLITICA VIGENTE] dele e a autoridade sobre as decisoes admissiveis.
 
+A TELEMETRIA E A BASE DA VERDADE. Os dados vem de um cenario de experimento, nao
+do mundo real: os valores da [TELEMETRIA] foram medidos no cenario, e e sobre
+eles que as REGRAS e a POLITICA do [CONHECIMENTO RECUPERADO] se avaliam. A
+[TELEMETRIA] e a autoridade sobre o estado do cenario, como a [POLITICA VIGENTE]
+e sobre as decisoes admissiveis. Nao confronte o cenario com o mundo real atual:
+data, lugar, nome, preco, faixa tipica de sensor, estatistica e pratica usual que
+voce conheca de fora nao valem aqui, nem para confirmar nem para contestar.
+
+AS REGRAS SAO FECHADAS. O [CONHECIMENTO RECUPERADO] e o universo normativo
+INTEIRO deste julgamento: ele foi recuperado do grafo do especialista para este
+cenario, e o que nao esta nele nao existe aqui. As regras e a politica de la
+valem como dadas; nao as discuta, nao as corrija nem as complete, e julgue o
+PLANO por elas. Nenhuma norma, protocolo, diretriz, limite ou boa pratica que
+voce conheca de fora entra no julgamento, nem para reprovar o plano nem para
+aprova-lo. Toda evidencia que voce citar tem de estar na [TELEMETRIA], no
+[CONHECIMENTO RECUPERADO], nas [EVIDENCIAS], no [PEDIDO] ou no [PLANO].
+
+O PEDIDO E INTENCAO, NAO OBRIGACAO. Nem todo pedido pode ser atendido: a
+[POLITICA VIGENTE] pode marcar o item [RESTRITO], nao admitir a decisao que o
+pedido nomeia, ou nao admitir decisao nenhuma para ele. Quando e assim, o plano
+que NAO faz o que foi pedido e o plano certo: nao reprove por isso, e cite a
+restricao como evidencia. Atender o pedido tambem nao justifica nada: plano que
+faz o que foi pedido contra uma regra do [CONHECIMENTO RECUPERADO] e INVALID.
+Reprove por causa do pedido so quando a [POLITICA VIGENTE] admite para o item a
+decisao que o pedido nomeia e o plano escolheu outra. E se o pedido nao cita item
+nenhum do [CONHECIMENTO RECUPERADO], nao ha como concluir que foi atendido:
+responda UNRESOLVED.
+
 Criterios:
 - Nao exija igualdade textual com um plano de referencia: planos diferentes podem ser igualmente corretos.
 - Nao considere uma justificativa diferente como erro se ela continuar sustentada pelas evidencias fornecidas.
 - Nao invente regras, restricoes, valores nem telemetria que nao estejam no contexto abaixo.
+- Nao duvide de um valor da TELEMETRIA por parecer improvavel, extremo, fora de faixa tipica ou incompativel com o mundo real: ele foi medido no cenario e vale como esta.
+- Nao corrija, arredonde, converta unidade nem reinterprete um valor da TELEMETRIA.
+- Nao traga norma, diretriz, protocolo, limite nem boa pratica de fora: o que nao esta no [CONHECIMENTO RECUPERADO] nao existe para este julgamento.
 - Nao exija uma decisao que a POLITICA nao admite.
+- Nao reprove o plano por nao fazer o que o pedido pede quando a POLITICA VIGENTE nao admite a decisao pedida: ai nao atender e o correto.
 - Nao reprove so porque voce trataria o caso de outro modo.
-- Nao use conhecimento externo como autoridade contra o contexto fornecido.
+- Nao use conhecimento externo como autoridade, nem contra nem a favor do contexto fornecido.
 - Nao transforme conhecimento ausente em reprovacao.
-- Se houver informacao insuficiente para concluir, responda UNRESOLVED.
+- Se a regra que decidiria o caso nao esta no [CONHECIMENTO RECUPERADO], ou se houver informacao insuficiente para concluir, responda UNRESOLVED e diga o que faltou.
 - Se houver uma violacao concreta e demonstravel a partir do contexto, responda INVALID e cite-a.
 - Caso contrario, responda VALID.
 
@@ -447,14 +526,24 @@ function esperarPadrao(ms: number, sinal: AbortSignal): Promise<void> {
 export interface OpcoesJuizFronteira {
     /** O modelo do provedor. Ausente: `PROVEDORES[provedor].modeloPadrao`. */
     modelo?: string;
-    /** Teto de uma chamada, em ms. */
+    /** Teto de UMA chamada, em ms. */
     timeoutMs?: number;
+    /**
+     * Teto do julgamento INTEIRO (todas as tentativas mais as esperas), em ms.
+     * Sem ele, um provedor que não responde custava `timeoutMs × tentativas` num
+     * único plano — 3 × 180 s = 9 minutos de lote parado, medido. Nunca é menor
+     * que `timeoutMs`: a primeira tentativa sempre tem a janela inteira.
+     * Padrão: o dobro de `timeoutMs`.
+     */
+    orcamentoMs?: number;
     /** Chamadas por julgamento, contando a primeira (1 = não repete). */
     tentativas?: number;
     /** Injeção de teste: o `fetch` usado. */
     buscar?: typeof fetch;
     /** Injeção de teste: a espera entre as repetições. */
     esperar?: (ms: number, sinal: AbortSignal) => Promise<void>;
+    /** Injeção de teste: o relógio que mede o orçamento. */
+    agora?: () => number;
 }
 
 /** Quanto esperar antes de repetir: o `retry-after` do provedor, senão 1s, 2s, 4s… (teto de 30s). */
@@ -506,16 +595,19 @@ export function juizFronteira(provedor: ProvedorFronteira, apiKey: string, opcoe
     const definicao = PROVEDORES[provedor];
     const modelo = modeloDoJuiz(provedor, opcoes.modelo);
     const timeoutMs = opcoes.timeoutMs ?? 120_000;
+    // Nunca abaixo de timeoutMs: a primeira tentativa tem sempre a janela inteira.
+    const orcamentoMs = Math.max(opcoes.orcamentoMs ?? timeoutMs * 2, timeoutMs);
     const tentativas = Math.max(1, opcoes.tentativas ?? 3);
     const buscar = opcoes.buscar ?? fetch;
     const esperar = opcoes.esperar ?? esperarPadrao;
+    const agora = opcoes.agora ?? Date.now;
     const chave = apiKey.trim();
 
     const rotular = (detalhe: string, causa: CausaFalhaJuiz, status?: number): FalhaJuiz =>
         new FalhaJuiz(`juiz ${provedor} (${modelo}): ${detalhe}`, causa, status);
 
-    const umaTentativa = async (prompt: string, sinal: AbortSignal): Promise<string> => {
-        const timeout = AbortSignal.timeout(timeoutMs);
+    const umaTentativa = async (prompt: string, sinal: AbortSignal, janelaMs: number): Promise<string> => {
+        const timeout = AbortSignal.timeout(janelaMs);
         const combinado = new AbortController();
         const abortar = (): void => combinado.abort();
         timeout.addEventListener('abort', abortar);
@@ -531,7 +623,7 @@ export function juizFronteira(provedor: ProvedorFronteira, apiKey: string, opcoe
             });
         } catch (error) {
             if (sinal.aborted) throw cancelado();
-            const motivo = timeout.aborted ? `sem resposta em ${timeoutMs / 1000}s` : (error as Error).message;
+            const motivo = timeout.aborted ? `sem resposta em ${Math.round(janelaMs / 1000)}s` : (error as Error).message;
             throw new FalhaTemporaria(`provedor inacessivel: ${motivo}`, null, 'rede');
         } finally {
             timeout.removeEventListener('abort', abortar);
@@ -565,11 +657,24 @@ export function juizFronteira(provedor: ProvedorFronteira, apiKey: string, opcoe
         if (!chave) throw rotular('nenhuma chave de API informada', 'chave');
         const prompt = montarPromptJulgamento(pedido);
 
+        // O orçamento vale para o julgamento inteiro: cada tentativa recebe o que
+        // resta dele, e a espera entre tentativas não pode consumir o que sobrou.
+        const fim = agora() + orcamentoMs;
+        const restante = (): number => fim - agora();
+
         let ultima: FalhaTemporaria | null = null;
+        let feitas = 0;
+        let porOrcamento = false;
         for (let tentativa = 1; tentativa <= tentativas; tentativa++) {
             if (sinal.aborted) throw cancelado();
+            const janela = Math.min(timeoutMs, restante());
+            if (janela <= 0) {
+                porOrcamento = true;
+                break;
+            }
+            feitas = tentativa;
             try {
-                return lerJulgamento(await umaTentativa(prompt, sinal));
+                return lerJulgamento(await umaTentativa(prompt, sinal, janela));
             } catch (error) {
                 if (!(error instanceof FalhaTemporaria)) {
                     // Resposta ilegível e erro definitivo não se repetem: o modelo
@@ -581,10 +686,18 @@ export function juizFronteira(provedor: ProvedorFronteira, apiKey: string, opcoe
                     throw rotular((error as Error).message, 'formato');
                 }
                 ultima = error;
-                if (tentativa < tentativas) await esperar(esperaAntesDeRepetir(error.resposta, tentativa), sinal);
+                if (tentativa >= tentativas) continue;
+                // Não vale esperar se, depois da espera, não sobra janela para tentar.
+                const espera = Math.min(esperaAntesDeRepetir(error.resposta, tentativa), restante());
+                if (espera <= 0 || restante() <= espera) {
+                    porOrcamento = true;
+                    break;
+                }
+                await esperar(espera, sinal);
             }
         }
-        throw rotular(`${ultima!.message} (${tentativas} tentativa(s))`, ultima!.causa, ultima!.resposta?.status);
+        const conta = `${feitas} tentativa(s)${porOrcamento ? `, orcamento de ${Math.round(orcamentoMs / 1000)}s esgotado` : ''}`;
+        throw rotular(`${ultima!.message} (${conta})`, ultima!.causa, ultima!.resposta?.status);
     };
 }
 

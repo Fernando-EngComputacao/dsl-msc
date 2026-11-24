@@ -534,6 +534,8 @@ def main() -> int:
 
     lido_invalid = _le("evidencias: PAM 52; Propofol bloqueado\njustificativa: incrementa o que a politica veda\nveredito: INVALID")
     prompt_juiz = montar_prompt_julgamento("plano X { }", "sobe a nora", "- PAM = 52", "[CENARIO]\n- paciente: P", "- regra R")
+    # Uma clausula pode estar quebrada em duas linhas no molde: onde ela quebra nao e o que se cobra.
+    prompt_juiz_1l = " ".join(prompt_juiz.split())
     casos_juiz = [
         ("le os tres vereditos", all(
             (_le(f"evidencias: a\njustificativa: b\nveredito: {v}") or {}).get("veredito") == v
@@ -554,6 +556,30 @@ def main() -> int:
          all(s in prompt_juiz for s in (
              "Nao exija igualdade textual", "Nao invente regras", "Nao transforme conhecimento ausente em reprovacao",
              "informacao insuficiente para concluir, responda UNRESOLVED"))),
+        ("o prompt poe a telemetria como base da verdade e barra o mundo real atual",
+         all(s in prompt_juiz_1l for s in (
+             "A TELEMETRIA E A BASE DA VERDADE", "cenario de experimento",
+             "Nao confronte o cenario com o mundo real atual",
+             "nem para confirmar nem para contestar",
+             "Nao duvide de um valor da TELEMETRIA",
+             "ele foi medido no cenario e vale como esta",
+             "Nao corrija, arredonde, converta unidade nem reinterprete um valor da TELEMETRIA"))),
+        ("o prompt fecha as regras no conhecimento recuperado: regra de fora nao entra",
+         all(s in prompt_juiz_1l for s in (
+             "AS REGRAS SAO FECHADAS", "o que nao esta nele nao existe aqui",
+             "nao as discuta, nao as corrija nem as complete",
+             "Nao traga norma, diretriz, protocolo, limite nem boa pratica de fora",
+             "nem para reprovar o plano nem para aprova-lo",
+             "Toda evidencia que voce citar tem de estar",
+             "Nao use conhecimento externo como autoridade, nem contra nem a favor",
+             "Se a regra que decidiria o caso nao esta no [CONHECIMENTO RECUPERADO]"))),
+        ("o prompt diz que o pedido pode nao ser atendivel, e recusar pode ser o certo",
+         all(s in prompt_juiz_1l for s in (
+             "O PEDIDO E INTENCAO, NAO OBRIGACAO", "Nem todo pedido pode ser atendido",
+             "o plano que NAO faz o que foi pedido e o plano certo",
+             "Atender o pedido tambem nao justifica nada",
+             "Reprove por causa do pedido so quando a [POLITICA VIGENTE] admite para o item a decisao que o pedido nomeia e o plano escolheu outra",
+             "Nao reprove o plano por nao fazer o que o pedido pede quando a POLITICA VIGENTE nao admite a decisao pedida"))),
         ("GBNF do juiz com os tres vereditos", '"VALID" | "INVALID" | "UNRESOLVED"' in JULGAMENTO_GBNF),
     ]
     if LlamaGrammar is not None:

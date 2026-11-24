@@ -20,7 +20,14 @@
  *      corpo, onde fica o texto) e le a resposta de onde ela esta;
  *   5. a CHAVE nunca vaza: nem em mensagem de erro, nem em corpo de log;
  *   6. 429/5xx repetem com espera; 401/403 e resposta ilegivel nao repetem;
- *   7. cancelamento propaga como AbortError, sem repetir.
+ *   7. cancelamento propaga como AbortError, sem repetir;
+ *   7b. o ORCAMENTO do julgamento inteiro corta as repeticoes: um provedor que
+ *      nao responde nao consome `timeout x tentativas` no mesmo plano, e a
+ *      primeira tentativa continua com a janela inteira;
+ *   8. a TELEMETRIA e a base da verdade: o prompt proibe opor o mundo real
+ *      atual ao cenario do experimento, e nenhum corpo de provedor liga busca,
+ *      grounding, ferramenta nem instrucao de sistema — so o prompt do juiz
+ *      entra, como no motor local.
  */
 
 import assert from 'node:assert/strict';
@@ -153,6 +160,106 @@ teste('campo vazio vira o mesmo texto do motor; plano vazio tem o seu', () => {
 teste('uma passada so: um marcador DENTRO do conhecimento e texto, nao marcador', () => {
     const prompt = montarPromptJulgamento({ ...PEDIDO, conhecimento: 'a regra fala de {plano} e de {pedido}' });
     assert.ok(prompt.includes('a regra fala de {plano} e de {pedido}'), 'o texto do conhecimento foi reescrito');
+});
+
+/** O prompt do juiz com o espaço em branco achatado: uma cláusula pode estar
+ *  quebrada em duas linhas no molde, e onde ela quebra não é o que se cobra. */
+const umaLinha = (texto: string): string => texto.replace(/\s+/g, ' ');
+
+teste('o prompt poe a TELEMETRIA como base da verdade e barra o mundo real atual', () => {
+    const prompt = umaLinha(montarPromptJulgamento(PEDIDO));
+    for (const trecho of [
+        'A TELEMETRIA E A BASE DA VERDADE',
+        'cenario de experimento',
+        'e a autoridade sobre o estado do cenario',
+        'Nao confronte o cenario com o mundo real atual',
+        'nem para confirmar nem para contestar',
+        'Nao duvide de um valor da TELEMETRIA',
+        'ele foi medido no cenario e vale como esta',
+        'Nao corrija, arredonde, converta unidade nem reinterprete um valor da TELEMETRIA'
+    ]) {
+        assert.ok(prompt.includes(trecho), `o prompt do juiz nao diz: ${trecho}`);
+    }
+});
+
+teste('o prompt fecha as regras no [CONHECIMENTO RECUPERADO]: regra de fora nao entra', () => {
+    const prompt = umaLinha(montarPromptJulgamento(PEDIDO));
+    for (const trecho of [
+        'AS REGRAS SAO FECHADAS',
+        'universo normativo',
+        'o que nao esta nele nao existe aqui',
+        'valem como dadas',
+        'nao as discuta, nao as corrija nem as complete',
+        'Nao traga norma, diretriz, protocolo, limite nem boa pratica de fora',
+        'nao existe para este julgamento',
+        'nem para reprovar o plano nem para aprova-lo',
+        'Toda evidencia que voce citar tem de estar',
+        // A proibicao de conhecimento externo vale nos DOIS sentidos, nao so contra.
+        'Nao use conhecimento externo como autoridade, nem contra nem a favor',
+        // Sem a regra que decidiria, o juiz nao tira veredito de fora: UNRESOLVED.
+        'Se a regra que decidiria o caso nao esta no [CONHECIMENTO RECUPERADO]',
+        'responda UNRESOLVED e diga o que faltou'
+    ]) {
+        assert.ok(prompt.includes(trecho), `o prompt do juiz nao diz: ${trecho}`);
+    }
+});
+
+teste('o prompt diz que o pedido pode nao ser atendivel: recusar pode ser o certo', () => {
+    const prompt = umaLinha(montarPromptJulgamento(PEDIDO));
+    for (const trecho of [
+        'O PEDIDO E INTENCAO, NAO OBRIGACAO',
+        'Nem todo pedido pode ser atendido',
+        'nao admitir decisao nenhuma para ele',
+        'o plano que NAO faz o que foi pedido e o plano certo',
+        'nao reprove por isso, e cite a restricao como evidencia',
+        // O outro lado: atender o pedido nao autoriza violar regra.
+        'Atender o pedido tambem nao justifica nada',
+        'faz o que foi pedido contra uma regra do [CONHECIMENTO RECUPERADO] e INVALID',
+        // Reprovar pelo pedido so no caso que o oraculo trata como erro.
+        'Reprove por causa do pedido so quando a [POLITICA VIGENTE] admite para o item a decisao que o pedido nomeia e o plano escolheu outra',
+        // E o caso do `pedido_global_indeterminado`.
+        'se o pedido nao cita item nenhum do [CONHECIMENTO RECUPERADO]',
+        'Nao reprove o plano por nao fazer o que o pedido pede quando a POLITICA VIGENTE nao admite a decisao pedida'
+    ]) {
+        assert.ok(prompt.includes(trecho), `o prompt do juiz nao diz: ${trecho}`);
+    }
+});
+
+/** Tudo que faria o modelo buscar fora, ou receber instrucao que o juiz local nao
+ *  recebe. O nome vem como o provedor o escreve; a comparacao e sem caixa. */
+const CHAVES_PROIBIDAS = [
+    'tools', 'tool_choice', 'tool_config', 'functions', 'function_call',
+    'google_search', 'google_search_retrieval', 'googlesearchretrieval',
+    'web_search', 'web_search_options', 'grounding', 'grounding_config',
+    'retrieval', 'file_search', 'browsing', 'connectors', 'mcp_servers',
+    'system', 'system_instruction', 'systeminstruction', 'extra_body'
+];
+
+/** Toda chave do objeto, em qualquer profundidade. */
+function chavesFundas(valor: unknown, achadas: string[] = []): string[] {
+    if (Array.isArray(valor)) {
+        for (const item of valor) chavesFundas(item, achadas);
+    } else if (valor !== null && typeof valor === 'object') {
+        for (const [chave, dentro] of Object.entries(valor)) {
+            achadas.push(chave.toLowerCase());
+            chavesFundas(dentro, achadas);
+        }
+    }
+    return achadas;
+}
+
+teste('nenhum corpo de provedor liga busca, grounding, ferramenta ou system: so o prompt entra', () => {
+    const prompt = montarPromptJulgamento(PEDIDO);
+    for (const provedor of PROVEDORES_FRONTEIRA) {
+        const corpo = PROVEDORES[provedor].corpo(prompt, modeloDoJuiz(provedor));
+        const chaves = chavesFundas(corpo);
+        for (const proibida of CHAVES_PROIBIDAS) {
+            assert.ok(!chaves.includes(proibida), `${provedor} manda "${proibida}" no corpo: o juiz passaria a consultar (ou a receber) o que o local nao recebe`);
+        }
+        // E o que vai ao modelo e o prompt do juiz, inteiro e sem acrescimo.
+        const dentro = JSON.stringify(corpo);
+        assert.ok(dentro.includes(JSON.stringify(prompt).slice(1, -1)), `${provedor} nao manda o prompt do juiz`);
+    }
 });
 
 // ===========================================================================
@@ -314,6 +421,51 @@ await testeAsync('esgotadas as tentativas, a falha sobe dizendo quantas foram', 
         /3 tentativa/
     );
     assert.equal(chamadas.length, 3);
+});
+
+await testeAsync('o orcamento corta as tentativas: um provedor mudo nao para o lote', async () => {
+    // Relogio de mentira: cada tentativa que nao responde consome a janela inteira.
+    let relogio = 0;
+    const { buscar, chamadas } = falsoFetch([{ status: 503, texto: 'indisponivel' }]);
+    const comTempo: typeof fetch = async (url, init) => {
+        relogio += 60_000;
+        return buscar(url, init);
+    };
+    const erro = await juizFronteira('gemini', CHAVE, {
+        buscar: comTempo,
+        esperar: async () => {
+            relogio += 1000;
+        },
+        agora: () => relogio,
+        tentativas: 3,
+        timeoutMs: 60_000,
+        orcamentoMs: 120_000
+    })(PEDIDO, new AbortController().signal).then(
+        () => null,
+        (e: Error) => e
+    );
+    assert.ok(erro, 'devia falhar');
+    // 3 tentativas x 60 s dariam 180 s; o orcamento de 120 s permite duas.
+    assert.equal(chamadas.length, 2, 'a terceira tentativa nao cabia no orcamento');
+    assert.match(erro.message, /orcamento de 120s esgotado/);
+    // Sem o orcamento seriam 3 x 60 s mais as esperas — 183 s num plano so.
+    assert.ok(relogio < 183_000, `o julgamento nao foi cortado: ${relogio}ms`);
+});
+
+await testeAsync('a primeira tentativa tem sempre a janela inteira, mesmo com orcamento menor', async () => {
+    const { buscar, chamadas } = falsoFetch([{ carga: cargaDoProvedor('gpt', RESPOSTA_BOA) }]);
+    const juiz = juizFronteira('gpt', CHAVE, { buscar, esperar: semEspera, timeoutMs: 60_000, orcamentoMs: 1 });
+    const r = await juiz(PEDIDO, new AbortController().signal);
+    assert.equal(r.veredito, 'VALID', 'orcamento curto nao pode impedir a primeira chamada');
+    assert.equal(chamadas.length, 1);
+});
+
+await testeAsync('sem estourar o orcamento, a mensagem continua so com a conta de tentativas', async () => {
+    const { buscar } = falsoFetch([{ status: 503, texto: 'indisponivel' }]);
+    await assert.rejects(
+        juizFronteira('gemini', CHAVE, { buscar, esperar: semEspera, tentativas: 3 })(PEDIDO, new AbortController().signal),
+        (e: Error) => /3 tentativa\(s\)/.test(e.message) && !/orcamento/.test(e.message)
+    );
 });
 
 await testeAsync('401 nao repete: chave recusada e falha definitiva', async () => {

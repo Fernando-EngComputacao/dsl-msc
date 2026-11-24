@@ -1,0 +1,19 @@
+Carregando modelo clinico (uti.dsl)...
+Carregando modelo agricola (lavoura.agro)...
+Carregando modelo de arbitragem (futebol.fut)...
+API do SPC-CML no ar em http://localhost:4000
+  GET  /api/dominios
+  POST /api/comando   { dominio: 'med'|'agro'|'fut', texto: string, contexto?: {}, validacao?: { ativa, maxTentativas, juiz } }  (SSE: event "estagio"*, "final"|"erro")
+                      validacao.ativa: gate — gera, avalia (sintaxe/semantica/oraculo [+ juiz LLM]) e regera ate aprovar (criterio ambos, teto 3, juiz on)
+  GET  /api/chats
+  POST /api/chats     { dominio: 'med'|'agro'|'fut', mensagens: [] }
+  GET  /api/chats/:id
+  PUT  /api/chats/:id { dominio: 'med'|'agro'|'fut', mensagens: [] }
+  POST /api/avaliar   { dominio: 'med'|'agro'|'fut', arquiteturaJsonl?: string, baselineJsonl?: string, nomeEntrada?: string }  (SSE: event "progresso"*, "final"|"erro")
+  GET  /api/avaliacoes           (lista as avaliacoes gravadas, com o cenario de entrada de cada uma)
+  GET  /api/avaliacoes/:arquivo  (JSONL experimental de uma avaliacao: oraculo e juiz LLM separados)
+  GET  /api/cenarios             (os cenarios-*.jsonl escolhiveis, por dominio)
+  POST /api/juizes/testar { provedor, modelo?, apiKey? }  (um julgamento de brinquedo: diz se a chave e o modelo respondem, teto 60s)
+  GET  /api/fusao?avaliacao=a&cenario=agro/cenarios-400-agro.jsonl&partes=cenario,resultado,avaliacao
+                      &formato=resumo|jsonl|csv[&cenarioDe=a:agro/x.jsonl][&plano=0][&desenho=0][&semAvaliacao=1]
+                      funde cenario + resultado + avaliacao de varios dominios num arquivo

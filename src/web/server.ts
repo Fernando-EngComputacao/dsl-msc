@@ -114,8 +114,16 @@ const ENGINE_FUT = process.env.SPC_CML_ENDPOINT_FUT ?? ENGINE;
 
 const TIMEOUT_MS = Number(process.env.SPC_CML_TIMEOUT_MS ?? 600_000);
 // Teto de UMA chamada ao juiz de fronteira (ver juiz-fronteira.ts). Menor que o
-// do motor local: aqui e rede publica, e a resposta pedida tem tres linhas.
-const TIMEOUT_JUIZ_FRONTEIRA_MS = Number(process.env.SPC_CML_JUIZ_FRONTEIRA_TIMEOUT_MS ?? 180_000);
+// do motor local: aqui e rede publica, e a resposta pedida tem tres linhas. Os
+// julgamentos que de fato respondem levam de 5 a 21 s (medido com gemini-3-flash
+// e gpt-6-luna), entao 60 s ja e o triplo do pior caso observado.
+const TIMEOUT_JUIZ_FRONTEIRA_MS = Number(process.env.SPC_CML_JUIZ_FRONTEIRA_TIMEOUT_MS ?? 60_000);
+// Teto do julgamento INTEIRO de um plano, tentativas e esperas somadas. Sem ele,
+// um provedor que nao responde custava timeout x tentativas no MESMO plano: 3 x
+// 180 s = 543 s parados num plano so, medido em data/avaliacoes. Com 120 s o
+// lote segue em frente, o plano fica NO_RESPONSE com o motivo, e as camadas
+// deterministicas continuam valendo. Modelo de raciocinio lento: suba os dois.
+const ORCAMENTO_JUIZ_FRONTEIRA_MS = Number(process.env.SPC_CML_JUIZ_FRONTEIRA_ORCAMENTO_MS ?? 120_000);
 // Teto do TESTE de conexao (POST /api/juizes/testar): bem menor que o da
 // avaliacao, porque alguem esta olhando a tela esperando. Estourar aqui nao diz
 // que a chave esta errada — diz que o provedor nao respondeu nesse tempo.
@@ -864,7 +872,11 @@ async function resolverJuiz(
     const modelo = modeloDoJuiz(provedor, pedido?.modelo);
     return {
         escolhido: {
-            chamar: juizFronteira(provedor, chave, { modelo, timeoutMs: TIMEOUT_JUIZ_FRONTEIRA_MS }),
+            chamar: juizFronteira(provedor, chave, {
+                modelo,
+                timeoutMs: TIMEOUT_JUIZ_FRONTEIRA_MS,
+                orcamentoMs: ORCAMENTO_JUIZ_FRONTEIRA_MS
+            }),
             identidade: { provedor, modelo }
         }
     };
@@ -1743,7 +1755,11 @@ const servidor = http.createServer(async (req, res) => {
                     path.basename(cenario.arquivo),
                     {
                         juiz: {
-                            chamar: juizFronteira(provedor, chave, { modelo: identidade.modelo, timeoutMs: TIMEOUT_JUIZ_FRONTEIRA_MS }),
+                            chamar: juizFronteira(provedor, chave, {
+                                modelo: identidade.modelo,
+                                timeoutMs: TIMEOUT_JUIZ_FRONTEIRA_MS,
+                                orcamentoMs: ORCAMENTO_JUIZ_FRONTEIRA_MS
+                            }),
                             identidade
                         },
                         ajustarLinhas: linhas => {

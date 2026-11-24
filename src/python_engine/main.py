@@ -12,6 +12,7 @@ A gramatica G NAO e mantida aqui: ela e gerada a partir da DSL Langium por
 """
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 import threading
@@ -94,6 +95,18 @@ GGUF_FILE = os.environ.get("SPC_CML_GGUF_FILE", "Qwen2.5-7B-Instruct-Q4_K_M.gguf
 # (rodando so em CPU) o parametro e ignorado silenciosamente — nao quebra nada,
 # so nao acelera. Ver README para a instalacao da wheel com suporte a CUDA.
 N_GPU_LAYERS = int(os.environ.get("SPC_CML_N_GPU_LAYERS", "-1"))
+# Threads e lote de prefill da CPU. Zero mantem o padrao do llama-cpp-python
+# (metade dos nucleos logicos; n_batch 512). So pesam quando o modelo NAO esta
+# na GPU — e e exatamente nesse regime que o juiz do lote sai de ~4 s por plano
+# para ~60 s. Com os pesos na CPU, usar todos os nucleos fisicos costuma valer
+# perto do dobro de tokens/s.
+N_THREADS = int(os.environ.get("SPC_CML_N_THREADS", "0"))
+N_BATCH = int(os.environ.get("SPC_CML_N_BATCH", "0"))
+# A wheel generica do PyPI e CPU-only: ela ACEITA n_gpu_layers e o IGNORA, sem
+# erro nenhum (ver o comentario acima). O sintoma e so lentidao — 15x — e some
+# dentro de um lote longo. Ligado, o motor se recusa a servir assim; desligado
+# (padrao), avisa alto no log e publica o estado em /health.
+EXIGIR_GPU = os.environ.get("SPC_CML_EXIGIR_GPU", "false").strip().lower() in ("1", "true", "sim")
 # Modelo de embedding para a recuperacao por similaridade no Neo4j (indice
 # vetorial). Multilingue, roda em CPU de proposito: a VRAM fica inteira para o
 # modelo de geracao, e um encoder de ~570M e barato o bastante em CPU para os
@@ -172,6 +185,64 @@ def get_model():
     return _MODEL
 
 
+def _estado_do_llama() -> dict:
+    """Se a wheel instalada do llama-cpp-python sabe descarregar camadas para a
+    GPU — e, quando nem da para perguntar, por que.
+
+    `gpu_offload` responde sobre a BUILD, nao sobre haver placa: e a pergunta que
+    distingue "sem GPU nesta maquina" de "wheel errada instalada". Os dois modos
+    de falha tem cara diferente e os dois importam:
+      - ImportError  a versao instalada nao expoe a funcao (ou nao ha pacote);
+      - OSError      `libcuda.so.1: cannot open shared object file` — a wheel TEM
+                     CUDA e o container subiu SEM --gpus. O motor nao vai servir;
+                     o erro e a resposta, e e melhor le-lo em /health do que no
+                     traceback da primeira inferencia."""
+    try:
+        from llama_cpp import llama_supports_gpu_offload
+    except ImportError:
+        return {"gpu_offload": None, "erro": None}
+    except Exception as erro:
+        return {"gpu_offload": None, "erro": str(erro)[:200]}
+    try:
+        return {"gpu_offload": bool(llama_supports_gpu_offload()), "erro": None}
+    except Exception as erro:
+        return {"gpu_offload": None, "erro": str(erro)[:200]}
+
+
+def dispositivo_do_motor() -> dict:
+    """O que /health publica sobre ONDE o modelo roda. Nada e adivinhado: diz o
+    que foi pedido (n_gpu_layers) e o que a wheel sabe fazer (gpu_offload). So
+    vale para o backend llamacpp; no outlines quem decide o dispositivo e o
+    torch, e responder "cpu" aqui seria chute."""
+    if BACKEND != "llamacpp":
+        return {"dispositivo": None, "gpu_offload": None, "n_gpu_layers": None}
+    estado = _estado_do_llama()
+    offload = estado["gpu_offload"]
+    if estado["erro"]:
+        dispositivo = "indisponivel"
+    elif offload is None:
+        # A versao instalada nao responde: melhor nao afirmar nada.
+        dispositivo = None
+    else:
+        dispositivo = "gpu" if (offload and N_GPU_LAYERS != 0) else "cpu"
+    return {
+        "dispositivo": dispositivo,
+        "gpu_offload": offload,
+        "llama_cpp_erro": estado["erro"],
+        "n_gpu_layers": N_GPU_LAYERS,
+        "n_threads": N_THREADS or None,
+        "n_batch": N_BATCH or None,
+    }
+
+
+AVISO_SEM_GPU = (
+    "llama-cpp-python SEM suporte a GPU (wheel CPU-only): n_gpu_layers={n} vai ser "
+    "ignorado e o modelo roda na CPU — dezenas de segundos por julgamento em vez de "
+    "poucos. Reinstale a wheel com CUDA (passo 4 do Dockerfile) ou suba com "
+    "SPC_CML_EXIGIR_GPU=true para falhar em vez de arrastar."
+)
+
+
 def get_llama():
     global _LLAMA
     with _LLAMA_LOCK:
@@ -179,11 +250,31 @@ def get_llama():
             from huggingface_hub import hf_hub_download
             from llama_cpp import Llama
 
+            offload = _estado_do_llama()["gpu_offload"]
+            if N_GPU_LAYERS != 0 and offload is False:
+                aviso = AVISO_SEM_GPU.format(n=N_GPU_LAYERS)
+                if EXIGIR_GPU:
+                    raise RuntimeError(aviso)
+                print(f"AVISO: {aviso}", flush=True)
+
+            # Versoes diferentes do llama-cpp-python aceitam parametros diferentes;
+            # passar um que a instalada nao conhece levanta TypeError e derruba o
+            # motor na primeira inferencia. So vai o que a assinatura aceita.
+            extras = {}
+            if N_THREADS > 0:
+                extras["n_threads"] = N_THREADS
+                extras["n_threads_batch"] = N_THREADS
+            if N_BATCH > 0:
+                extras["n_batch"] = N_BATCH
+            aceitos = inspect.signature(Llama.__init__).parameters
+            extras = {chave: valor for chave, valor in extras.items() if chave in aceitos}
+
             _LLAMA = Llama(
                 model_path=hf_hub_download(GGUF_REPO, GGUF_FILE),
                 n_ctx=N_CTX,
                 n_gpu_layers=N_GPU_LAYERS,
                 verbose=False,
+                **extras,
             )
         return _LLAMA
 
@@ -550,6 +641,7 @@ def health():
         "dominio": DOMINIO,
         "inicio": INICIO,
         "backend": BACKEND,
+        **dispositivo_do_motor(),
         "n_ctx": N_CTX,
         "max_tokens": MAX_TOKENS,
         "modelo": MODEL_ID if BACKEND == "outlines" else f"{GGUF_REPO}/{GGUF_FILE}",

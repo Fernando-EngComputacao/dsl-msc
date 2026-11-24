@@ -214,8 +214,11 @@ const EXPLICACAO = 'mt-1.5 text-xs leading-relaxed text-neutral-500 dark:text-ne
                         <p v-if="aberto.juiz" class="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-300">
                             O {{ juiz.nome }} vai fazer exatamente o que o LLM local faz no lugar do juiz: ler o mesmo pedido, a
                             mesma telemetria, o mesmo conhecimento recuperado e as mesmas evidências, com o mesmo prompt, e
-                            responder VALID, INVALID ou UNRESOLVED. A geração dos planos não muda — o juiz só olha planos já
-                            gerados.
+                            responder VALID, INVALID ou UNRESOLVED. O prompt diz a ele que a telemetria do cenário é a base
+                            da verdade do experimento e que as regras recuperadas do grafo são as únicas que valem: nada do
+                            mundo real atual e nenhuma norma de fora entram no julgamento — nem para reprovar, nem para
+                            aprovar. Sem a regra que decidiria o caso, a resposta é UNRESOLVED. A geração dos planos não
+                            muda — o juiz só olha planos já gerados.
                         </p>
                     </Transition>
 

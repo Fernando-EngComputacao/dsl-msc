@@ -53,8 +53,40 @@ RUN pip install --no-cache-dir -r src/requirements.txt
 # ao contrário do setup nativo no Windows, não é preciso copiar nenhuma DLL/SO à
 # mão: o linker do Linux já encontra tudo. cu122 é o mesmo runtime validado
 # nativamente com esta GPU (ver SPC_CML_N_GPU_LAYERS em python_engine/main.py).
+#
+# `--index-url`, NAO `--extra-index-url`: com `--extra-` o pip consulta TAMBEM o
+# PyPI e instala a MAIOR versao que achar entre os dois indices — e o PyPI quase
+# sempre esta a frente do indice cu122, entao a build voltava sozinha para a
+# wheel CPU-only, sem um unico aviso. O sintoma so aparece rodando, como
+# lentidao (o motor aceita n_gpu_layers e o ignora): o juiz do lote passa de ~4
+# para ~60 s por plano. Aqui so o indice CUDA e consultado, e `--no-deps`
+# garante que nenhuma dependencia precise do PyPI nesta linha. Se esta linha
+# falhar com "No matching distribution", o indice nao tem wheel para este
+# Python/plataforma: fixe a versao (`llama-cpp-python==X.Y.Z`) ou troque o cuXYZ
+# — falhar aqui e o comportamento certo, porque a alternativa e uma imagem lenta
+# que parece boa.
 RUN pip install --no-cache-dir --force-reinstall --no-deps llama-cpp-python \
-    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu122
+    --index-url https://abetlen.github.io/llama-cpp-python/whl/cu122
+
+# 4b. A build PARA aqui se o passo 4 trouxe uma wheel sem CUDA. E a diferenca
+# entre descobrir agora e descobrir depois de um lote de 400 planos a 60 s cada.
+#
+# A conferencia e sobre os ARQUIVOS instalados, nao sobre importar o llama_cpp:
+# `libcuda.so.1` e do DRIVER, injetado pelo runtime da NVIDIA quando o container
+# sobe com `--gpus`. Dentro do build ele nao existe, e o import morre no dlopen
+# mesmo com a wheel certa — foi exatamente o que aconteceu na primeira versao
+# deste passo. Entao: `find_spec` (que nao executa o modulo) localiza o pacote, e
+# um build com CUDA se denuncia pelo backend ggml-cuda ou por um .so ligado ao
+# libcuda/libcublas. Quem confere em tempo de execucao e o motor, que publica o
+# veredito em /health (`dispositivo_do_motor` em python_engine/main.py).
+RUN python3 -c "import importlib.util as u, pathlib, sys; \
+raiz = pathlib.Path(u.find_spec('llama_cpp').submodule_search_locations[0]); \
+libs = [p for p in raiz.rglob('*.so*') if p.is_file()]; \
+cuda = [p.name for p in libs if 'cuda' in p.name.lower() or 'cublas' in p.name.lower()]; \
+cuda = cuda or [p.name for p in libs if p.stat().st_size < 200*1024*1024 and (b'libcuda.so.1' in p.read_bytes() or b'libcublas' in p.read_bytes())]; \
+versao = next((d.name for d in raiz.parent.glob('llama_cpp_python-*.dist-info')), '?'); \
+print('wheel:', versao, '| libs:', sorted(p.name for p in libs), '| CUDA:', cuda or 'NENHUM'); \
+sys.exit(0 if cuda else 'wheel do llama-cpp-python SEM CUDA: o passo 4 caiu na wheel CPU-only do PyPI. Fixe a versao que existe no indice cu122 (llama-cpp-python==X.Y.Z) ou troque o cuXYZ — ver o comentario do passo 4.')"
 
 # 5. Copia o código do projeto (o .dockerignore vai barrar o node_modules local aqui)
 COPY . .
